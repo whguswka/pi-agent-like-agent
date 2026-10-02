@@ -10,6 +10,7 @@
          python diag.py --chats     (+ 왼쪽 채팅 목록을 어떻게 찾는지 보여 줌)
          python diag.py --delete-test   (+ 시험 대화를 하나 만들어 '… > 삭제 > 확인' 으로 지워 봄. 다른 대화는 건드리지 않음)
          python diag.py --report    (한 화면 상태 요약: 버전·중계 서버·전용 창·설정·최근 로그. 아무것도 바꾸지 않음)
+         python diag.py --input-limit   (+ 입력창이 한 번에 받는 글자 수 확인. 붙여 넣어 보기만 하고 보내지 않음)
 """
 import argparse
 import base64
@@ -233,6 +234,7 @@ def main():
     ap.add_argument("--chats", action="store_true", help="왼쪽 채팅 목록 찾기 확인")
     ap.add_argument("--delete-test", action="store_true", help="시험 대화를 만들어 삭제해 봄")
     ap.add_argument("--report", action="store_true", help="한 화면 상태 요약 (읽기만 함)")
+    ap.add_argument("--input-limit", action="store_true", help="입력창이 한 번에 받는 글자 수 확인 (보내지 않음)")
     args = ap.parse_args()
     try:
         cfg = bridge.load_config(args.config)
@@ -364,6 +366,37 @@ def main():
             show("삭제", ("OK " if good else "X ") + info)
             ok = ok and good
         else:
+            ok = False
+
+    if args.input_limit:
+        print("\n[9] 입력창이 한 번에 받는 글자 수 (붙여 넣어 보기만 하고 보내지 않음. pi 가 일하지 않을 때 실행하세요)")
+        rows = copilot.probe_input_limit()
+        best = 0
+        for r in rows:
+            send = {True: "보내기 버튼 켜짐", False: "보내기 버튼 꺼짐", None: "보내기 버튼 못 찾음"}[r["send"]]
+            show("{:,}자".format(r["size"]), "{} / {}{}".format(
+                "다 들어감" if r["full"] else "X {:,}자쯤만 들어감".format(r["accepted"]), send,
+                " / 화면 표시 '{}'".format(r["counter"]) if r["counter"] else ""))
+            if r["full"] and r["send"] is not False:
+                best = r["size"]
+        last = rows[-1] if rows else {}
+        nums = re.findall(r"\d[\d,]*", last.get("counter") or "")
+        open_end = False
+        if len(nums) == 2:  # 화면에 'n / m' 표시가 있으면 m 이 한도
+            limit = int(nums[1].replace(",", ""))
+        elif last and not last["full"]:
+            limit = max(best, last["accepted"])
+        else:
+            limit, open_end = best, bool(rows) and rows[-1]["size"] == best
+        if limit:
+            rec = max(2000, int(limit * 0.9) // 1000 * 1000)
+            note = ""
+            if open_end:  # 입력창은 더 받지만 Copilot 서버 쪽 한도는 따로 있을 수 있어 3만 자까지만 권함
+                rec, note = min(rec, 30000), " (시험한 {:,}자까지 다 들어감. 서버 쪽 한도를 생각해 3만 자까지만 권장)".format(best)
+            show("권장 max_chars", "{:,}{} -> 내 설정 파일 ~/.pi/agent/bridge.json 에 \"max_chars\": {} (지금 {:,})".format(
+                rec, note, rec, int(cfg.get("max_chars") or 10000)))
+        else:
+            show("권장 max_chars", "X 확인하지 못함 (입력창에 글이 들어가지 않음)")
             ok = False
 
     print("\n결과:", "정상" if ok else "확인 필요 (위의 X 항목)")

@@ -47,6 +47,12 @@ DEFAULT_CONFIG = {
     "reply_timeout_seconds": 900,
     "max_questions_per_chat": 100,  # 이 수만큼 질문하면 새 대화로 (긴 대화에서 Copilot 이 규칙을 놓치므로). 0 이면 Copilot 한도까지
     "max_questions_per_minute": 0,  # 0 이면 끔. Copilot 사용량 제한을 피하려면 분당 질문 수 상한을 넣음
+    # 메시지 크기: Copilot 메시지 하나의 최대 글자 수(넘으면 나눠 보내고, 조각마다 왕복 한 번), 도구 결과 하나의 최대 글자 수,
+    #  새 대화를 열 때 다시 넣는 기록 (최근 것은 그대로 resend_recent_chars, 그 앞은 한 줄 요약 resend_summary_chars)
+    "max_chars": 10000,
+    "tool_result_chars": 6000,
+    "resend_recent_chars": 20000,
+    "resend_summary_chars": 40000,
     # 모델 선택: Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 화면의 모델 메뉴에서 고른다
     "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT 6.0 Sol"). 비우면 화면 그대로
     "copilot_models": {},  # pi 모델 id -> 화면 이름. 표에 없는 id 는 id 자체를 화면 이름으로 씀
@@ -649,6 +655,64 @@ class Copilot:
             elif time.time() - last_change >= 1.5 or time.time() >= deadline:
                 return got
 
+    def probe_input_limit(self, sizes=(10000, 16000, 24000, 32000, 48000, 64000)):
+        """입력창이 한 번에 받는 글자 수 확인 (보내지 않음). 크기마다 붙여 넣어 보고 들어간 글자 수, 보내기 버튼 상태,
+        화면의 'n / m' 글자 수 표시를 읽은 뒤 지운다. 다 들어가지 않거나 보내기 버튼이 꺼지면 거기서 멈춘다.
+        끝나면 새 대화 화면으로 바꿔 입력창을 처음 상태로 돌린다 (긴 글을 첨부 파일로 바꾸는 화면 대비).
+        돌려주는 값: [{"size", "accepted"(들어간 글자 수 어림), "full", "send"(True/False/None=못 찾음), "counter"}]"""
+        self.wait_input(30)
+        sel = self.q(self.cfg["input_selector"])
+        line = "pi 입력 한도 확인 0123456789 abcdefghij ABCDEFGHIJ\n"
+        out = []
+        try:
+            for size in sizes:
+                text = (line * (size // len(line) + 1))[:size]
+                want = len(re.sub(r"\s+", "", text))
+                self.clear_input(sel)
+                self.js("""(() => { const el = window.__piBridge.findInput(%s); el.focus();
+                    const dt = new DataTransfer(); dt.setData('text/plain', %s);
+                    el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); })()""" % (
+                    sel, self.q(text)))
+                got = self.wait_stable(sel, want)
+                info = self.js("""(() => { const B = window.__piBridge; const inp = B.findInput(%s);
+                    const custom = %s; const re = new RegExp(%s, 'i');
+                    const all = custom ? [document.querySelector(custom)].filter(Boolean)
+                        : [...document.querySelectorAll('button, [role="button"]')].filter(b => B.visible(b) && re.test(B.label(b)));
+                    const b = B.nearest(all, inp);
+                    const send = b ? !(b.disabled || b.getAttribute('aria-disabled') === 'true') : null;
+                    let counter = null, el = inp;
+                    for (let i = 0; i < 4 && el && !counter; i++) {
+                        el = el.parentElement; if (!el) break;
+                        const m = [...el.querySelectorAll('*')].filter(e => !e.children.length && !e.closest('[contenteditable], textarea'))
+                            .map(e => (e.textContent || '').trim()).find(t => /^\\d[\\d,]*\\s*\\/\\s*\\d[\\d,]*$/.test(t));
+                        if (m) counter = m;
+                    }
+                    return {send, counter}; })()""" % (sel, self.q(self.cfg["send_button_selector"]), self.q(self.cfg["send_button_pattern"])))
+                full = got >= want * 0.99
+                out.append({"size": size, "accepted": int(size * got / want) if want else 0, "full": full,
+                            "send": info.get("send"), "counter": info.get("counter")})
+                if not full or info.get("send") is False:
+                    break
+        finally:
+            try:
+                self.clear_input(sel)
+            finally:
+                self.new_chat()
+        return out
+
+    def wait_stable(self, sel, want, timeout=20.0):
+        """입력창 글자 수가 want 에 닿거나 2초 동안 그대로이거나 timeout 이 될 때까지 기다린다"""
+        deadline, last, last_change = time.time() + timeout, -1, time.time()
+        while True:
+            time.sleep(0.4)
+            got = self.input_len(sel)
+            if got >= want:
+                return got
+            if got != last:
+                last, last_change = got, time.time()
+            elif time.time() - last_change >= 2.0 or time.time() >= deadline:
+                return got
+
     def send(self, text):
         self.wait_input(30)
         if self.tab.events is not None:
@@ -683,7 +747,7 @@ class Copilot:
         if got < want * 0.9:
             self.clear_input(sel)
             raise BridgeError("입력창에 글자가 다 들어가지 않았습니다 ({}/{}자). Copilot 의 글자 수 제한일 수 있으니 "
-                              "중계 서버의 --max-chars 를 줄이세요.".format(got, len(text)))
+                              "내 설정 파일의 max_chars 를 줄이세요 (확인: diag.py --input-limit).".format(got, len(text)))
         if self.cfg["send_button_selector"]:
             self.click_send(self.cfg["send_button_selector"])
         else:

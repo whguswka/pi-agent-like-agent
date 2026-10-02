@@ -13,7 +13,7 @@
 4) 끝난 대화 삭제: 중계 서버가 만든 Copilot 대화를 copilot-chats.json 에 기록해 두고, 새 대화를 열 때와 pi 세션이 끝날 때
    (pi 확장 extensions/copilot-session.ts 가 /v1/session/end 로 알림) 지난 대화를 지운다 (delete_finished_chats).
 
-사용법: python relay.py [--config bridge.json] [--port 8765] [--max-chars 10000]
+사용법: python relay.py [--config bridge.json] [--port 8765] [--max-chars 10000]  (메시지 크기는 bridge.json 의 max_chars 로도)
 먼저 브라우저를 원격 디버깅 포트와 함께 실행해야 한다 (start-chrome.cmd 또는 start-edge.cmd).
 """
 import argparse
@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.7"
+RELAY_VERSION = "2026-10-02.8"
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문
@@ -797,8 +797,8 @@ class Relay:
         head = PREAMBLE.format(tag=PROTOCOL_TAG, tools=render_tools(tools), system=system_for_copilot(system))
         convo = [m for m in messages if m.get("role") not in ("system", "developer")]
         # 새 대화에 다시 넣는 기록: 최근 것은 그대로(full_budget), 그 앞은 한 줄 요약(brief_budget), 더 오래된 것은 생략
-        full_budget = self.args.max_chars * 2
-        brief_budget = self.args.max_chars * 4
+        full_budget = getattr(self.args, "resend_recent_chars", None) or self.args.max_chars * 2
+        brief_budget = getattr(self.args, "resend_summary_chars", None) or self.args.max_chars * 4
         kept, total, i = [], 0, len(convo) - 1
         while i >= 0:
             r = self.renderer.message(convo[i], names)
@@ -1022,9 +1022,9 @@ def main():
     ap.add_argument("--config", default=os.environ.get("PI_COPILOT_CONFIG", os.path.join(here, "bridge.json")))
     ap.add_argument("--host", default=os.environ.get("PI_COPILOT_HOST", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("PI_COPILOT_PORT", "8765")))
-    ap.add_argument("--max-chars", type=int, default=int(os.environ.get("PI_COPILOT_MAX_CHARS", "10000")),
-                    help="Copilot 메시지 하나의 최대 글자 수 (넘으면 나눠 보냄)")
-    ap.add_argument("--tool-result-chars", type=int, default=6000, help="도구 결과 하나를 보낼 최대 글자 수")
+    ap.add_argument("--max-chars", type=int, default=None,
+                    help="Copilot 메시지 하나의 최대 글자 수 (넘으면 나눠 보냄. 기본: 설정의 max_chars)")
+    ap.add_argument("--tool-result-chars", type=int, default=None, help="도구 결과 하나를 보낼 최대 글자 수 (기본: 설정의 tool_result_chars)")
     ap.add_argument("--chats", default="", help="중계 서버가 만든 Copilot 대화 기록 파일 (기본: ~/.pi/agent/copilot-chats.json)")
     args = ap.parse_args()
     if not sys.stdout.isatty():  # 로그 파일로 보낼 때는 UTF-8 (Git Bash 에서 tail 로 읽기 좋게)
@@ -1037,6 +1037,14 @@ def main():
     except bridge.ConfigError as e:
         print(time.strftime("%H:%M:%S"), "설정 파일 오류 - 중계 서버를 켜지 않습니다:", e, flush=True)
         sys.exit(2)
+    # 메시지 크기: 실행 옵션 > 환경변수 PI_COPILOT_MAX_CHARS > 설정 (bridge.json, 내 설정 파일)
+    if args.max_chars is None:
+        args.max_chars = int(os.environ.get("PI_COPILOT_MAX_CHARS") or cfg.get("max_chars") or 10000)
+    args.max_chars = max(2000, args.max_chars)
+    if args.tool_result_chars is None:
+        args.tool_result_chars = int(cfg.get("tool_result_chars") or 6000)
+    args.resend_recent_chars = int(cfg.get("resend_recent_chars") or 20000)
+    args.resend_summary_chars = int(cfg.get("resend_summary_chars") or 40000)
     registry = ChatRegistry(args.chats or default_registry_path())
     relay = Relay(args, CopilotLink(cfg, registry))
     jup = Jupyter(cfg)
@@ -1048,8 +1056,8 @@ def main():
     server.daemon_threads = True
     relay.server = server
     user = cfg["_user"]
-    relay.log("중계 서버 시작: http://{}:{}/v1  (버전 {}, 브라우저 원격 디버깅 포트 {}, 설정 {}{})".format(
-        args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.config if os.path.exists(args.config) else "기본값",
+    relay.log("중계 서버 시작: http://{}:{}/v1  (버전 {}, 브라우저 원격 디버깅 포트 {}, 메시지 최대 {}자, 설정 {}{})".format(
+        args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.max_chars, args.config if os.path.exists(args.config) else "기본값",
         " + 내 설정 {}개 ({}: {})".format(len(user["keys"]), user["path"], ", ".join(user["keys"])) if user["keys"] else ""))
     try:
         server.serve_forever()

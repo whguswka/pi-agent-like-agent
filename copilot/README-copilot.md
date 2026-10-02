@@ -80,10 +80,11 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `stable_seconds` | 화면에서 읽을 때 답이 이 시간 동안 안 바뀌면 끝난 것으로 봄 |
 | `max_questions_per_chat` | 기본 100. 이 수만큼 질문하면 새 대화로 넘어감 (0 이면 Copilot 한도(600)까지 한 대화). 시험에서 규칙 요약 없이 80개를 넘기자 Copilot 이 진행 규칙을 놓쳤고, 규칙 요약을 넣은 뒤 60개까지는 문제가 없었음. 새 대화에는 최근 기록과 그 앞 요약만 들어가므로 아주 오래된 내용은 Copilot 이 기억하지 못함 (필요하면 파일을 다시 읽게 하세요) |
 | `max_questions_per_minute` | 0 이면 끔. 숫자를 넣으면 분당 그 수를 넘지 않게 기다렸다 보냄 (Copilot 사용량 제한 예방, 아래 참고) |
+| `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |
+| `tool_result_chars` | 도구 결과 하나를 보낼 최대 글자 수 (기본 6000, 가운데 생략) |
+| `resend_recent_chars` / `resend_summary_chars` | 새 대화를 열 때 다시 넣는 기록: 최근 것은 이 글자 수만큼 그대로, 그 앞은 이 글자 수만큼 한 줄 요약 (기본 20000 / 40000). `max_chars` 를 늘려도 이 양은 그대로 |
 
-중계 서버 옵션 (`python relay.py --help`):
-- `--max-chars` : Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다.
-- `--tool-result-chars` : 도구 결과 하나를 보낼 최대 글자 수 (기본 6000, 가운데 생략).
+중계 서버 옵션 (`python relay.py --help`): `--max-chars`, `--tool-result-chars` 를 주면 위 설정보다 먼저 씁니다.
 
 ## 4. 문제 해결
 | 증상 | 확인 |

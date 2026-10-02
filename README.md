@@ -105,6 +105,7 @@ python ~/tools/pi/copilot/diag.py --report
 | `--chats` | + 왼쪽 채팅 목록 찾기 |
 | `--delete-test` | + 시험 대화를 하나 만들어 지워 보기 (다른 대화는 건드리지 않음) |
 | `--jupyter` | + JupyterLab 터미널에서 시험 명령 실행 ([5장](#5-실행-위치-바꾸기-pc-와-jupyter-노트북)을 쓸 때) |
+| `--input-limit` | + 입력창이 한 번에 받는 글자 수 확인 (붙여 넣어 보기만 하고 보내지 않음). 권장 `max_chars` 를 알려 줌 |
 | `--report` | **한 화면 상태 요약**: 판 번호, Node, 중계 서버, 전용 창, 현재 모델, 설정, 최근 요청 통계(평균 시간, 새 대화, 조각 나눔), 최근 로그 (읽기만 함) |
 
 - `--report` 는 요약만 보여 줍니다. 나머지 진단은 마지막 줄에 `결과: 정상` 이 나오면 됩니다.
@@ -317,6 +318,8 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 - **전용 창의 Copilot 탭에서 직접 대화하지 마세요.** 대화 흐름이 섞입니다. 창은 최소화해도 되지만 닫으면 안 됩니다.
 - **속도:** 질문 한 번 왕복에 보통 7~20초 걸립니다. pi 는 도구를 쓸 때마다 Copilot 에 한 번씩 묻기 때문에, 파일 여러 개를 다루는 작업은 몇 분 걸립니다.
   실제로 얼마나 걸리는지는 `diag.py --report` 의 '최근 요청' 줄(평균 시간, 새 대화 횟수와 시간, 긴 메시지를 나눠 보낸 횟수)에서 볼 수 있습니다.
+  새 대화를 열 때 1~2분 걸리는 것은 대부분 긴 메시지를 1만 자씩 나눠 보내기 때문입니다. `diag.py --input-limit` 로 입력창 한도를 확인하고,
+  더 받는다면 내 설정 파일의 `max_chars` 를 늘리면 빨라집니다.
 - **사용량 제한:** 쉬지 않고 일하면 분당 질문 5개 정도가 나갑니다. 시험에서는 30분에 약 145개를 보냈을 때 약 1시간 동안 막혔습니다.
   이런 제한이 있는 계정이면 `bridge.json` 의 `max_questions_per_minute` 를 2 정도로 두세요. 제한이 없는 환경이면 기본값 0(끔) 그대로 둡니다.
 - **위험할 수 있는 작업은 실행 전에 묻습니다.** pi 는 보통 도구를 쓸 때 허락을 묻지 않지만, 되돌리기 어려운 작업은 확인 창을 띄웁니다.
@@ -384,6 +387,7 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 | `delete_finished_chats` | `true` | 끝난 세션의 Copilot 대화 삭제 |
 | `max_questions_per_minute` | `0` | 분당 질문 수 제한 (0 이면 끔) |
 | `max_questions_per_chat` | `100` | 이만큼 질문하면 새 대화로 넘어감 |
+| `max_chars` | `10000` | Copilot 메시지 하나의 최대 글자 수. 넘으면 나눠 보내고 조각마다 왕복이 한 번 더 듭니다 (`diag.py --input-limit` 로 확인) |
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 |
 | `copilot_models` | 4장의 표 | pi 모델 id → Copilot 화면의 모델 이름 |
 | `guard` | `true` | 위험할 수 있는 작업을 실행 전에 묻기 ([8장](#8-주의할-점)). `false` 면 끔 |
