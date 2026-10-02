@@ -371,5 +371,31 @@ _srv2.shutdown()
 check("/v1/session/end: reload 는 무시, quit 은 정리", _calls == ["quit"], _calls)
 check("/v1/models: copilot + 설정한 모델", _ids == ["copilot", "gpt-6.0-sol"], _ids)
 
+# '답:' 로그 줄의 통계 (걸린 시간 · 조각 · 새 대화 · 다시 보냄) + diag --report 의 최근 요청 통계
+import io as _io  # noqa: E402
+import contextlib as _cl  # noqa: E402
+_out = _io.StringIO()
+_link16 = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "ls"\n```',  # 형식 오류 -> 다시 부탁
+                    '```json\n{"tool": "bash", "arguments": {"command": "ls"}}\n```'])
+_r16 = relay.Relay(A(), _link16)
+with _cl.redirect_stdout(_out):
+    _r16.handle({"messages": [{"role": "user", "content": "파일 목록 만들어줘"}], "tools": tools})
+_ans = [ln for ln in _out.getvalue().splitlines() if "답:" in ln]
+check("'답:' 줄에 통계 (새 대화 + 다시 보냄)", len(_ans) == 1 and "· 조각 2 · 새 대화 · 다시 보냄 1)" in _ans[0], _out.getvalue())
+import diag  # noqa: E402
+_lines = ["10:00:00 요청 (새 대화=True, 조각 3개, 25000자)",
+          "10:01:05 답: 도구 read (65.0초 · 조각 3 · 새 대화)",
+          "10:01:20 답: 도구 bash (10.0초 · 조각 1)",
+          "10:01:40 오류: Copilot 처리 실패: x",
+          "10:02:00 답: 본문 20자 (20.0초 · 조각 3 · 다시 보냄 1)",
+          "10:02:30 답: 도구 write",  # 예전 판 형식 (통계 없음)
+          "10:03:00 답: 도구 edit (5.0초 · 조각 1)"]
+_st = diag.request_stats(_lines)
+check("diag 통계: 개수·평균·중간·최대", _st and _st["n"] == 4 and abs(_st["avg"] - 25.0) < 0.01 and _st["median"] == 20.0
+      and _st["max"] == 65.0, _st)
+check("diag 통계: 새 대화·조각 나눔·다시 보냄·오류", _st["new"] == 1 and _st["new_avg"] == 65.0 and _st["split"] == 2
+      and _st["retry"] == 1 and _st["errors"] == 1, _st)
+check("diag 통계: 기록 없으면 None", diag.request_stats(["10:00:00 답: 도구 read"]) is None)
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

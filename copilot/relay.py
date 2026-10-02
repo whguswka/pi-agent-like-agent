@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.6"
+RELAY_VERSION = "2026-10-02.7"
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문
@@ -662,6 +662,7 @@ class Relay:
         self.fresh = True  # True 면 다음 요청은 새 대화로
         self.reminded_at = 0  # 마지막으로 진행 규칙 요약을 붙였을 때의 질문 수
         self.model_label = ""  # 이번 요청에 쓸 Copilot 모델 (화면 이름)
+        self.stat = None  # 이번 요청의 통계 (걸린 시간, 보낸 조각 수, 새 대화, Copilot 에 보낸 횟수) -> '답:' 로그 줄 끝에
 
     def log(self, *a):
         print(time.strftime("%H:%M:%S"), *a, flush=True)
@@ -669,7 +670,20 @@ class Relay:
     def ask(self, parts, new_thread):
         self.log("요청 (새 대화={}, 조각 {}개, {}자{})".format(new_thread, len(parts), sum(len(p) for p in parts),
                                                        ", 모델 " + self.model_label if self.model_label else ""))
+        st = self.stat
+        if st is not None:
+            st["parts"] += len(parts)
+            st["asks"] += 1
+            st["new"] = st["new"] or new_thread
         return self.link.request(parts, new_thread, model=self.model_label)
+
+    def stat_text(self):
+        """'답:' 줄 끝의 통계. diag.py --report 가 이 형식을 읽어 평균을 낸다: (12.3초 · 조각 2 · 새 대화 · 다시 보냄 1)"""
+        st = self.stat
+        if not st:
+            return ""
+        return " ({:.1f}초 · 조각 {}{}{})".format(time.time() - st["t0"], st["parts"], " · 새 대화" if st["new"] else "",
+                                             " · 다시 보냄 {}".format(st["asks"] - 1) if st["asks"] > 1 else "")
 
     def end_session(self, reason=""):
         """pi 세션이 끝남 (pi 확장 copilot-session.ts 가 알림) -> 다음 요청은 새 대화, 쓰던 대화는 삭제 대상으로 정리"""
@@ -695,6 +709,7 @@ class Relay:
 
     def handle(self, body):
         with self.lock:
+            self.stat = {"t0": time.time(), "parts": 0, "asks": 0, "new": False}
             try:
                 return self._handle(body, False)
             except ThreadReset as e:
@@ -774,7 +789,7 @@ class Relay:
             assistant = {"role": "assistant", "content": body_text}
         self.sent = fps + [fingerprint(assistant)]
         self.fresh = False
-        self.log("답: {}".format("도구 " + call["name"] if call else "본문 {}자".format(len(body_text))))
+        self.log("답: {}{}".format("도구 " + call["name"] if call else "본문 {}자".format(len(body_text)), self.stat_text()))
         return assistant
 
     def full_parts(self, messages, tools, names, marker):

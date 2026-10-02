@@ -15,6 +15,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -79,6 +80,40 @@ def jupyter_check(cfg):
     show("실행 결과", "OK ({:.1f}초, 종료 코드 {})".format(time.time() - t0, rc) if good else "X 종료 코드 {}".format(rc))
     print("  --- 출력 ---\n  " + out.strip().replace("\n", "\n  "))
     return good
+
+
+STAT_RE = re.compile(r"답: .*\((\d+(?:\.\d+)?)초 · 조각 (\d+)( · 새 대화)?(?: · 다시 보냄 (\d+))?\)\s*$")
+
+
+def request_stats(lines, last=50):
+    """중계 서버 로그의 '답:' 줄(relay.Relay.stat_text 형식)에서 최근 요청 통계. 기록이 없으면 None"""
+    rows = []
+    for i, ln in enumerate(lines):
+        m = STAT_RE.search(ln)
+        if m:
+            rows.append({"i": i, "sec": float(m.group(1)), "parts": int(m.group(2)), "new": bool(m.group(3)),
+                         "retry": int(m.group(4) or 0)})
+    rows = rows[-last:]
+    if not rows:
+        return None
+    secs = sorted(r["sec"] for r in rows)
+    new = [r["sec"] for r in rows if r["new"]]
+    first = rows[0]["i"]
+    return {"n": len(rows), "avg": sum(secs) / len(secs), "median": secs[len(secs) // 2], "max": secs[-1],
+            "new": len(new), "new_avg": sum(new) / len(new) if new else 0.0,
+            "split": sum(1 for r in rows if r["parts"] > r["retry"] + 1),
+            "retry": sum(r["retry"] for r in rows),
+            "errors": sum(1 for ln in lines[first:] if " 오류:" in ln)}
+
+
+def tail_lines(path, max_bytes=1000000):
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - max_bytes))
+        data = f.read()
+    lines = data.decode("utf-8", "replace").splitlines()
+    return lines[1:] if size > max_bytes else lines  # 첫 줄은 잘렸을 수 있음
 
 
 def report(cfg):
@@ -171,8 +206,15 @@ def report(cfg):
         sum(c.get("state") == "finished" and c.get("tries", 0) < 3 for c in chats),
         sum(c.get("state") == "finished" and c.get("tries", 0) >= 3 for c in chats)))
     try:
-        with open(os.path.join(agent, "copilot-relay.log"), encoding="utf-8", errors="replace") as f:
-            tail = f.readlines()[-12:]
+        lines = tail_lines(os.path.join(agent, "copilot-relay.log"))
+        st = request_stats(lines)
+        if st:
+            show("최근 요청 {}개".format(st["n"]), "평균 {:.0f}초 (중간 {:.0f}, 최대 {:.0f}) / 새 대화 {}번{} / 조각 나눔 {}번 / 다시 보냄 {}번 / 오류 {}번".format(
+                st["avg"], st["median"], st["max"], st["new"], " (평균 {:.0f}초)".format(st["new_avg"]) if st["new"] else "",
+                st["split"], st["retry"], st["errors"]))
+        else:
+            show("최근 요청", "통계 없음 (이 판의 중계 서버로 요청하면 쌓임)")
+        tail = [ln + "\n" for ln in lines[-12:]]
         print("  --- 중계기 최근 로그 (! = 오류·실패) ---")
         for ln in tail:
             bad = any(w in ln for w in ("오류", "실패", "Error", "Traceback", "끊겼"))
