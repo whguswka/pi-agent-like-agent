@@ -14,7 +14,7 @@ case "$PROFILE" in
      exit 1 ;;
 esac
 TEMPLATE="$PI_HOME/profiles/$PROFILE/agent-template"
-chmod +x "$PI_HOME/bin/pi" "$PI_HOME/install.sh" "$PI_HOME/check-node.sh" 2>/dev/null || true
+chmod +x "$PI_HOME/bin/pi" "$PI_HOME/install.sh" "$PI_HOME/update.sh" "$PI_HOME/check-node.sh" 2>/dev/null || true
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 mkdir -p "$AGENT_DIR"
 # 설정 파일은 이미 있으면 유지, 확장(extensions/)은 프로그램이므로 항상 새 것으로
@@ -59,7 +59,7 @@ esac
 echo
 "$PI_HOME/check-node.sh" || true
 echo
-echo "설치 완료. 새 터미널을 열고 'pi --version' 으로 확인하세요. (지금 터미널에서 바로 쓰려면: export PATH=\"$PI_HOME/bin:\$PATH\")"
+echo "설치 완료 (판 $(tr -d '\r\n' < "$PI_HOME/VERSION" 2>/dev/null || echo '?')). 새 터미널을 열고 'pi --version' 으로 확인하세요. (지금 터미널에서 바로 쓰려면: export PATH=\"$PI_HOME/bin:\$PATH\")"
 if [ "$PROFILE" = pc ]; then
   echo "사용법: $PI_HOME/README.md (GitHub 첫 페이지와 같은 내용)"
   echo "  1) pi 를 실행하면 Chrome 전용 창이 뜹니다. 처음이면 그 창에서 Copilot 에 로그인하세요 (jupyter 모드는 Kubeflow 도)"

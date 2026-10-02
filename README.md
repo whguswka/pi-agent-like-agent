@@ -320,24 +320,31 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 - **pi 는 도구를 쓸 때마다 허락을 묻지 않습니다.** 파일을 고치고 명령을 실행하므로 중요한 폴더는 git 으로 관리하고 바뀐 내용을 확인하세요. 시킨 범위를 벗어나는 작업이 보이면 `Esc` 로 멈춥니다.
 
 ## 9. 새 버전으로 바꾸기
+실행 중인 pi 를 모두 끈 뒤, 받은 zip 을 지정해 `update.sh` 를 실행합니다 (`~/tools/pi` 밖의 폴더에서).
+```bash
+cd ~
+bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
+```
+- 하는 일: zip 확인 → 중계 서버 끄기 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 판을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
+- 끝에 `지금 판 -> 새 판` 과 확인할 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 판으로 시작합니다 (중계 서버도 새 판으로 켜짐).
+- 폴더가 사용 중이라 이름을 바꾸지 못하면 **아무것도 바꾸지 않고 멈춥니다.** pi, Copilot 전용 창, 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요.
+- 지금 판은 `python ~/tools/pi/copilot/diag.py --report` 의 '버전' 줄에서 볼 수 있습니다.
+
+그대로 남는 것:
+- `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 판에 추가된 항목(새 모델 등)만** 넣습니다. 바뀐 파일은 `갱신:` 으로 알려 주고, 이전 파일은 `.bak` 으로 남깁니다.
+- 직접 고친 값과 직접 지운 항목, 내 설정 파일(`~/.pi/agent/bridge.json`), 지침(AGENTS.md), 스킬, 세션 기록은 그대로입니다.
+- 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다.
+- 예전 판에서 `copilot/bridge.json` 을 직접 고쳤다면 `update.sh` 가 그 항목을 알려 줍니다. 그 항목을 내 설정 파일([10장](#10-설정))로 옮기세요.
+- 잘 동작하면 `~/tools/pi.old` 는 지워도 됩니다.
+
+**`update.sh` 가 없는 예전 판에서 (처음 한 번만, 손으로):**
 1. 실행 중인 pi 를 모두 끄고, Copilot 전용 창도 닫습니다.
-2. 기존 폴더의 이름을 바꾸고, 새 zip 을 같은 자리에 풉니다 (zip 이 있는 폴더에서):
+2. zip 이 있는 폴더에서:
    ```bash
    rm -rf ~/tools/pi.old && mv ~/tools/pi ~/tools/pi.old
    unzip -q pi-agent-like-agent-main.zip -d ~/tools/ && mv ~/tools/pi-agent-like-agent-main ~/tools/pi
-   ```
-3. 설치를 다시 실행합니다.
-   ```bash
    bash ~/tools/pi/install.sh pc
    ```
-   - `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 판에 추가된 항목(새 모델 등)만** 넣습니다. 바뀐 파일은 `갱신:` 으로 알려 주고, 이전 파일은 `.bak` 으로 남깁니다.
-   - 직접 고친 값과 직접 지운 항목은 그대로 둡니다. 지침(AGENTS.md), 스킬, 세션 기록도 그대로입니다.
-   - 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다.
-4. `pi` 를 실행하면 중계 서버도 새 버전으로 자동으로 다시 켜집니다.
-
-- 바꾼 설정은 내 설정 파일(`~/.pi/agent/bridge.json`, [10장](#10-설정))에 두면 업데이트해도 남습니다.
-  예전 판에서 `copilot/bridge.json` 을 직접 고쳤다면, `~/tools/pi.old/copilot/bridge.json` 에서 그 항목을 내 설정 파일로 옮기세요.
-- 잘 동작하면 `~/tools/pi.old` 는 지워도 됩니다.
 
 ## 10. 설정
 | 파일 | 내용 |
@@ -422,7 +429,7 @@ bash ~/tools/pi/install.sh jupyter
 |---|---|
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
-| `install.sh`, `check-node.sh` | 설치·진단 스크립트 |
+| `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
 | `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `tests/` | 중계기 단위 테스트 (`python tests/test_relay.py`) |

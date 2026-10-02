@@ -101,7 +101,13 @@ def report(cfg):
     import relay
     print("[pi 상태 요약] {}".format(time.strftime("%Y-%m-%d %H:%M:%S")))
     pkg = load(os.path.join(pi_home, "runtime", "package.json"))
-    show("버전", "pi {} / 중계기 코드 {} / Python {}".format(pkg.get("version", "?"), relay.RELAY_VERSION, platform.python_version()))
+    try:
+        with open(os.path.join(pi_home, "VERSION"), encoding="utf-8") as f:
+            kit = f.read().strip()
+    except OSError:
+        kit = "?"
+    show("버전", "판 {} / pi {} / 중계기 코드 {} / Python {}".format(kit, pkg.get("version", "?"), relay.RELAY_VERSION,
+                                                              platform.python_version()))
     # Windows 는 프로그램을 찾을 때 System32(WSL 의 bash.exe)를 PATH 보다 먼저 보므로, PATH 에서 Git Bash 의 bash 를 직접 찾는다
     import shutil
     bash = shutil.which("bash")
