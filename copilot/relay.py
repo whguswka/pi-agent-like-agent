@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.12"
+RELAY_VERSION = "2026-10-02.13"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -1025,6 +1025,9 @@ def fs_op(jup, body):
     if op == "write":
         jup.write_file(path, base64.b64decode(body.get("data") or ""))
         return {}
+    if op == "read_range":  # 큰 파일 나눠 받기 (/download)
+        data, total = jup.read_range(path, int(body.get("start") or 0), int(body.get("end") or 0))
+        return {"data": base64.b64encode(data).decode(), "total": total}
     if op == "write_chunk":  # 큰 파일 나눠 올리기 (/upload)
         jup.write_chunk(path, base64.b64decode(body.get("data") or ""), int(body.get("chunk") or 1))
         return {}
@@ -1208,6 +1211,14 @@ def make_handler(relay, jup, cfg, lanes=None):
     return Handler
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        """pi 를 끄는 등 상대가 연결을 끊은 것은 오류로 남기지 않는다 (diag --report 에 오류처럼 보이지 않게)"""
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser(description="브리지 pi 중계 서버 (Copilot 웹 채팅 + Jupyter 실행 통로)")
@@ -1243,7 +1254,7 @@ def main():
     relay = lanes.lanes[0]["relay"] if lanes else Relay(args, CopilotLink(cfg, registry))
     jup = Jupyter(cfg)
     try:
-        server = ThreadingHTTPServer((args.host, args.port), make_handler(relay, jup, cfg, lanes))
+        server = Server((args.host, args.port), make_handler(relay, jup, cfg, lanes))
     except OSError as e:
         relay.log("포트 {} 를 열 수 없습니다 (이미 실행 중일 수 있음): {}".format(args.port, e))
         sys.exit(1)

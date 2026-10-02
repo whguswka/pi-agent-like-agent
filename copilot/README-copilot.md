@@ -133,5 +133,6 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 - `POST /jupyter/exec/<id>/abort` → 터미널에 Ctrl+C
 - `POST /jupyter/fs` `{"op": "read"|"write"|"mkdir"|"stat", "path": "노트북 안 절대 경로", "data": "base64 (write)"}`
   - 큰 파일은 `{"op": "write_chunk", "path": ..., "data": "base64", "chunk": 1, 2, ... 마지막은 -1}` 로 나눠 올림 (Jupyter 파일 API 의 chunk, JupyterLab 업로드와 같은 방식. 노트북 홈 안, 숨김이 아닌 경로만)
+  - 큰 파일 나눠 받기: `{"op": "read_range", "path": ..., "start": 0, "end": 4194303}` → `data`(base64), `total`(전체 크기). Jupyter `files/` 주소의 Range 요청 (노트북 홈 안, 숨김이 아닌 경로만)
   → read: `data`(base64), stat: `kind`(file/directory)·`writable`·`size`. 오류 `code`: ENOENT, EISDIR, EACCES, EINVAL, EIO, AUTH(로그인 만료), BRIDGE(탭 없음)
 - 참고 구현: `~/.pi/agent/extensions/jupyter.ts` (pi 확장, 이 API 의 클라이언트)

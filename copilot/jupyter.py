@@ -21,7 +21,7 @@ RUN_DIR = "pi-bridge/run"  # Jupyter 루트 기준 (숨김 폴더는 파일 API 
 
 PAGE_JS = r"""
 (() => {
-  const V = 2;
+  const V = 3;
   if (window.__piJ && window.__piJ.v === V) return true;
   const el = document.getElementById('jupyter-config-data');
   if (!el) return false;
@@ -57,6 +57,23 @@ PAGE_JS = r"""
     if (chunk) body.chunk = chunk;
     const r = await J.fetch('PUT', J.cpath(p), body);
     return {status: r.status, type: r.type, text: r.text.slice(0, 500)};
+  };
+  // files/ 주소에서 일부분만 읽기 (큰 파일 나눠 받기). 206 이면 그 부분, 다른 답이면 status 만
+  J.readRange = async (p, start, end) => {
+    const headers = {Range: 'bytes=' + start + '-' + end};
+    const x = xsrf(); if (x) headers['X-XSRFToken'] = x;
+    if (cfg.token) headers['Authorization'] = 'token ' + cfg.token;
+    const url = base + 'files/' + p.split('/').filter(Boolean).map(encodeURIComponent).join('/') + '?_=' + Date.now();
+    const r = await fetch(url, {headers, credentials: 'same-origin', redirect: 'manual', cache: 'no-store'});
+    if (r.status !== 206) return {status: r.status, type: r.type};
+    const blob = await r.blob();
+    const b64 = await new Promise((ok, no) => {
+      const fr = new FileReader();
+      fr.onload = () => ok(String(fr.result).split(',', 2)[1] || '');
+      fr.onerror = () => no(fr.error);
+      fr.readAsDataURL(blob);
+    });
+    return {status: 206, b64, total: +(((r.headers.get('Content-Range') || '').split('/')[1]) || 0)};
   };
   J.list = async (p) => {
     const r = await J.fetch('GET', J.cpath(p) + '?content=1&_=' + Date.now());
@@ -412,6 +429,18 @@ class Jupyter:
             r = self.call("writeFile", rel, base64.b64encode(data).decode(), chunk, timeout=120)
         if r["status"] not in (200, 201):
             raise FsError("EIO", "파일 쓰기 실패 {} (조각 {}, {}): {}".format(path, chunk, r["status"], r.get("text", "")[:200]))
+
+    def read_range(self, path, start, end):
+        """큰 파일 나눠 받기: files/ 주소의 Range 요청 (노트북 홈 안, 숨김이 아닌 경로만) -> (bytes, 전체 크기)"""
+        rel = self.rel_of(path)
+        if rel is None:
+            raise FsError("EINVAL", "노트북 홈 밖이나 숨김 경로의 큰 파일은 나눠 받을 수 없습니다: " + path)
+        r = self.call("readRange", rel, int(start), int(end), timeout=120)
+        if r["status"] == 404:
+            raise FsError("ENOENT", "ENOENT: no such file or directory, open '{}'".format(path))
+        if r["status"] != 206:
+            raise FsError("EIO", "나눠 받기를 지원하지 않습니다 ({}): {}".format(r["status"], path))
+        return base64.b64decode(r["b64"]), r.get("total") or 0
 
     def mkdir(self, path):
         st = self.stat(path)
