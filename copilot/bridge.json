@@ -1,5 +1,9 @@
 {
   "_설명": "브리지 pi 중계 서버(relay.py)와 진단(diag.py) 설정. 비워 둔 항목은 자동. 항목 설명은 README-copilot.md 참고",
+  "_브라우저": "pi 를 실행할 때 전용 창이 꺼져 있으면 띄움 (browser: chrome 또는 edge). jupyter_url 에 JupyterLab 주소를 넣으면 함께 열림",
+  "browser": "chrome",
+  "auto_start_browser": true,
+  "jupyter_url": "",
   "cdp_port": 9222,
   "copilot_url_contains": "m365.cloud.microsoft/chat",
   "copilot_new_chat_url": "https://m365.cloud.microsoft/chat",

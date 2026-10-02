@@ -20,6 +20,9 @@ import urllib.parse
 import urllib.request
 
 DEFAULT_CONFIG = {
+    "browser": "chrome",  # 전용 창 브라우저: chrome 또는 edge (bin/pi 가 꺼져 있으면 start-<browser>.cmd 로 띄움)
+    "auto_start_browser": True,
+    "jupyter_url": "",  # 전용 창을 띄울 때 함께 열 JupyterLab 주소
     "cdp_port": 9222,
     "copilot_url_contains": "m365.cloud.microsoft/chat",
     "copilot_new_chat_url": "https://m365.cloud.microsoft/chat",

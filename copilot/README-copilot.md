@@ -35,10 +35,12 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 
 ## 1. 처음 한 번
 1. `docs/설치.md` 대로 Git Bash 에 설치합니다 (`bash install.sh pc`).
-2. **Chrome 전용 창**을 띄웁니다 (Git Bash, 또는 탐색기에서 더블클릭):
+2. **Chrome 전용 창**: `pi` 를 실행할 때 전용 창이 꺼져 있으면 **자동으로 띄웁니다.** 직접 띄우려면 (Git Bash, 또는 탐색기에서 더블클릭):
    ```
    ~/tools/pi/copilot/start-chrome.cmd https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab
    ```
+   - JupyterLab 도 함께 열리게 하려면 `copilot/bridge.json` 의 `jupyter_url` 에 그 주소를 넣어 두세요 (자동으로 띄울 때 씀).
+   - Edge 로 띄우려면 `"browser": "edge"`, 자동으로 띄우지 않으려면 `"auto_start_browser": false`.
    - 평소 쓰는 Chrome 과 따로 뜨는 창입니다 (전용 프로필 `%LOCALAPPDATA%\pi-copilot-chrome`). 평소 Chrome 의 탭·로그인은 건드리지 않습니다.
      최신 Chrome(136 이후)은 평소 프로필에는 원격 조작을 허용하지 않아서 전용 프로필이 꼭 필요합니다.
    - 열린 창에서 **Copilot 에 로그인**합니다 (처음 한 번. 로그인은 전용 프로필에 남음). jupyter 모드를 쓰려면 **Kubeflow 에도 로그인**해 JupyterLab 을 이 창에 열어 둡니다.
@@ -53,8 +55,9 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
    python copilot/diag.py --model      (+ 모델 메뉴 항목을 보여 주고 copilot_model 을 골라 봄. --model "GPT 6.0 Sol" 처럼 이름 지정 가능)
    python copilot/diag.py --chats      (+ 왼쪽 채팅 목록을 찾는지)
    python copilot/diag.py --delete-test  (+ 시험 대화를 하나 만들어 '… > 삭제 > 확인' 으로 지워 봄. 다른 대화는 건드리지 않음)
+   python copilot/diag.py --report     (한 화면 상태 요약: 버전·Node·중계 서버·전용 창·현재 모델·설정·최근 로그. 읽기만 함)
    ```
-   `결과: 정상` 이 나오면 됩니다.
+   `결과: 정상` 이 나오면 됩니다. **문제가 생기면 `--report` 화면을 찍어 보내 주세요.** 상황 대부분이 한 장에 담깁니다.
 
 ## 2. 사용 (Git Bash)
 ```bash
@@ -136,7 +139,10 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 ## 3. 설정 (copilot/bridge.json, 중계 서버 옵션)
 | 항목 | 의미 |
 |---|---|
-| `cdp_port` | 전용 브라우저 창의 원격 디버깅 포트 (start-chrome.cmd·start-edge.cmd 와 같아야 함, 기본 9222) |
+| `browser` | 전용 창 브라우저: `chrome`(기본) 또는 `edge`. 없으면 다른 쪽으로 띄움 |
+| `auto_start_browser` | `pi` 를 실행할 때 전용 창이 꺼져 있으면 자동으로 띄움 (기본 true) |
+| `jupyter_url` | 전용 창을 자동으로 띄울 때 함께 열 JupyterLab 주소 (기본 비움) |
+| `cdp_port` | 전용 브라우저 창의 원격 디버깅 포트 (기본 9222. 자동으로 띄울 때 이 포트로 띄움) |
 | `copilot_url_contains` / `copilot_new_chat_url` | Copilot 탭을 찾을 주소 / 새 채팅 주소 |
 | `jupyter_url_contains` | JupyterLab 탭이 여러 개일 때 고를 주소 일부 (예: `/notebook/내네임스페이스/내노트북/`) |
 | `input_selector`, `send_button_selector`, `new_chat_selector`, `reply_selector` | 자동 인식이 안 될 때 CSS 선택자를 직접 지정. diag.py 가 후보를 보여줌 |

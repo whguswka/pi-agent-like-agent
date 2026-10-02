@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.4"
+RELAY_VERSION = "2026-10-02.5"
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문

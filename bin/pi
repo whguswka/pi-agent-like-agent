@@ -59,11 +59,34 @@ pi_relay_stop_old() {
     for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open || return 0; sleep 0.3; done ;;
   esac
 }
+# bridge.json 의 단순 값 하나 (문자열·숫자·true/false)
+pi_cfg() { sed -n "s/^ *\"$1\": *\"\{0,1\}\([^\",]*\)\"\{0,1\} *,\{0,1\} *$/\1/p" "$PI_HOME/copilot/bridge.json" 2>/dev/null | head -1; }
+# Copilot 전용 브라우저 창이 꺼져 있으면 띄운다 (bridge.json: browser chrome|edge, auto_start_browser, jupyter_url, cdp_port)
+pi_browser_autostart() {
+  local port browser s i
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ;; *) return 0 ;; esac
+  [ "$(pi_cfg auto_start_browser)" = "false" ] && return 0
+  port="$(pi_cfg cdp_port)"; port="${port:-9222}"
+  (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && return 0  # 이미 떠 있음
+  browser="$(pi_cfg browser)"; [ "$browser" = edge ] || browser=chrome
+  for s in "$browser" "$([ "$browser" = chrome ] && echo edge || echo chrome)"; do  # 없으면 다른 브라우저로
+    [ -f "$PI_HOME/copilot/start-$s.cmd" ] || continue
+    # 주소는 인자 대신 환경변수로 넘김 (& 같은 기호를 cmd 가 명령으로 해석하지 않게)
+    if PI_CDP_PORT="$port" PI_JUPYTER_URL="$(pi_cfg jupyter_url)" \
+       cmd //c "$(cygpath -w "$PI_HOME/copilot/start-$s.cmd")" > /dev/null 2>&1 < /dev/null; then
+      echo "[pi] Copilot 전용 창($s)을 띄웠습니다. 처음이면 그 창에서 Copilot 에 로그인하세요." >&2
+      for i in $(seq 1 20); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && return 0; sleep 0.5; done
+      return 0
+    fi
+  done
+  echo "[pi] Copilot 전용 창을 띄우지 못했습니다. copilot/start-chrome.cmd 를 직접 실행해 보세요." >&2
+}
 pi_relay_autostart() {
   local agent="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" py a i log script="$PI_HOME/copilot/relay.py"
   for a in "$@"; do case "$a" in -v|--version|-h|--help) return 0 ;; esac; done  # 버전/도움말만 볼 때는 켜지 않음
   grep -q "127.0.0.1:8765" "$agent/models.json" 2>/dev/null || return 0
   [ -f "$script" ] || return 0
+  pi_browser_autostart
   pi_port_open && pi_relay_stop_old "$script"
   pi_port_open && return 0  # 이미 실행 중 (같은 버전)
   py="$(pi_find_python)" || { echo "[pi] 중계 서버를 켤 Python 을 찾지 못했습니다. PI_PYTHON=/python/경로 로 지정하세요." >&2; return 0; }

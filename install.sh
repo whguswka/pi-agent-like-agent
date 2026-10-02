@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 1회 실행: bash install.sh <jupyter|pc>
-#  실행권한 부여 + ~/.pi/agent 설정 템플릿 배치(기존 파일 유지) + PATH 등록
+# 설치·업데이트: bash install.sh <jupyter|pc>   (새 판으로 바꾼 뒤에도 다시 실행)
+#  실행권한 부여 + ~/.pi/agent 설정 템플릿 배치 (기존 설정은 유지하고 새 판에 추가된 항목만 넣음) + PATH 등록
 #   jupyter : Kubeflow JupyterLab 터미널에서 실행, 사내 vLLM 연결
 #   pc      : 업무 PC 의 Git Bash 에서 실행, Copilot 웹 채팅 연결 (copilot/ 중계기)
 set -e
@@ -25,6 +25,13 @@ mkdir -p "$AGENT_DIR"
        else mkdir -p "$(dirname "$AGENT_DIR/$f")"; cp "$TEMPLATE/$f" "$AGENT_DIR/$f"; echo "생성: $AGENT_DIR/$f"; fi ;;
   esac
 done
+# 이미 있던 설정 파일에는 새 판에 추가된 항목(새 모델 등)만 넣는다. 직접 고친 값과 직접 지운 항목은 그대로 (pi 가 쓰는 Node 로 실행)
+. "$PI_HOME/bin/find-node.sh"
+if PI_MERGE_NODE="$(pi_find_node 2>/dev/null)"; then
+  pi_node_exec "$PI_MERGE_NODE" "$PI_HOME/bin/merge-config.mjs" "$TEMPLATE" "$AGENT_DIR" || echo "참고: 위 설정 파일을 확인해 주세요"
+else
+  echo "참고: Node 를 찾지 못해 기존 설정 파일에 새 항목을 넣지 못했습니다 (Node 를 준비한 뒤 install.sh 를 다시 실행하세요)"
+fi
 # Windows: Git 이 기본 경로가 아니면 settings.json 에 shellPath 지정
 #  - cmd/PowerShell 에서 실행할 때 쓰임 (Git Bash 안에서 실행하면 pi 가 PATH 의 bash.exe 를 찾으므로 없어도 됨)
 #  - Python 없이 처리하고, 실패해도 설치는 계속한다 (python 이 Windows 스토어 바로가기뿐인 PC 대비)
