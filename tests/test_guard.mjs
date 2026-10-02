@@ -56,6 +56,14 @@ check("guard_allow 에 안 맞으면 그대로 묻기", !!g.checkCommand("git pu
 check("guard_patterns 로 더 묻기", g.checkCommand("make deploy", { guard_patterns: ["make deploy"] }) === "직접 지정한 명령 (guard_patterns)");
 check("잘못된 정규식은 무시", g.checkCommand("ls", { guard_patterns: ["("] }) === null);
 
+// 공통 셸 분석기(lib/shell.ts): 출력 리다이렉트 대상 (계획 모드의 읽기 전용 판단용)
+const sh = await jiti.import("../profiles/common/agent-template/extensions/lib/shell.ts");
+const redir = (src) => sh.parseShell(src).pipelines.flat().flatMap((c) => c.redirects);
+for (const [src, want] of [
+	["echo hi > out.txt", ["out.txt"]], ["ls 2>/dev/null", []], ["make >> build.log 2>&1", ["build.log"]], ["make &> all.log", ["all.log"]],
+	["echo x >&2", []], ["cat <<'EOF' > s.sh\nrm -rf x\nEOF", ["s.sh"]], ["sort < in.txt | uniq", []], ["a > x; b > y", ["x", "y"]],
+]) check(`리다이렉트: ${JSON.stringify(src)}`, JSON.stringify(redir(src)) === JSON.stringify(want), redir(src));
+
 // 작업 폴더 밖 파일
 const R = { remote: true, cwd: "/home/jovyan/work/p", home: "/home/jovyan" };
 check("노트북: 작업 폴더 안 (상대 경로)", g.outsidePath("a.txt", R) === null);
