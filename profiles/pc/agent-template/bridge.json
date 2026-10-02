@@ -1,0 +1,7 @@
+{
+  "_설명": "내 설정 파일. 저장소의 copilot/bridge.json 과 같은 항목 중 바꾸고 싶은 것만 여기에 적으세요. 업데이트해도 이 파일은 그대로 남습니다. 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다: curl -s -X POST http://127.0.0.1:8765/shutdown",
+  "_예시": {
+    "jupyter_url": "https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab",
+    "max_questions_per_minute": 2
+  }
+}

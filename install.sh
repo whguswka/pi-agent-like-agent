@@ -61,9 +61,10 @@ echo
 echo
 echo "설치 완료. 새 터미널을 열고 'pi --version' 으로 확인하세요. (지금 터미널에서 바로 쓰려면: export PATH=\"$PI_HOME/bin:\$PATH\")"
 if [ "$PROFILE" = pc ]; then
-  echo "브리지 pi 사용법: $PI_HOME/copilot/README-copilot.md"
-  echo "  1) $PI_HOME/copilot/start-chrome.cmd 로 Chrome 전용 창을 열고 Copilot 에 로그인 (jupyter 모드는 Kubeflow 도. Edge 는 start-edge.cmd)"
+  echo "사용법: $PI_HOME/README.md (GitHub 첫 페이지와 같은 내용)"
+  echo "  1) pi 를 실행하면 Chrome 전용 창이 뜹니다. 처음이면 그 창에서 Copilot 에 로그인하세요 (jupyter 모드는 Kubeflow 도)"
   echo "  2) pi   또는   pi --jupyter work/프로젝트이름"
+  echo "  설정을 바꿀 때는 내 설정 파일에: $AGENT_DIR/bridge.json (업데이트해도 그대로 남음)"
 else
   echo "그 다음 $AGENT_DIR/models.json 의 baseUrl / 모델 id 를 사내 vLLM 에 맞게 수정하세요 (docs/vLLM-연결.md)."
 fi

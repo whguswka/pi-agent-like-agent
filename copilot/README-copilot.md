@@ -57,6 +57,8 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 - `models.json` 의 `contextWindow` 를 1000000 으로 크게 잡은 이유: pi 가 스스로 기록을 요약(압축)하면 기록이 바뀌어 Copilot 새 채팅이 열립니다. 대화 기억은 Copilot 채팅이 갖고 있으므로 pi 의 압축이 일어나지 않게 했습니다.
 
 ## 3. 설정 (copilot/bridge.json, 중계 서버 옵션)
+`copilot/bridge.json` 은 기본값입니다. 바꾸고 싶은 항목은 **내 설정 파일 `~/.pi/agent/bridge.json`** 에 같은 이름으로 적으세요 (업데이트해도 남음, [README 10장](../README.md#10-설정)).
+
 | 항목 | 의미 |
 |---|---|
 | `browser` | 전용 창 브라우저: `chrome`(기본) 또는 `edge`. 없으면 다른 쪽으로 띄움 |

@@ -3,6 +3,7 @@
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 PI_HOME="$(cd "$(dirname "$SELF")/.." && pwd)"
 . "$PI_HOME/bin/find-node.sh"
+. "$PI_HOME/bin/kit-config.sh"
 NODE="$(pi_find_node)" || {
   echo "[pi] 사용할 수 있는 Node.js(20.15 이상)를 찾지 못했습니다." >&2
   echo "     export PI_NODE=/node/실행파일/경로   로 지정하세요.  (진단: $PI_HOME/check-node.sh)" >&2
@@ -32,13 +33,6 @@ if [ -n "$PI_JUPYTER" ]; then
 fi
 
 # 중계 서버 자동 시작 (브리지 pi): 설정(models.json)이 중계 서버 주소를 쓰는데 꺼져 있으면 백그라운드로 켠다
-pi_find_python() { # PI_PYTHON > PATH 의 python(스토어 바로가기 제외) > 흔한 설치 경로 (find-node.sh 의 pi_pythons)
-  local p
-  [ -n "$PI_PYTHON" ] && { command -v cygpath >/dev/null 2>&1 && cygpath -u "$PI_PYTHON" || echo "$PI_PYTHON"; return 0; }
-  p="$(pi_pythons | head -1)"
-  [ -n "$p" ] && { echo "$p"; return 0; }
-  return 1
-}
 pi_port_open() { (exec 3<>/dev/tcp/127.0.0.1/8765) 2>/dev/null; }
 # 실행 중인 중계 서버가 이 코드와 버전이 다르면(새 코드로 바꾼 뒤) 끈다. 우리 중계 서버가 아니면 건드리지 않음
 pi_relay_stop_old() {
@@ -59,8 +53,6 @@ pi_relay_stop_old() {
     for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open || return 0; sleep 0.3; done ;;
   esac
 }
-# bridge.json 의 단순 값 하나 (문자열·숫자·true/false)
-pi_cfg() { sed -n "s/^ *\"$1\": *\"\{0,1\}\([^\",]*\)\"\{0,1\} *,\{0,1\} *$/\1/p" "$PI_HOME/copilot/bridge.json" 2>/dev/null | head -1; }
 # Copilot 전용 브라우저 창이 꺼져 있으면 띄운다 (bridge.json: browser chrome|edge, auto_start_browser, jupyter_url, cdp_port)
 pi_browser_autostart() {
   local port browser s i
@@ -86,6 +78,10 @@ pi_relay_autostart() {
   for a in "$@"; do case "$a" in -v|--version|-h|--help) return 0 ;; esac; done  # 버전/도움말만 볼 때는 켜지 않음
   grep -q "127.0.0.1:8765" "$agent/models.json" 2>/dev/null || return 0
   [ -f "$script" ] || return 0
+  if ! pi_cfg_load; then  # 설정 파일 형식 오류 (bridge.py 가 어느 파일 몇째 줄인지 알림)
+    echo "     고친 뒤 다시 실행하세요. (내 설정 파일: ${PI_COPILOT_USER_CONFIG:-$agent/bridge.json})" >&2
+    exit 1
+  fi
   pi_browser_autostart
   pi_port_open && pi_relay_stop_old "$script"
   pi_port_open && return 0  # 이미 실행 중 (같은 버전)
@@ -95,6 +91,10 @@ pi_relay_autostart() {
   mkdir -p "$agent"
   nohup "$py" "$script" >> "$log" 2>&1 < /dev/null &
   for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open && break; sleep 0.5; done
+  if ! pi_port_open; then
+    echo "[pi] 중계 서버를 켜지 못했습니다. 로그($log) 끝부분:" >&2
+    tail -n 3 "$log" 2>/dev/null | sed 's/^/     /' >&2
+  fi
   [ -n "$PI_DEBUG" ] && echo "[pi] 중계 서버 시작 (로그: $log)" >&2
   return 0
 }

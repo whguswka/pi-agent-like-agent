@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.5"
+RELAY_VERSION = "2026-10-02.6"
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문
@@ -1017,7 +1017,11 @@ def main():
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except AttributeError:
             pass
-    cfg = bridge.load_config(args.config)
+    try:
+        cfg = bridge.load_config(args.config)
+    except bridge.ConfigError as e:
+        print(time.strftime("%H:%M:%S"), "설정 파일 오류 - 중계 서버를 켜지 않습니다:", e, flush=True)
+        sys.exit(2)
     registry = ChatRegistry(args.chats or default_registry_path())
     relay = Relay(args, CopilotLink(cfg, registry))
     jup = Jupyter(cfg)
@@ -1028,8 +1032,10 @@ def main():
         sys.exit(1)
     server.daemon_threads = True
     relay.server = server
-    relay.log("중계 서버 시작: http://{}:{}/v1  (버전 {}, 브라우저 원격 디버깅 포트 {}, 설정 {})".format(
-        args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.config if os.path.exists(args.config) else "기본값"))
+    user = cfg["_user"]
+    relay.log("중계 서버 시작: http://{}:{}/v1  (버전 {}, 브라우저 원격 디버깅 포트 {}, 설정 {}{})".format(
+        args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.config if os.path.exists(args.config) else "기본값",
+        " + 내 설정 {}개 ({}: {})".format(len(user["keys"]), user["path"], ", ".join(user["keys"])) if user["keys"] else ""))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

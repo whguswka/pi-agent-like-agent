@@ -1012,9 +1012,76 @@ class Copilot:
                     pass
 
 
-def load_config(path):
-    cfg = dict(DEFAULT_CONFIG)
-    if path and os.path.exists(path):
+class ConfigError(Exception):
+    """설정 파일(JSON) 형식 오류"""
+
+
+def agent_dir():
+    return os.environ.get("PI_CODING_AGENT_DIR") or os.path.join(os.path.expanduser("~"), ".pi", "agent")
+
+
+def user_config_path():
+    """내 설정 파일: 저장소의 bridge.json 위에 덮어쓰는 값만 적는다. 업데이트로 저장소 폴더를 바꿔도 남는다"""
+    return os.environ.get("PI_COPILOT_USER_CONFIG") or os.path.join(agent_dir(), "bridge.json")
+
+
+def read_config_file(path):
+    """JSON 설정 파일 -> dict ('_' 로 시작하는 키는 설명용이라 뺌). 파일이 없으면 None, 형식이 틀리면 ConfigError"""
+    try:
         with open(path, encoding="utf-8-sig") as f:
-            cfg.update({k: v for k, v in json.load(f).items() if not k.startswith("_")})
+            text = f.read()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise ConfigError("{} 를 읽을 수 없습니다: {}".format(path, e))
+    try:
+        data = json.loads(text) if text.strip() else {}
+    except ValueError as e:
+        where = " (줄 {}, 칸 {})".format(e.lineno, e.colno) if hasattr(e, "lineno") else ""
+        hint = ". Windows 경로의 \\ 는 / 로 쓰세요 (예: C:/Users/...)" if "escape" in str(e).lower() else ""
+        raise ConfigError("{} 의 JSON 형식 오류{}: {}{}".format(path, where, getattr(e, "msg", e), hint))
+    if not isinstance(data, dict):
+        raise ConfigError("{} 는 {{ ... }} 형식의 JSON 이어야 합니다".format(path))
+    return {k: v for k, v in data.items() if not str(k).startswith("_")}
+
+
+_USER = object()  # load_config 의 user_path 기본값 = user_config_path()
+
+
+def load_config(path, user_path=_USER):
+    """기본값 <- 저장소의 bridge.json(path) <- 내 설정 파일(user_path, 기본 ~/.pi/agent/bridge.json) 순서로 덮어쓴다
+    표(dict) 값은 항목별로 합친다 (예: copilot_models 에 모델 하나만 추가). 형식이 틀리면 ConfigError.
+    cfg["_user"] = {"path": 내 설정 파일, "keys": 덮어쓴 항목}"""
+    cfg = dict(DEFAULT_CONFIG)
+    cfg.update((read_config_file(path) or {}) if path else {})
+    if user_path is _USER:
+        user_path = user_config_path()
+    user = (read_config_file(user_path) or {}) if user_path else {}
+    for k, v in user.items():
+        cfg[k] = dict(cfg[k], **v) if isinstance(cfg.get(k), dict) and isinstance(v, dict) else v
+    cfg["_user"] = {"path": user_path, "keys": sorted(user)}
     return cfg
+
+
+def main_print_shell(path):
+    """bin/pi 용: 실행기가 쓰는 값을 key=value 줄로 (설정 형식이 틀리면 오류를 알리고 2 로 끝냄)"""
+    for s in (sys.stdout, sys.stderr):  # Git Bash 창(UTF-8)에서 한글이 깨지지 않게
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except AttributeError:
+            pass
+    try:
+        cfg = load_config(path)
+    except ConfigError as e:
+        print("[pi] 설정 파일 오류: {}".format(e), file=sys.stderr)
+        return 2
+    for k in ("browser", "auto_start_browser", "jupyter_url", "cdp_port"):
+        v = cfg.get(k)
+        v = ("true" if v else "false") if isinstance(v, bool) else str(v if v is not None else "")
+        print("{}={}".format(k, v.replace("\n", " ")))
+    return 0
+
+
+if __name__ == "__main__":  # python bridge.py --shell-config  (bin/pi 가 부름)
+    if sys.argv[1:2] == ["--shell-config"]:
+        sys.exit(main_print_shell(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge.json")))

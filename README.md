@@ -184,7 +184,7 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 pi 와 Copilot 은 PC 에서 돌고, **명령 실행과 파일 작업(도구 4개: bash, read, write, edit)만** Kubeflow 노트북에서 하게 할 수 있습니다. 노트북에는 아무것도 설치하지 않습니다.
 
 **준비:** 전용 창에서 Kubeflow 에 로그인하고 **JupyterLab 을 탭으로 열어 둡니다** (평소 Chrome 에 열린 탭은 쓸 수 없음).
-- 전용 창을 띄울 때 JupyterLab 도 함께 열리게 하려면 `bridge.json` 의 `jupyter_url` 에 주소(`https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab`)를 넣어 둡니다.
+- 전용 창을 띄울 때 JupyterLab 도 함께 열리게 하려면 내 설정 파일(`~/.pi/agent/bridge.json`)의 `jupyter_url` 에 주소(`https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab`)를 넣어 둡니다.
 - 확인: `python ~/tools/pi/copilot/diag.py --jupyter`
 
 ```bash
@@ -335,17 +335,32 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
    - 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다.
 4. `pi` 를 실행하면 중계 서버도 새 버전으로 자동으로 다시 켜집니다.
 
-- `copilot/bridge.json` 은 저장소 안의 파일이라 새 판의 기본값으로 돌아갑니다. 직접 고친 값(`jupyter_url` 등)이 있었다면 `~/tools/pi.old/copilot/bridge.json` 을 보고 다시 넣으세요.
+- 바꾼 설정은 내 설정 파일(`~/.pi/agent/bridge.json`, [10장](#10-설정))에 두면 업데이트해도 남습니다.
+  예전 판에서 `copilot/bridge.json` 을 직접 고쳤다면, `~/tools/pi.old/copilot/bridge.json` 에서 그 항목을 내 설정 파일로 옮기세요.
 - 잘 동작하면 `~/tools/pi.old` 는 지워도 됩니다.
 
 ## 10. 설정
 | 파일 | 내용 |
 |---|---|
-| `~/tools/pi/copilot/bridge.json` | 중계 서버 설정: 전용 창, Copilot 화면 조작, 모델 이름, 대기 시간 등 |
+| `~/.pi/agent/bridge.json` | **내 설정 파일.** 아래 항목 중 바꾸고 싶은 것만 적습니다. 업데이트해도 그대로 남습니다 |
+| `~/tools/pi/copilot/bridge.json` | 중계 서버 설정의 기본값 (저장소에 들어 있는 파일이라 업데이트하면 새 판 값으로 바뀜. 직접 고치지 마세요) |
 | `~/.pi/agent/settings.json` | pi 설정: 기본 모델(`defaultModel`), 응답 대기(`retry.provider.timeoutMs`), Git Bash 경로(`shellPath`) |
 | `~/.pi/agent/models.json` | pi 가 쓸 모델 목록 |
 
-자주 바꾸는 `bridge.json` 항목:
+**내 설정 파일 예시** (`~/.pi/agent/bridge.json`):
+```json
+{
+  "jupyter_url": "https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab",
+  "max_questions_per_minute": 2,
+  "copilot_models": { "gpt-7": "GPT 7" }
+}
+```
+- 적은 항목만 기본값을 덮어씁니다. `copilot_models` 같은 표는 항목별로 합쳐집니다 (위 예시는 모델 하나를 더하는 것).
+- `_` 로 시작하는 항목(`_설명` 등)은 설명용이라 무시됩니다.
+- 형식이 틀리면 `pi` 를 실행할 때 `[pi] 설정 파일 오류: ... (줄 n, 칸 m)` 으로 알려 줍니다.
+- 이 문서에서 "`bridge.json` 의 ○○" 라고 한 항목은 모두 내 설정 파일에 적으면 됩니다.
+
+자주 바꾸는 항목:
 
 | 항목 | 기본값 | 뜻 |
 |---|---|---|
@@ -358,7 +373,7 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 |
 | `copilot_models` | 4장의 표 | pi 모델 id → Copilot 화면의 모델 이름 |
 
-- **`bridge.json` 을 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다.** 아래 명령으로 끄면 다음 `pi` 실행 때 새 설정으로 켜집니다.
+- **설정을 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다.** 아래 명령으로 끄면 다음 `pi` 실행 때 새 설정으로 켜집니다.
   ```bash
   curl -s -X POST http://127.0.0.1:8765/shutdown
   ```
@@ -383,8 +398,9 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 | `같은 작업(...)이 계속 반복되어 여기서 멈췄습니다` | Copilot 이 같은 작업을 되풀이해서 중계 서버가 끊은 것입니다. 요청을 나누거나 바꿔서 다시 하세요 |
 | 로그에 `Copilot 모델 선택 실패` | `diag.py --model` 로 메뉴 이름을 보고 `models.json`·`bridge.json` 의 이름을 화면과 똑같이 맞추세요 |
 | 로그에 `지난 Copilot 대화 삭제 실패` | `diag.py --chats --delete-test` 결과를 확인하세요 |
-| `bridge.json` 을 고쳤는데 그대로임 | 중계 서버를 다시 켜야 합니다 ([10장](#10-설정)) |
-| 설정 파일 오류 (`settings.json` 등) | JSON 형식 확인 (경로의 `\` 는 `/` 로). 설치 때 남긴 `.bak` 으로 되돌릴 수 있습니다 |
+| 설정을 고쳤는데 그대로임 | 중계 서버를 다시 켜야 합니다 ([10장](#10-설정)) |
+| `[pi] 설정 파일 오류: ... (줄 n, 칸 m)` | 알려 준 파일의 그 줄을 고치세요. 흔한 원인은 Windows 경로의 `\` (`/` 로 쓰기)와 마지막 항목 뒤의 쉼표 |
+| pi 설정 파일 오류 (`settings.json` 등) | JSON 형식 확인 (경로의 `\` 는 `/` 로). 설치 때 남긴 `.bak` 으로 되돌릴 수 있습니다 |
 | pi 가 끝난 뒤 터미널 화면이 이상함 | `reset` 입력 |
 
 전체 표: [copilot/README-copilot.md 4장](copilot/README-copilot.md#4-문제-해결)

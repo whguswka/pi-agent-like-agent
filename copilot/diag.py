@@ -143,6 +143,13 @@ def report(cfg):
         cfg.get("browser", "chrome"), cfg.get("copilot_model") or "(화면 그대로)",
         "켬" if cfg.get("delete_finished_chats", True) else "끔", cfg.get("max_questions_per_chat"),
         cfg.get("first_reply_timeout_seconds"), cfg.get("reply_timeout_seconds")))
+    user = cfg.get("_user") or {}
+    if cfg.get("_error"):
+        show("내 설정", "X 설정 파일 오류 -> {}".format(cfg["_error"]))
+    elif user.get("keys"):
+        show("내 설정", "{} ({}개: {})".format(user.get("path"), len(user["keys"]), ", ".join(user["keys"])))
+    else:
+        show("내 설정", "바꾼 항목 없음 ({})".format(user.get("path") or bridge.user_config_path()))
     st, md = load(os.path.join(agent, "settings.json")), load(os.path.join(agent, "models.json"))
     ids = [m.get("id") for p in (md.get("providers") or {}).values() for m in (p.get("models") or [])]
     try:
@@ -179,7 +186,14 @@ def main():
     ap.add_argument("--delete-test", action="store_true", help="시험 대화를 만들어 삭제해 봄")
     ap.add_argument("--report", action="store_true", help="한 화면 상태 요약 (읽기만 함)")
     args = ap.parse_args()
-    cfg = bridge.load_config(args.config)
+    try:
+        cfg = bridge.load_config(args.config)
+    except bridge.ConfigError as e:
+        if not args.report:
+            print("설정 파일 오류: {}".format(e))
+            return 1
+        cfg = bridge.load_config(None, None)  # 요약은 기본값으로 보여 주고 오류를 함께 알림
+        cfg["_error"] = str(e)
     if args.report:
         return report(cfg)
     ok = True
