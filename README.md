@@ -317,7 +317,12 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 - **속도:** 질문 한 번 왕복에 보통 7~20초 걸립니다. pi 는 도구를 쓸 때마다 Copilot 에 한 번씩 묻기 때문에, 파일 여러 개를 다루는 작업은 몇 분 걸립니다.
 - **사용량 제한:** 쉬지 않고 일하면 분당 질문 5개 정도가 나갑니다. 시험에서는 30분에 약 145개를 보냈을 때 약 1시간 동안 막혔습니다.
   이런 제한이 있는 계정이면 `bridge.json` 의 `max_questions_per_minute` 를 2 정도로 두세요. 제한이 없는 환경이면 기본값 0(끔) 그대로 둡니다.
-- **pi 는 도구를 쓸 때마다 허락을 묻지 않습니다.** 파일을 고치고 명령을 실행하므로 중요한 폴더는 git 으로 관리하고 바뀐 내용을 확인하세요. 시킨 범위를 벗어나는 작업이 보이면 `Esc` 로 멈춥니다.
+- **위험할 수 있는 작업은 실행 전에 묻습니다.** pi 는 보통 도구를 쓸 때 허락을 묻지 않지만, 되돌리기 어려운 작업은 확인 창을 띄웁니다.
+  - 대상: 폴더 지우기(`rm -r` 등), `git push`·`git reset --hard`·`git clean`·`git branch -D`, 권한 일괄 변경, `kubectl delete`,
+    패키지 제거, `sudo`, 받은 스크립트 바로 실행(`curl ... | sh`), 데이터베이스 삭제, 작업 폴더 밖 파일 쓰기 (jupyter 모드는 노트북 작업 폴더 기준)
+  - 거부하면 실행하지 않고 작업을 멈춥니다. 직접 치는 `!명령` 은 묻지 않습니다. `pi -p` 처럼 물을 수 없을 때는 실행하지 않고 LLM 에게 이유를 알립니다.
+  - 묻지 않을 명령, 더 물어볼 명령은 [10장](#10-설정)의 `guard_allow`, `guard_patterns` 로 정합니다.
+- 그래도 모든 위험을 막지는 못합니다. 중요한 폴더는 git 으로 관리하고 바뀐 내용을 확인하세요. 시킨 범위를 벗어나는 작업이 보이면 `Esc` 로 멈춥니다.
 
 ## 9. 새 버전으로 바꾸기
 실행 중인 pi 를 모두 끈 뒤, 받은 zip 을 지정해 `update.sh` 를 실행합니다 (`~/tools/pi` 밖의 폴더에서).
@@ -379,12 +384,16 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 | `max_questions_per_chat` | `100` | 이만큼 질문하면 새 대화로 넘어감 |
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 |
 | `copilot_models` | 4장의 표 | pi 모델 id → Copilot 화면의 모델 이름 |
+| `guard` | `true` | 위험할 수 있는 작업을 실행 전에 묻기 ([8장](#8-주의할-점)). `false` 면 끔 |
+| `guard_allow` | `[]` | 묻지 않을 명령 (정규식 목록, 예: `["^git push origin feature/"]`) |
+| `guard_patterns` | `[]` | 더 물어볼 명령 (정규식 목록, 예: `["make deploy"]`) |
+| `guard_outside_writes` | `true` | 작업 폴더 밖 파일 쓰기도 묻기 |
 
 - **설정을 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다.** 아래 명령으로 끄면 다음 `pi` 실행 때 새 설정으로 켜집니다.
   ```bash
   curl -s -X POST http://127.0.0.1:8765/shutdown
   ```
-  (`browser`, `auto_start_browser`, `jupyter_url` 은 `pi` 를 실행할 때마다 읽으므로 바로 적용됩니다.)
+  (`browser`, `auto_start_browser`, `jupyter_url` 은 `pi` 를 실행할 때마다 읽고, `guard` 로 시작하는 항목은 고치면 바로 적용됩니다.)
 - JSON 파일에 Windows 경로를 쓸 때는 `/` 로 씁니다 (`"C:/Users/..."`). `\` 를 하나만 쓰면 JSON 오류가 납니다.
 - 전체 항목: [copilot/README-copilot.md 3장](copilot/README-copilot.md#3-설정-copilotbridgejson-중계-서버-옵션)
 - 중계 서버를 다른 에이전트에서 OpenAI 호환 API 로 쓰기: [copilot/README-copilot.md 5장](copilot/README-copilot.md#5-다른-에이전트에서-쓰기-중계-서버-api)
@@ -430,9 +439,9 @@ bash ~/tools/pi/install.sh jupyter
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
-| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`) |
+| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인 등) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
-| `tests/` | 중계기 단위 테스트 (`python tests/test_relay.py`) |
+| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`) |
 | `docs/` | [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**

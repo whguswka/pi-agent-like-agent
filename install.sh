@@ -18,12 +18,16 @@ chmod +x "$PI_HOME/bin/pi" "$PI_HOME/install.sh" "$PI_HOME/update.sh" "$PI_HOME/
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 mkdir -p "$AGENT_DIR"
 # 설정 파일은 이미 있으면 유지, 확장(extensions/)은 프로그램이므로 항상 새 것으로
-( cd "$TEMPLATE" && find . -type f | sed 's#^\./##' ) | while IFS= read -r f; do
-  case "$f" in
-    extensions/*) mkdir -p "$(dirname "$AGENT_DIR/$f")"; cp "$TEMPLATE/$f" "$AGENT_DIR/$f"; echo "설치: $AGENT_DIR/$f" ;;
-    *) if [ -e "$AGENT_DIR/$f" ]; then echo "유지: $AGENT_DIR/$f (이미 존재)"
-       else mkdir -p "$(dirname "$AGENT_DIR/$f")"; cp "$TEMPLATE/$f" "$AGENT_DIR/$f"; echo "생성: $AGENT_DIR/$f"; fi ;;
-  esac
+#  profiles/common: 두 설정 공통 (위험 명령 확인 등), profiles/<설정>: 설정별
+for T in "$PI_HOME/profiles/common/agent-template" "$TEMPLATE"; do
+  [ -d "$T" ] || continue
+  ( cd "$T" && find . -type f | sed 's#^\./##' ) | while IFS= read -r f; do
+    case "$f" in
+      extensions/*) mkdir -p "$(dirname "$AGENT_DIR/$f")"; cp "$T/$f" "$AGENT_DIR/$f"; echo "설치: $AGENT_DIR/$f" ;;
+      *) if [ -e "$AGENT_DIR/$f" ]; then echo "유지: $AGENT_DIR/$f (이미 존재)"
+         else mkdir -p "$(dirname "$AGENT_DIR/$f")"; cp "$T/$f" "$AGENT_DIR/$f"; echo "생성: $AGENT_DIR/$f"; fi ;;
+    esac
+  done
 done
 # 이미 있던 설정 파일에는 새 판에 추가된 항목(새 모델 등)만 넣는다. 직접 고친 값과 직접 지운 항목은 그대로 (pi 가 쓰는 Node 로 실행)
 . "$PI_HOME/bin/find-node.sh"

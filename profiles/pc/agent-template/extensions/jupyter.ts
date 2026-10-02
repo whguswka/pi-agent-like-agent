@@ -202,6 +202,13 @@ export default function (pi: ExtensionAPI) {
 	let remote: Remote | null = null; // --jupyter 로 시작했으면 연결 실패여도 null 이 아님 (PC 에서 대신 실행하지 않도록)
 	let remoteAgents = ""; // 노트북 작업 폴더의 AGENTS.md
 	let lastArg = ""; // 마지막으로 쓴 노트북 폴더 (/jupyter 만 치면 다시 그곳)
+	// 지금 작업 폴더를 다른 확장(guard.ts: 작업 폴더 밖 파일 쓰기 확인)에 알린다
+	const publish = () => {
+		(globalThis as any).__piWorkDir = remote
+			? { remote: true, cwd: remote.cwd || "/", home: remote.home }
+			: { remote: false, cwd: localDir };
+	};
+	publish();
 
 	// jupyter 모드에서도 PC 에서 읽는 곳: pi 설정 폴더와 스킬 폴더 (스킬 내용은 모델이 읽기 도구로 읽으므로)
 	const agentDir = slash(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"));
@@ -287,6 +294,7 @@ export default function (pi: ExtensionAPI) {
 			} catch {}
 			lastArg = arg;
 			ctx.ui.setStatus("jupyter", ctx.ui.theme.fg("accent", `Jupyter: ${r.cwd}`));
+			publish();
 			ctx.ui.notify(`jupyter 모드: 명령과 파일 작업을 노트북의 ${r.cwd} 에서 실행합니다 (/local 로 PC 로 돌아감)`, "info");
 			return true;
 		} catch (e) {
@@ -301,6 +309,7 @@ export default function (pi: ExtensionAPI) {
 		if (!(await connect(arg, ctx))) {
 			// --jupyter 로 시작했으면 연결에 실패해도 PC 에서 대신 실행하지 않는다 (/local 로 직접 바꿀 수 있음)
 			remote = { arg, cwd: "", home: "", root: "" };
+			publish();
 			ctx.ui.setStatus("jupyter", ctx.ui.theme.fg("error", "Jupyter: 연결 안 됨"));
 		}
 	});
@@ -313,7 +322,10 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		const prev = remote;
-		if (!(await connect(arg, ctx))) remote = prev; // 실패하면 원래 위치 그대로
+		if (!(await connect(arg, ctx))) {
+			remote = prev; // 실패하면 원래 위치 그대로
+			publish();
+		}
 	};
 	const jupyterHelp = "명령·파일 작업을 Kubeflow 노트북 안에서 실행 (값: 노트북 폴더, 예: work/mlproj. 생략하면 마지막 폴더)";
 	pi.registerCommand("jupyter", { description: jupyterHelp, handler: toJupyter });
@@ -335,6 +347,7 @@ export default function (pi: ExtensionAPI) {
 			localDir = dir;
 			local = makeLocal(dir);
 			localAgents = "";
+			publish();
 			if (slash(dir) !== slash(startDir)) {
 				try {
 					localAgents = readFileSync(join(dir, "AGENTS.md"), "utf8");
