@@ -397,5 +397,34 @@ check("diag 통계: 새 대화·조각 나눔·다시 보냄·오류", _st["new"
       and _st["retry"] == 1 and _st["errors"] == 1, _st)
 check("diag 통계: 기록 없으면 None", diag.request_stats(["10:00:00 답: 도구 read"]) is None)
 
+# multi_read (bridge.json, 기본 꺼짐): 맨 앞부터 이어지는 read 블록 여러 개를 한 번에 tool_calls 로
+_rb = ('```json\n{"tool": "read", "arguments": {"path": "a.py"}}\n```\n'
+       '```json\n{"tool": "read", "arguments": {"path": "b.py"}}\n```\n'
+       '```json\n{"tool": "bash", "arguments": {"command": "ls"}}\n```')
+_calls = relay.leading_reads({"text": _rb}, TOOLS)
+check("leading_reads: 앞의 read 2개만 (bash 앞에서 멈춤)", [c["arguments"]["path"] for c in _calls] == ["a.py", "b.py"], _calls)
+check("leading_reads: 첫 블록이 read 가 아니면 없음", relay.leading_reads(
+    {"text": '```json\n{"tool": "bash", "arguments": {"command": "ls"}}\n```\n```json\n{"tool": "read", "arguments": {"path": "a"}}\n```'},
+    TOOLS) == [])
+_mr = FakeLink([_rb, "비교했습니다."])
+_mr.cfg = {"multi_read": True}
+_rm = relay.Relay(A(), _mr)
+_u = {"role": "user", "content": "a.py 와 b.py 를 비교해줘"}
+with _cl.redirect_stdout(_io.StringIO()):
+    _am = _rm.handle({"messages": [_u], "tools": tools})
+check("multi_read 켬: tool_calls 2개 (read 만)", [tc["function"]["name"] for tc in _am.get("tool_calls", [])] == ["read", "read"], _am)
+check("multi_read 켬: 지침에 read 여러 개 허용 안내", relay.MULTI_READ_RULE.strip() in _mr.sent_log[0]["parts"][0])
+_res = [{"role": "tool", "tool_call_id": tc["id"], "content": "내용 {}".format(i)} for i, tc in enumerate(_am["tool_calls"])]
+with _cl.redirect_stdout(_io.StringIO()):
+    _a2 = _rm.handle({"messages": [_u, _am] + _res, "tools": tools})
+check("multi_read 켬: 결과 두 개를 같은 대화에 한 메시지로", not _mr.sent_log[1]["new_thread"]
+      and _mr.sent_log[1]["parts"][0].count("TOOL_RESULT (read)") == 2 and _a2.get("content") == "비교했습니다.", _mr.sent_log[1])
+_off = FakeLink([_rb])
+_off.cfg = {}
+with _cl.redirect_stdout(_io.StringIO()):
+    _ao = relay.Relay(A(), _off).handle({"messages": [_u], "tools": tools})
+check("multi_read 끔(기본): 첫 블록 하나만, 안내 없음",
+      len(_ao["tool_calls"]) == 1 and relay.MULTI_READ_RULE.strip() not in _off.sent_log[0]["parts"][0], _ao)
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

@@ -53,6 +53,7 @@ DEFAULT_CONFIG = {
     "tool_result_chars": 6000,
     "resend_recent_chars": 20000,
     "resend_summary_chars": 40000,
+    "multi_read": False,  # True 면 Copilot 이 파일 읽기(read) 블록을 여러 개 한 번에 줄 수 있음 (왕복 횟수 줄이기)
     # 모델 선택: Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 화면의 모델 메뉴에서 고른다
     "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT 6.0 Sol"). 비우면 화면 그대로
     "copilot_models": {},  # pi 모델 id -> 화면 이름. 표에 없는 id 는 id 자체를 화면 이름으로 씀

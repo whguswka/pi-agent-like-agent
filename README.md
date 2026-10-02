@@ -320,6 +320,7 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
   실제로 얼마나 걸리는지는 `diag.py --report` 의 '최근 요청' 줄(평균 시간, 새 대화 횟수와 시간, 긴 메시지를 나눠 보낸 횟수)에서 볼 수 있습니다.
   새 대화를 열 때 1~2분 걸리는 것은 대부분 긴 메시지를 1만 자씩 나눠 보내기 때문입니다. `diag.py --input-limit` 로 입력창 한도를 확인하고,
   더 받는다면 내 설정 파일의 `max_chars` 를 늘리면 빨라집니다.
+  파일을 여러 개 읽는 작업이 많다면 `multi_read` 를 켜 보세요. Copilot 이 여러 파일 읽기를 한 번에 요청할 수 있어 왕복이 줄어듭니다 (시험 기능, 기본 꺼짐).
 - **사용량 제한:** 쉬지 않고 일하면 분당 질문 5개 정도가 나갑니다. 시험에서는 30분에 약 145개를 보냈을 때 약 1시간 동안 막혔습니다.
   이런 제한이 있는 계정이면 `bridge.json` 의 `max_questions_per_minute` 를 2 정도로 두세요. 제한이 없는 환경이면 기본값 0(끔) 그대로 둡니다.
 - **위험할 수 있는 작업은 실행 전에 묻습니다.** pi 는 보통 도구를 쓸 때 허락을 묻지 않지만, 되돌리기 어려운 작업은 확인 창을 띄웁니다.
@@ -388,6 +389,7 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 | `max_questions_per_minute` | `0` | 분당 질문 수 제한 (0 이면 끔) |
 | `max_questions_per_chat` | `100` | 이만큼 질문하면 새 대화로 넘어감 |
 | `max_chars` | `10000` | Copilot 메시지 하나의 최대 글자 수. 넘으면 나눠 보내고 조각마다 왕복이 한 번 더 듭니다 (`diag.py --input-limit` 로 확인) |
+| `multi_read` | `false` | `true` 면 Copilot 이 파일 읽기(read)를 여러 개 한 번에 요청할 수 있음 (왕복 줄이기, 시험 기능). 고치기·명령 실행은 그대로 하나씩 |
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 |
 | `copilot_models` | 4장의 표 | pi 모델 id → Copilot 화면의 모델 이름 |
 | `guard` | `true` | 위험할 수 있는 작업을 실행 전에 묻기 ([8장](#8-주의할-점)). `false` 면 끔 |

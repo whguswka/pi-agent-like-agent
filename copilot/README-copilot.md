@@ -82,6 +82,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `max_questions_per_minute` | 0 이면 끔. 숫자를 넣으면 분당 그 수를 넘지 않게 기다렸다 보냄 (Copilot 사용량 제한 예방, 아래 참고) |
 | `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |
 | `tool_result_chars` | 도구 결과 하나를 보낼 최대 글자 수 (기본 6000, 가운데 생략) |
+| `multi_read` | 기본 false. true 면 진행 규칙에 "여러 파일을 읽을 때는 read 블록 여러 개를 한 번에 써도 된다" 를 넣고, 답의 맨 앞부터 이어지는 read 블록을 모두 tool_calls 로 돌려줌 (pi 는 한 답의 도구들을 동시에 실행하므로 read 만) |
 | `resend_recent_chars` / `resend_summary_chars` | 새 대화를 열 때 다시 넣는 기록: 최근 것은 이 글자 수만큼 그대로, 그 앞은 이 글자 수만큼 한 줄 요약 (기본 20000 / 40000). `max_chars` 를 늘려도 이 양은 그대로 |
 
 중계 서버 옵션 (`python relay.py --help`): `--max-chars`, `--tool-result-chars` 를 주면 위 설정보다 먼저 씁니다.

@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.8"
+RELAY_VERSION = "2026-10-02.9"
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문
@@ -111,7 +111,7 @@ PREAMBLE = """[{tag}]
 ```
 4. 요청이 끝났으면 코드 블록 없이 결과를 정리해서 답해 주세요.
 - JSON 은 올바른 형식이어야 합니다 (문자열 안 줄바꿈은 \\n, 따옴표는 \\").
-- 한 번에 블록 하나만 써 주세요.
+- 한 번에 블록 하나만 써 주세요.{multi_read}
 - 메시지 끝의 [pi-xxxxxx] 표시는 무시하세요.
 
 사용할 수 있는 도구
@@ -133,7 +133,11 @@ REMIND_AFTER = 15
 REMIND_EVERY = 10
 PROTOCOL_REMINDER = ("(참고 - 진행 방식: 요청이 끝났으면 코드 블록 없이 최종 답을 주세요. 더 할 작업이 있으면 다음 작업 하나만 "
                      "```json {{\"tool\": \"<도구>\", \"arguments\": {{...}}}}``` 블록으로 주세요 (파일 전체 쓰기는 "
-                     "```text @tool write path=<경로> ...```). 이미 한 작업을 똑같이 반복하지 마세요. 도구: {tools}.)")
+                     "```text @tool write path=<경로> ...```).{multi_read} 이미 한 작업을 똑같이 반복하지 마세요. 도구: {tools}.)")
+# multi_read (bridge.json, 기본 꺼짐): 파일 읽기(read)는 블록 여러 개를 한 번에 받는다 (왕복 횟수 줄이기).
+#  pi 는 한 답의 도구들을 동시에 실행하므로, 순서가 중요한 쓰기·명령 실행은 지금처럼 하나씩
+MULTI_READ_RULE = " 단, 여러 파일을 읽어야 하면 read 블록은 여러 개를 한 번에 써도 됩니다 (결과를 한꺼번에 드립니다)."
+MULTI_READ_HINT = " 여러 파일 읽기는 read 블록 여러 개를 한 번에 써도 됩니다."
 
 # 같은 도구 호출(도구·인자 같음)이 연달아 반복되면 끊는다 (시험: 같은 write 를 8초마다 60번 넘게 반복한 일이 있었음)
 LOOP_LIMIT = 2  # 직전에 이미 연속 2번 같은 호출이 있었으면 3번째는 반복으로 본다
@@ -200,6 +204,10 @@ def system_for_copilot(system):
         rest = paras[0].strip().split("\n", 1)[1:]
         paras = ([rest[0]] if rest and rest[0].strip() else []) + paras[1:]
     return "\n\n".join(paras) or "(없음)"
+
+
+def names_of(tools):
+    return {(t.get("function") or t).get("name") for t in tools or []}
 
 
 def render_tools(tools):
@@ -441,6 +449,21 @@ def parse_reply(reply, tool_names):
     return st, None, first_err
 
 
+def leading_reads(reply, tool_names):
+    """multi_read 용: 답의 코드 블록 중 맨 앞부터 이어지는 read 호출 목록 (read 가 아닌 블록이 나오면 거기서 멈춤)"""
+    text = reply.get("text") or ""
+    blocks = reply.get("code_blocks") or [{"lang": m.group(1).strip(), "text": m.group(2)} for m in FENCE_RE.finditer(text)]
+    calls = []
+    for b in blocks:
+        call, err = parse_block(b.get("text", ""), b.get("lang", ""), tool_names)
+        if call is None and err is None:  # 도구 블록이 아닌 코드 (예시 등)
+            continue
+        if not call or call["name"] != "read":
+            break
+        calls.append(call)
+    return calls
+
+
 # ---------------------------------------------------------------------------
 # Copilot 탭 (같은 프로세스에서 bridge.Copilot 으로 직접 조작)
 # ---------------------------------------------------------------------------
@@ -677,6 +700,9 @@ class Relay:
             st["new"] = st["new"] or new_thread
         return self.link.request(parts, new_thread, model=self.model_label)
 
+    def multi_read(self):
+        return bool((getattr(self.link, "cfg", None) or {}).get("multi_read"))
+
     def stat_text(self):
         """'답:' 줄 끝의 통계. diag.py --report 가 이 형식을 읽어 평균을 낸다: (12.3초 · 조각 2 · 새 대화 · 다시 보냄 1)"""
         st = self.stat
@@ -735,7 +761,8 @@ class Relay:
             if asked < self.reminded_at:  # 새 대화로 바뀌었으면 다시 센다
                 self.reminded_at = 0
             if tool_names and asked >= REMIND_AFTER and asked - self.reminded_at >= REMIND_EVERY:
-                text += "\n\n" + PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)))
+                text += "\n\n" + PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)),
+                                                         multi_read=MULTI_READ_HINT if self.multi_read() else "")
                 self.reminded_at = asked
             parts = build_parts(text, self.args.max_chars, marker)
             new_thread = False
@@ -782,9 +809,15 @@ class Relay:
                 self.log("반복이 계속됨 -> 이 요청을 멈춤")
                 body_text, call = LOOP_STOP.format(name=call["name"]), None
         if call:
+            calls = [call]
+            if call["name"] == "read" and self.multi_read():
+                more = leading_reads(reply, tool_names)
+                if len(more) > 1 and more[0] == call:
+                    calls = more
+                    self.log("  (read {}개를 한 번에)".format(len(calls)))
             assistant = {"role": "assistant", "content": body_text or None, "tool_calls": [{
                 "id": "call_" + uuid.uuid4().hex[:12], "type": "function",
-                "function": {"name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)}}]}
+                "function": {"name": c["name"], "arguments": json.dumps(c["arguments"], ensure_ascii=False)}} for c in calls]}
         else:
             assistant = {"role": "assistant", "content": body_text}
         self.sent = fps + [fingerprint(assistant)]
@@ -794,7 +827,8 @@ class Relay:
 
     def full_parts(self, messages, tools, names, marker):
         system = "\n\n".join(content_text(m.get("content")) for m in messages if m.get("role") in ("system", "developer"))
-        head = PREAMBLE.format(tag=PROTOCOL_TAG, tools=render_tools(tools), system=system_for_copilot(system))
+        head = PREAMBLE.format(tag=PROTOCOL_TAG, tools=render_tools(tools), system=system_for_copilot(system),
+                               multi_read=MULTI_READ_RULE if self.multi_read() and "read" in names_of(tools) else "")
         convo = [m for m in messages if m.get("role") not in ("system", "developer")]
         # 새 대화에 다시 넣는 기록: 최근 것은 그대로(full_budget), 그 앞은 한 줄 요약(brief_budget), 더 오래된 것은 생략
         full_budget = getattr(self.args, "resend_recent_chars", None) or self.args.max_chars * 2
