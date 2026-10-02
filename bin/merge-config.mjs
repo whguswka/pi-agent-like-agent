@@ -2,11 +2,13 @@
 //  - 사용자가 고친 값은 그대로 둔다 (없는 항목만 추가)
 //  - 사용자가 지운 항목은 다시 넣지 않는다: 지난번에 설치한 템플릿(.pi-agent-kit-template.json)과 비교해 새로 생긴 것만 추가
 //  - 바꾸기 전 파일은 <이름>.bak 으로 남긴다
-// 사용법: node merge-config.mjs <템플릿 폴더> <사용자 설정 폴더>
+//  - 저장소의 기본 명령·스킬 폴더(<저장소>/prompts, <저장소>/skills)를 settings.json 의 prompts·skills 목록에 등록한다
+//    (저장소 폴더를 그대로 쓰므로 업데이트하면 함께 바뀐다. 사용자가 목록에서 지우면 다시 넣지 않는다)
+// 사용법: node merge-config.mjs <템플릿 폴더> <사용자 설정 폴더> [저장소 폴더]
 import fs from "node:fs";
 import path from "node:path";
 
-const [tplDir, agentDir] = process.argv.slice(2);
+const [tplDir, agentDir, kitHome] = process.argv.slice(2);
 const FILES = ["settings.json", "models.json"];
 const stateFile = path.join(agentDir, ".pi-agent-kit-template.json");
 
@@ -64,6 +66,25 @@ function mergeModels(u, t, p, changes) {
 const prevState = readJson(stateFile);
 const prev = prevState.ok && isObj(prevState.value) ? prevState.value : {};
 const state = {};
+const norm = (x) => String(x).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+/** settings.json 에 저장소의 기본 명령·스킬 폴더 등록 (지난번에 넣었는데 지금 없으면 사용자가 지운 것 -> 그대로) */
+function addKitPaths(u, changes) {
+	if (!kitHome) return;
+	state.kitPaths = {};
+	for (const key of ["prompts", "skills"]) {
+		const dir = `${kitHome.replace(/\\/g, "/").replace(/\/+$/, "")}/${key}`;
+		if (!fs.existsSync(dir)) continue;
+		state.kitPaths[key] = dir;
+		const has = Array.isArray(u[key]);
+		const list = has ? u[key] : [];
+		if (list.some((x) => norm(x) === norm(dir))) continue;
+		const old = prev.kitPaths?.[key];
+		if (has && old && norm(old) === norm(dir)) continue; // 목록은 있는데 이 폴더만 없음 -> 사용자가 지움 (파일을 새로 만든 경우는 다시 넣음)
+		u[key] = list.filter((x) => !old || norm(x) !== norm(old)).concat([dir]); // 다른 곳으로 옮겨 설치했으면 예전 위치는 뺌
+		changes.push(`${key} 에 ${dir} 등록`);
+	}
+}
 let failed = false;
 for (const name of FILES) {
 	const t = readJson(path.join(tplDir, name));
@@ -83,6 +104,7 @@ for (const name of FILES) {
 		name === "models.json"
 			? mergeModels(u.value, t.value, prev[name], changes)
 			: mergeObj(u.value, t.value, prev[name], changes, "");
+	if (name === "settings.json") addKitPaths(merged, changes);
 	if (!changes.length) continue;
 	fs.copyFileSync(file, `${file}.bak`);
 	fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`);

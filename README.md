@@ -137,6 +137,7 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 | 도구 출력 펼치기·접기 | `Ctrl+O` |
 | 모델 고르기 / 다음 모델로 | `/model` 또는 `Ctrl+L` / `Ctrl+P` |
 | 지침·스킬을 고친 뒤 다시 읽기 | `/reload` |
+| 자주 하는 일 | 기본 명령 `/init` `/handoff` `/review` `/test` `/commit` `/explain` ([6장](#6-지침-스킬-메모리)) |
 | 명령 목록 | `/` 를 치면 나옴 |
 
 ### 3-3. 세션 (대화 기록)
@@ -237,7 +238,7 @@ pi 에게 무엇을 어디에 적어 두는지 정리한 표입니다.
 | 항상 지킬 규칙, 내 작업 방식 | `~/.pi/agent/AGENTS.md` (공통 지침) | 모든 세션 |
 | 이 프로젝트의 규칙, 구조, 빌드·테스트 방법 | 프로젝트 폴더의 `AGENTS.md` (프로젝트 지침) | 그 폴더(또는 하위 폴더)에서 시작한 세션 |
 | 특정 작업의 절차, 양식, 참고 자료 | 스킬: `~/.pi/agent/skills/<이름>/SKILL.md` | 작업이 스킬 설명과 맞을 때 LLM 이 읽음. `/skill:이름` 으로 직접 부를 수도 있음 |
-| 자주 쓰는 지시문 | 프롬프트 템플릿: `~/.pi/agent/prompts/<이름>.md` | `/이름` 을 입력할 때 |
+| 자주 쓰는 지시문 | 프롬프트 템플릿: `~/.pi/agent/prompts/<이름>.md` (기본 명령은 아래) | `/이름` 을 입력할 때 |
 | 지난 작업의 맥락 | 세션 기록 (자동 저장) | `pi -c`, `/resume` |
 
 파일 이름은 정확히 **`AGENTS.md`**(S 포함, 대문자)와 **`SKILL.md`**(대문자) 입니다.
@@ -304,6 +305,21 @@ description: 주간 업무 보고서를 쓸 때 사용. 이번 주 git 기록을
 **프로젝트 신뢰:** 프로젝트 폴더에 `.pi/skills/`, `.pi/settings.json` 같은 설정이 있으면, pi 는 시작할 때 이 폴더를 믿을지 묻습니다.
 믿는다고 답해야 그 스킬·설정이 들어옵니다. `/trust` 로 결정을 저장하면 다음부터 묻지 않습니다.
 `pi -p` 는 물을 수 없어서 건너뜁니다 (불러오려면 `pi --approve -p "..."`). 지침(AGENTS.md)은 신뢰와 관계없이 항상 읽습니다.
+
+### 기본 명령 (프롬프트 템플릿)
+자주 하는 일을 짧은 명령으로 시킬 수 있게 기본으로 넣어 두었습니다. 명령 뒤에 덧붙인 말은 요청에 함께 들어갑니다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `/init` | 프로젝트를 살펴보고 그 폴더의 `AGENTS.md`(프로젝트 지침) 초안을 씀. 이미 있으면 빠진 내용만 제안 |
+| `/handoff [메모]` | 지금까지 한 일·다음 할 일을 `NOTES.md` 에 정리. 다음 날 `pi -c` 나 새 세션에서 이어 가기 좋음 |
+| `/review [파일·볼 점]` | 커밋하지 않은 변경(git diff)을 검토. 고치지 않고 문제를 심각한 순서로 정리 |
+| `/test [대상]` | 테스트를 돌리고, 실패하면 원인을 찾아 고침 (테스트를 지우거나 건너뛰게 하지 않음) |
+| `/commit [내용]` | 바뀐 내용으로 한국어 커밋 메시지를 써서 커밋 (push 는 하지 않음) |
+| `/explain <파일·함수>` | 코드를 읽고 하는 일·구조·흐름·주의할 점을 설명 |
+
+- 명령 파일은 저장소의 `prompts/` 에 있고, 설치할 때 `~/.pi/agent/settings.json` 의 `prompts` 목록에 등록됩니다. 업데이트하면 함께 바뀝니다.
+- 내 명령은 `~/.pi/agent/prompts/<이름>.md` 로 만듭니다 (형식은 `prompts/` 의 파일을 참고). 기본 명령을 쓰지 않으려면 `prompts` 목록에서 그 경로를 지우세요 (다시 설치해도 다시 넣지 않음).
 
 ### 메모리
 - **pi 에는 자동 메모리 기능이 없습니다.** 대화에서 무엇을 기억할지 스스로 골라 저장하지 않습니다.
@@ -482,8 +498,9 @@ bash ~/tools/pi/install.sh jupyter
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
 | `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 끝 알림) |
+| `prompts/` | 기본 명령 (`/init`, `/handoff`, `/review`, `/test`, `/commit`, `/explain`) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
-| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`) |
+| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_merge_config.mjs`) |
 | `docs/` | [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**

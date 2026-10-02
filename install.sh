@@ -32,7 +32,7 @@ done
 # 이미 있던 설정 파일에는 새 판에 추가된 항목(새 모델 등)만 넣는다. 직접 고친 값과 직접 지운 항목은 그대로 (pi 가 쓰는 Node 로 실행)
 . "$PI_HOME/bin/find-node.sh"
 if PI_MERGE_NODE="$(pi_find_node 2>/dev/null)"; then
-  pi_node_exec "$PI_MERGE_NODE" "$PI_HOME/bin/merge-config.mjs" "$TEMPLATE" "$AGENT_DIR" || echo "참고: 위 설정 파일을 확인해 주세요"
+  pi_node_exec "$PI_MERGE_NODE" "$PI_HOME/bin/merge-config.mjs" "$TEMPLATE" "$AGENT_DIR" "$PI_HOME" || echo "참고: 위 설정 파일을 확인해 주세요"
 else
   echo "참고: Node 를 찾지 못해 기존 설정 파일에 새 항목을 넣지 못했습니다 (Node 를 준비한 뒤 install.sh 를 다시 실행하세요)"
 fi
