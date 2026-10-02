@@ -67,10 +67,391 @@ function regexps(list: unknown): RegExp[] {
 	return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// 셸 명령 분석: 따옴표 안의 글(echo "rm -rf ..." 등)이나 heredoc 본문(cat <<'EOF' 로 파일 쓰기)은 실행되는 명령이 아니므로
+// 명령 자리(줄 맨 앞, ; && || | 뒤 등)의 낱말만 본다. 실제로 실행되는 글은 안까지 본다:
+// bash -c "...", eval, ssh 호스트 '...', su -c, cmd /c, $(...), `...`, bash <<EOF 본문.
+// python -c, node -e 같은 인라인 코드와 powershell 명령은 위의 RULES(글자 패턴)로 본다.
+// 분석 중 오류가 나면 전체 글을 RULES 로 본다 (놓치는 것보다 한 번 더 묻는 쪽).
+// ---------------------------------------------------------------------------------------------------------------
+
+/** 데이터베이스 삭제·rmtree 는 SQL·코드 문자열 안에 있으므로 따옴표와 관계없이 전체 글에서 본다 */
+const CONTENT_RULES = RULES.filter((r) => /데이터베이스|rmtree/.test(r.label));
+const LABEL = {
+	rm: RULES[0].label,
+	find: RULES[1].label,
+	win: RULES[2].label,
+	push: RULES[4].label,
+	discard: RULES[5].label,
+	branch: RULES[6].label,
+	perm: RULES[7].label,
+	system: RULES[8].label,
+	kube: RULES[9].label,
+	pipe: RULES[10].label,
+	pkg: RULES[11].label,
+	sudo: RULES[12].label,
+};
+
+type Simple = { words: string[] };
+type Parsed = { pipelines: Simple[][]; nested: string[]; heredocs: { words: string[]; body: string }[] };
+
+/** 셸 글 -> 파이프라인(단순 명령 목록)들, 안에서 실행되는 글($(...), `...`), heredoc 본문 */
+function parseShell(src: string): Parsed {
+	const out: Parsed = { pipelines: [], nested: [], heredocs: [] };
+	let pipeline: Simple[] = [];
+	let words: string[] = [];
+	let cur = "";
+	let has = false; // 지금 낱말이 시작됐는지 (빈 따옴표 "" 도 낱말)
+	const pending: { delim: string; strip: boolean; words: string[] }[] = [];
+	const endWord = () => {
+		if (has) words.push(cur);
+		cur = "";
+		has = false;
+	};
+	const endCmd = () => {
+		endWord();
+		if (words.length) pipeline.push({ words });
+		words = [];
+	};
+	const endPipe = () => {
+		endCmd();
+		if (pipeline.length) out.pipelines.push(pipeline);
+		pipeline = [];
+	};
+	/** $( 다음부터 짝이 맞는 ) 까지 (따옴표 안의 괄호는 셈하지 않음) */
+	const balanced = (i: number): [string, number] => {
+		let depth = 1;
+		let j = i;
+		let q = "";
+		for (; j < src.length; j++) {
+			const c = src[j];
+			if (q) {
+				if (c === "\\" && q === '"') j++;
+				else if (c === q) q = "";
+				continue;
+			}
+			if (c === "'" || c === '"') q = c;
+			else if (c === "\\") j++;
+			else if (c === "(") depth++;
+			else if (c === ")" && --depth === 0) break;
+		}
+		return [src.slice(i, j), j];
+	};
+	let i = 0;
+	while (i < src.length) {
+		const c = src[i];
+		if (c === "\\") {
+			if (src[i + 1] === "\n") i += 2; // 줄 이음
+			else {
+				cur += src[i + 1] ?? "";
+				has = true;
+				i += 2;
+			}
+			continue;
+		}
+		if (c === "'") {
+			const j = src.indexOf("'", i + 1);
+			const end = j < 0 ? src.length : j;
+			cur += src.slice(i + 1, end);
+			has = true;
+			i = end + 1;
+			continue;
+		}
+		if (c === '"') {
+			let j = i + 1;
+			for (; j < src.length && src[j] !== '"'; j++) {
+				if (src[j] === "\\") {
+					cur += src[j + 1] ?? "";
+					j++;
+				} else if (src[j] === "$" && src[j + 1] === "(") {
+					const [inner, end] = balanced(j + 2);
+					out.nested.push(inner);
+					cur += "$(...)";
+					j = end;
+				} else if (src[j] === "`") {
+					const end = src.indexOf("`", j + 1);
+					out.nested.push(src.slice(j + 1, end < 0 ? src.length : end));
+					cur += "`...`";
+					j = end < 0 ? src.length : end;
+				} else cur += src[j];
+			}
+			has = true;
+			i = j + 1;
+			continue;
+		}
+		if (c === "$" && src[i + 1] === "(") {
+			const [inner, end] = balanced(i + 2);
+			out.nested.push(inner);
+			cur += "$(...)";
+			has = true;
+			i = end + 1;
+			continue;
+		}
+		if (c === "`") {
+			const end = src.indexOf("`", i + 1);
+			out.nested.push(src.slice(i + 1, end < 0 ? src.length : end));
+			cur += "`...`";
+			has = true;
+			i = end < 0 ? src.length : end + 1;
+			continue;
+		}
+		if (c === "#" && !has) {
+			const nl = src.indexOf("\n", i);
+			i = nl < 0 ? src.length : nl;
+			continue;
+		}
+		if (c === "\n") {
+			endPipe();
+			i++;
+			// heredoc 본문: 끝 표시 줄까지 건너뜀 (본문은 따로 모아 둠)
+			for (const h of pending.splice(0)) {
+				const lines: string[] = [];
+				while (i < src.length) {
+					const nl = src.indexOf("\n", i);
+					const line = src.slice(i, nl < 0 ? src.length : nl);
+					i = nl < 0 ? src.length : nl + 1;
+					if ((h.strip ? line.replace(/^\t+/, "") : line) === h.delim) break;
+					lines.push(line);
+				}
+				out.heredocs.push({ words: h.words, body: lines.join("\n") });
+			}
+			continue;
+		}
+		if (c === " " || c === "\t" || c === "\r") {
+			endWord();
+			i++;
+			continue;
+		}
+		if (c === "<" && src.startsWith("<<<", i)) {
+			endWord();
+			i += 3;
+			continue;
+		}
+		if (c === "<" && src[i + 1] === "<") {
+			endWord();
+			const strip = src[i + 2] === "-";
+			i += strip ? 3 : 2;
+			while (src[i] === " " || src[i] === "\t") i++;
+			let d = "";
+			while (i < src.length && !/[\s;&|<>()]/.test(src[i])) {
+				if (src[i] !== "'" && src[i] !== '"' && src[i] !== "\\") d += src[i];
+				i++;
+			}
+			pending.push({ delim: d, strip, words: [...words] });
+			continue;
+		}
+		if (c === "<" || c === ">") {
+			endWord();
+			i += src[i + 1] === ">" || src[i + 1] === "&" ? 2 : 1;
+			continue;
+		}
+		if (c === ";" || c === "(" || c === ")") {
+			endPipe();
+			i++;
+			continue;
+		}
+		if (c === "&") {
+			if (src[i + 1] === ">") {
+				endWord();
+				i += 2;
+				continue;
+			}
+			endPipe();
+			i += src[i + 1] === "&" ? 2 : 1;
+			continue;
+		}
+		if (c === "|") {
+			if (src[i + 1] === "|") {
+				endPipe();
+				i += 2;
+			} else {
+				endCmd();
+				i += src[i + 1] === "&" ? 2 : 1;
+			}
+			continue;
+		}
+		cur += c;
+		has = true;
+		i++;
+	}
+	endPipe();
+	return out;
+}
+
+const base = (w: string) => w.replace(/\\/g, "/").split("/").pop()!.replace(/\.exe$/i, "").toLowerCase();
+const SKIP = new Set(["then", "do", "else", "elif", "if", "while", "until", "!", "{", "}", "time", "nohup", "exec", "command", "builtin", "stdbuf"]);
+/** 명령 앞에 붙는 것(변수 대입, then·do, env·nice·timeout·xargs 등)을 넘기고 실제 명령부터. sudo 는 따로 알림 */
+function strip(words: string[]): { rest: string[]; sudo: boolean } {
+	let k = 0;
+	let sudo = false;
+	while (k < words.length) {
+		const w = words[k];
+		const b = base(w);
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || SKIP.has(w)) k++;
+		else if (b === "env") {
+			k++;
+			while (k < words.length && (words[k].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k]))) k++;
+		} else if (b === "nice" || b === "ionice") {
+			k++;
+			while (k < words.length && words[k].startsWith("-")) k += /^-(n|c|p)$/.test(words[k]) ? 2 : 1;
+		} else if (b === "timeout") {
+			k++;
+			while (k < words.length && words[k].startsWith("-")) k += /^-(s|k)$/.test(words[k]) ? 2 : 1;
+			k++; // 시간
+		} else if (b === "xargs") {
+			k++;
+			while (k < words.length && words[k].startsWith("-")) k += /^-(n|I|P|d|L|s|E|a)$/.test(words[k]) ? 2 : 1;
+		} else if (b === "sudo" || b === "doas") {
+			sudo = true;
+			k++;
+			while (k < words.length && words[k].startsWith("-")) k += /^-(u|g|h|p|C|U|r|t)$/.test(words[k]) ? 2 : 1;
+		} else break;
+	}
+	return { rest: words.slice(k), sudo };
+}
+
+/** 인라인 코드(python -c 등)·powershell 명령: 글자 패턴으로 */
+const legacy = (code: string): string | null => {
+	for (const r of RULES) if (r.re.test(code)) return r.label;
+	return null;
+};
+
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "busybox"]);
+const INTERP: Record<string, RegExp> = {
+	python: /^-c$/,
+	python3: /^-c$/,
+	py: /^-c$/,
+	node: /^(-e|--eval|-p|--print)$/,
+	perl: /^-[eE]$/,
+	ruby: /^-e$/,
+};
+
+function checkSimple(words: string[], depth: number): string | null {
+	const { rest, sudo } = strip(words);
+	if (!rest.length) return sudo ? LABEL.sudo : null;
+	const name = base(rest[0]).replace(/[0-9.]+$/, (m) => (/^(python|pip)/.test(base(rest[0])) ? "" : m));
+	const args = rest.slice(1);
+	const flag = (re: RegExp) => args.some((a) => re.test(a));
+	let why: string | null = null;
+	if (name === "rm" && flag(/^-[a-zA-Z]*[rR][a-zA-Z]*$|^--recursive$/)) why = LABEL.rm;
+	else if ((name === "rmdir" || name === "rd") && flag(/^\/s$/i)) why = LABEL.win;
+	else if ((name === "del" || name === "erase") && flag(/^\/s$/i)) why = LABEL.win;
+	else if (name === "remove-item" && flag(/^-recurse$/i)) why = LABEL.win;
+	else if (name === "find") {
+		const ex = args.findIndex((a) => /^-(exec|execdir|ok|okdir)$/.test(a));
+		if (flag(/^-delete$/) || (ex >= 0 && ex + 1 < args.length && base(args[ex + 1]) === "rm")) why = LABEL.find;
+	} else if (name === "git") {
+		let k = 0;
+		while (k < args.length && args[k].startsWith("-")) k += /^-(C|c)$|^--(git-dir|work-tree|namespace)$/.test(args[k]) ? 2 : 1;
+		const sub = args[k];
+		const a = args.slice(k + 1);
+		const has = (re: RegExp) => a.some((x) => re.test(x));
+		if (sub === "push") why = LABEL.push;
+		else if (sub === "reset" && has(/^--hard$/)) why = LABEL.discard;
+		else if (sub === "clean" && has(/^-[a-zA-Z]*f|^--force$/)) why = LABEL.discard;
+		else if (sub === "checkout" && (has(/^\.$/) || has(/^(-f|--force)$/))) why = LABEL.discard;
+		else if (sub === "restore" && has(/^\.$/) && !(has(/^(--staged|-S)$/) && !has(/^(--worktree|-W)$/))) why = LABEL.discard;
+		else if (sub === "stash" && (a[0] === "drop" || a[0] === "clear")) why = LABEL.discard;
+		else if (sub === "branch" && (has(/^-[a-zA-Z]*D/) || (has(/^(-d|--delete)$/) && has(/^(-f|--force)$/)))) why = LABEL.branch;
+	} else if ((name === "chmod" || name === "chown" || name === "chgrp") && flag(/^-[a-zA-Z]*R|^--recursive$/)) why = LABEL.perm;
+	else if (/^mkfs/.test(name) || name === "diskpart") why = LABEL.system;
+	else if (name === "dd" && flag(/^of=\/dev\//)) why = LABEL.system;
+	else if (["shutdown", "reboot", "poweroff", "halt"].includes(name)) why = LABEL.system;
+	else if (name === "format" && flag(/^[a-zA-Z]:$/)) why = LABEL.system;
+	else if (name === "kubectl" && flag(/^delete$/)) why = LABEL.kube;
+	else if (name === "helm" && flag(/^(uninstall|delete|del|un)$/)) why = LABEL.kube;
+	else if ((name === "pip" || name === "pip3") && flag(/^uninstall$/)) why = LABEL.pkg;
+	else if ((name === "python" || name === "py") && args[0] === "-m" && /^pip/.test(args[1] || "") && args.includes("uninstall")) why = LABEL.pkg;
+	else if (["conda", "mamba", "micromamba"].includes(name) && (flag(/^(remove|uninstall)$/) || (args.includes("env") && args.includes("remove")))) why = LABEL.pkg;
+	else if (name === "npm" && flag(/^(uninstall|un|rm|remove|r)$/) && flag(/^(-g|--global)$/)) why = LABEL.pkg;
+	if (why) return why;
+	// 안에서 실행되는 글
+	if (SHELLS.has(name)) {
+		const c = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
+		if (c >= 0 && c + 1 < args.length) return analyze(args[c + 1], depth + 1) || (sudo ? LABEL.sudo : null);
+	}
+	if (name === "eval") return analyze(args.join(" "), depth + 1) || (sudo ? LABEL.sudo : null);
+	if (name === "su") {
+		const c = args.findIndex((a) => a === "-c" || a === "--command");
+		if (c >= 0 && c + 1 < args.length) return analyze(args[c + 1], depth + 1) || LABEL.sudo;
+	}
+	if (name === "ssh") {
+		let k = 0;
+		while (k < args.length && args[k].startsWith("-")) k += /^-[bcDEeFIiJLlmOopQRSWw]$/.test(args[k]) ? 2 : 1;
+		const remote = args.slice(k + 1).join(" ");
+		if (remote) {
+			const r = analyze(remote, depth + 1);
+			if (r) return r;
+		}
+	}
+	if (name === "cmd") {
+		const c = args.findIndex((a) => /^\/[ckCK]$/.test(a));
+		if (c >= 0) {
+			const r = analyze(args.slice(c + 1).join(" "), depth + 1) || legacy(args.slice(c + 1).join(" "));
+			if (r) return r;
+		}
+	}
+	if (name === "powershell" || name === "pwsh") {
+		const r = legacy(args.join(" "));
+		if (r) return r;
+	}
+	const ip = INTERP[name];
+	if (ip) {
+		const c = args.findIndex((a) => ip.test(a));
+		if (c >= 0 && c + 1 < args.length) {
+			const r = legacy(args[c + 1]);
+			if (r) return r;
+		}
+	}
+	return sudo ? LABEL.sudo : null;
+}
+
+function analyze(src: string, depth = 0): string | null {
+	if (depth > 5) return legacy(src);
+	const p = parseShell(src);
+	for (const s of p.nested) {
+		const r = analyze(s, depth + 1);
+		if (r) return r;
+	}
+	for (const pl of p.pipelines) {
+		for (const cmd of pl) {
+			const r = checkSimple(cmd.words, depth);
+			if (r) return r;
+		}
+		// 받은 것을 바로 셸로: curl ... | sh
+		const names = pl.map((cmd) => {
+			const s = strip(cmd.words).rest;
+			return s.length ? base(s[0]) : "";
+		});
+		const f = names.findIndex((n) => n === "curl" || n === "wget");
+		if (f >= 0 && names.slice(f + 1).some((n) => SHELLS.has(n))) return LABEL.pipe;
+	}
+	// heredoc 본문: 셸에 넘기면 명령으로, 인터프리터에 넘기면 코드로 본다 (cat 등 파일 쓰기는 보지 않음)
+	for (const h of p.heredocs) {
+		const s = strip(h.words).rest;
+		const n = s.length ? base(s[0]) : "";
+		if (SHELLS.has(n) || n === "ssh") {
+			const r = analyze(h.body, depth + 1);
+			if (r) return r;
+		} else if (INTERP[n.replace(/[0-9.]+$/, "")] || ["psql", "mysql", "sqlite3"].includes(n)) {
+			const r = legacy(h.body);
+			if (r) return r;
+		}
+	}
+	return null;
+}
+
 /** 확인이 필요한 bash 명령이면 그 이유, 아니면 null */
 export function checkCommand(command: string, cfg: any = {}): string | null {
 	if (regexps(cfg.guard_allow).some((re) => re.test(command))) return null;
-	for (const r of RULES) if (r.re.test(command)) return r.label;
+	let why: string | null;
+	try {
+		why = analyze(command);
+	} catch {
+		why = legacy(command); // 분석 실패: 전체 글을 글자 패턴으로
+	}
+	if (!why) for (const r of CONTENT_RULES) if (r.re.test(command)) return r.label;
+	if (why) return why;
 	if (regexps(cfg.guard_patterns).some((re) => re.test(command))) return "직접 지정한 명령 (guard_patterns)";
 	return null;
 }

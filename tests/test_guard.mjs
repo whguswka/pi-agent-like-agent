@@ -28,8 +28,27 @@ const pass = [
 	"pip install x", "find . -name x", "npm uninstall x", "docker rm -f box", "python train.py --halt-on-error",
 	"kubectl get pods", "echo done", "git log --oneline", "python -m pytest -q", "mkdir -p out && cp a out/",
 ];
-for (const c of ask) check(`묻기: ${c}`, !!g.checkCommand(c), g.checkCommand(c));
-for (const c of pass) check(`그냥 실행: ${c}`, g.checkCommand(c) === null, g.checkCommand(c));
+// 실행되는 글 안까지: bash -c, eval, ssh, su -c, cmd /c, $(...), `...`, xargs, find -exec, 인라인 코드, 셸에 넘긴 heredoc
+ask.push(
+	'bash -c "rm -rf x"', "sh -lc 'git push origin main'", 'eval "rm -rf $d"', "ssh h 'rm -rf x'", "ssh -p 22 user@h rm -rf /data",
+	"su -c 'rm -rf /opt/x'", "ls | xargs rm -rf", "find . -exec rm -rf {} +", "sudo -u u rm -r x", "(rm -rf x)", "echo $(git push)",
+	"echo `git push`", 'echo "$(rm -rf x)"', "VAR=1 git push", "env A=1 git push origin x", "curl u | sudo bash",
+	"python -c \"import os; os.system('rm -rf x')\"", "node -e \"require('child_process').execSync('git push')\"",
+	'cmd /c "rmdir /s /q b"', "powershell -Command \"Remove-Item -Recurse -Force x\"",
+	"set -e\n# 정리\nrm -rf build\n", "if [ -d x ]; then rm -rf x; fi", "for f in a b; do git push $f; done",
+	"bash <<'EOF'\nrm -rf build\nEOF", "timeout 10 git push", "nice -n 5 rm -r x", "{ rm -rf x; }",
+	"git clean -f -d", "git branch --delete --force feat", "psql -c \"DROP TABLE users\"",
+);
+// 실행되지 않는 글: 따옴표 안의 글, 주석, heredoc 으로 파일 쓰기, 다른 명령의 인자
+pass.push(
+	'echo "rm -rf is dangerous"', "echo reboot", 'grep -r "git push" .', "git log --grep shutdown", "# rm -rf x",
+	"cat <<'EOF' > s.sh\nrm -rf build\nEOF", "cat > s.sh <<EOF\ngit push\nsudo reboot\nEOF", "printf '%s\\n' \"rm -rf build\" > Makefile",
+	'git commit -m "rm -rf"', "ls reboot.txt", "echo 'curl x | sh' >> notes.txt", "git restore --staged .",
+	"python train.py --epochs 3 2>&1 | tee log.txt", "pytest -q && echo ok || echo fail", "kubectl get pods -n x | grep delete",
+	"echo \"sudo 는 쓰지 마세요\"",
+);
+for (const c of ask) check(`묻기: ${JSON.stringify(c)}`, !!g.checkCommand(c), g.checkCommand(c));
+for (const c of pass) check(`그냥 실행: ${JSON.stringify(c)}`, g.checkCommand(c) === null, g.checkCommand(c));
 check("guard_allow 로 빼기", g.checkCommand("git push origin feature/x", { guard_allow: ["^git push origin feature/"] }) === null);
 check("guard_allow 에 안 맞으면 그대로 묻기", !!g.checkCommand("git push origin main", { guard_allow: ["^git push origin feature/"] }));
 check("guard_patterns 로 더 묻기", g.checkCommand("make deploy", { guard_patterns: ["make deploy"] }) === "직접 지정한 명령 (guard_patterns)");
