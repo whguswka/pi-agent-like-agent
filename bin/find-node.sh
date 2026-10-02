@@ -32,11 +32,20 @@ pi_node_ver_ok() { # <node> <major> <minor>
 }
 pi_node_ok() { pi_node_ver_ok "$1" 22 19; }
 pi_node_compat_ok() { pi_node_ver_ok "$1" 20 15; }
-pi_pythons() { # 사용 가능한 python 실행파일 목록 (Windows 는 PATH 에 없어도 기본 설치 경로 확인)
-  local py
-  for py in python3 python py; do command -v "$py" 2>/dev/null; done
+pi_pythons() { # 사용 가능한 python 실행파일 목록 (Windows 는 PATH 에 없어도 흔한 설치 경로 확인)
+  local py up la
+  for py in python3 python py; do
+    py="$(command -v "$py" 2>/dev/null)" || continue
+    # Windows 스토어 바로가기(python3 등)는 Python 이 없으면 안내문만 출력하고 실패 -> 실제로 실행되는 것만 사용
+    case "$py" in *WindowsApps*) "$py" -c "" >/dev/null 2>&1 || continue ;; esac
+    echo "$py"
+  done
   if command -v cygpath >/dev/null 2>&1; then
-    for py in "$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")"/Programs/Python/Python3*/python.exe; do
+    up="$(cygpath -u "${USERPROFILE:-$HOME}")"
+    la="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")"
+    for py in "$la"/Programs/Python/Python3*/python.exe "/c/Program Files"/Python3*/python.exe \
+              "$up"/anaconda3/python.exe "$up"/miniconda3/python.exe "$up"/Anaconda3/python.exe \
+              /c/ProgramData/anaconda3/python.exe /c/ProgramData/Anaconda3/python.exe /c/ProgramData/miniconda3/python.exe; do
       [ -f "$py" ] && echo "$py"
     done
   fi

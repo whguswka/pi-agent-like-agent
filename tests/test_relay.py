@@ -102,13 +102,13 @@ class FakeLink:
         self.replies, self.sent_log, self.reset_once, self.fail = list(replies), [], False, None
         self.turns_left = None
 
-    def request(self, parts, new_thread):
+    def request(self, parts, new_thread, model=""):
         if self.fail:
             raise self.fail
         if self.reset_once and not new_thread:
             self.reset_once = False
             raise relay.ThreadReset("Copilot 대화 한도")
-        self.sent_log.append({"new_thread": new_thread, "parts": parts})
+        self.sent_log.append({"new_thread": new_thread, "parts": parts, "model": model})
         return {"text": self.replies.pop(0)}
 
 
@@ -294,6 +294,82 @@ link8 = FakeLink(["최근에는 그래프를 추가했고, 다음 단계는 READ
 r8 = relay.Relay(A(), link8)
 r8.handle({"messages": [sys_msg, {"role": "user", "content": "도구는 쓰지 말고 기억으로만 답해줘: 최근 작업은?"}], "tools": tools})
 check("도구 없이 답하라는 질문에는 이어서 하라고 하지 않음", len(link8.sent_log) == 1, link8.sent_log)
+
+# 모델 선택: pi 모델 id -> Copilot 화면의 모델 이름 (Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 고름)
+cfgm = {"copilot_model": "GPT 6.0 Sol", "copilot_models": {"gpt-5.6-sol-think": "GPT 5.6 Sol 깊이 생각하기", "screen": ""}}
+check("모델: 표에 있는 id", relay.copilot_model_for("gpt-5.6-sol-think", cfgm) == "GPT 5.6 Sol 깊이 생각하기")
+check("모델: 'copilot'(또는 없음)은 copilot_model", relay.copilot_model_for("copilot", cfgm) == "GPT 6.0 Sol"
+      and relay.copilot_model_for(None, cfgm) == "GPT 6.0 Sol")
+check("모델: 표에 없는 id 는 그대로 화면 이름", relay.copilot_model_for("Claude Opus 4.8", cfgm) == "Claude Opus 4.8")
+check("모델: 표의 값이 비어 있으면 화면 그대로", relay.copilot_model_for("screen", cfgm) == "")
+link13 = FakeLink(["답1"])
+link13.cfg = cfgm
+r13 = relay.Relay(A(), link13)
+r13.handle({"model": "gpt-5.6-sol-think", "messages": [sys_msg, {"role": "user", "content": "안녕"}], "tools": tools})
+check("요청의 모델을 Copilot 화면 이름으로 넘김", link13.sent_log[0]["model"] == "GPT 5.6 Sol 깊이 생각하기", link13.sent_log)
+
+# 끝난 대화 정리: 중계 서버가 만든 대화만 기록해 두고 그것만 지움
+import tempfile  # noqa: E402
+_tmp = tempfile.mkdtemp()
+_path = os.path.join(_tmp, "copilot-chats.json")
+reg = relay.ChatRegistry(_path)
+reg.add("c1", "https://x/chat/conversation/c1")
+reg.add("c1", "https://x/chat/conversation/c1")
+check("대화 기록: 같은 대화는 한 번만, 쓰는 중이면 삭제 대상 아님", len(reg.chats) == 1 and reg.pending() == [], reg.chats)
+reg.finish_all()
+check("대화 기록: 새 대화를 열거나 세션이 끝나면 삭제 대상", [c["id"] for c in reg.pending()] == ["c1"])
+for _ in range(3):
+    reg.failed("c1")
+check("대화 기록: 3번 실패하면 더 시도하지 않음", reg.pending() == [])
+reg.add("c2", "https://x/chat/conversation/c2")
+reg2 = relay.ChatRegistry(_path)
+check("대화 기록: 중계 서버를 다시 켜면 지난번에 쓰던 대화도 삭제 대상", [c["id"] for c in reg2.pending()] == ["c2"], reg2.chats)
+reg2.deleted("c2")
+check("대화 기록: 지운 대화는 기록에서 빠짐", [c["id"] for c in relay.ChatRegistry(_path).chats] == ["c1"])
+
+
+class FakeCop:
+    def __init__(self):
+        self.thread_url, self.deleted = "https://x/chat/conversation/c9", []
+
+    def delete_chat(self, cid):
+        self.deleted.append(cid)
+        return True, "ok"
+
+
+link14 = FakeLink([])
+link14.cfg = {"delete_finished_chats": True}
+link14.registry = relay.ChatRegistry(os.path.join(_tmp, "c14.json"))
+link14.registry.add("c9", "https://x/chat/conversation/c9")
+link14.cop = FakeCop()
+link14.cleanup = lambda: relay.CopilotLink.cleanup(link14)
+r14 = relay.Relay(A(), link14)
+r14.sent, r14.fresh = ["x"], False
+r14.end_session("quit")
+check("pi 세션 끝: 쓰던 대화 삭제 + 다음 요청은 새 대화", link14.cop.deleted == ["c9"] and r14.fresh and r14.sent == []
+      and link14.registry.chats == [], (link14.cop.deleted, link14.registry.chats))
+link14.cfg["delete_finished_chats"] = False
+link14.registry.add("c10", "u")
+r14.end_session("quit")
+check("delete_finished_chats=false 면 지우지 않음", link14.cop.deleted == ["c9"] and link14.registry.pending()[0]["id"] == "c10")
+
+# HTTP: /v1/session/end (reload 는 같은 대화를 이어 가므로 무시) + /v1/models 에 설정한 모델들
+_calls = []
+r15 = relay.Relay(A(), FakeLink([]))
+r15.end_session = lambda reason="": _calls.append(reason)
+_srv2 = _Srv(("127.0.0.1", 0), relay.make_handler(r15, None, {"cdp_port": 1, "copilot_models": {"gpt-6.0-sol": "GPT 6.0 Sol"}}))
+_th.Thread(target=_srv2.serve_forever, daemon=True).start()
+_base = "http://127.0.0.1:{}".format(_srv2.server_address[1])
+for _reason in ("reload", "quit"):
+    _req = _ur.Request(_base + "/v1/session/end", data=_json.dumps({"reason": _reason}).encode(),
+                       headers={"Content-Type": "application/json"})
+    _ur.urlopen(_req, timeout=5).read()
+_ids = [m["id"] for m in _json.loads(_ur.urlopen(_base + "/v1/models", timeout=5).read())["data"]]
+import time as _time  # noqa: E402
+_time.sleep(0.3)
+_srv2.shutdown()
+check("/v1/session/end: reload 는 무시, quit 은 정리", _calls == ["quit"], _calls)
+check("/v1/models: copilot + 설정한 모델", _ids == ["copilot", "gpt-6.0-sol"], _ids)
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

@@ -26,15 +26,17 @@ mkdir -p "$AGENT_DIR"
   esac
 done
 # Windows: Git 이 기본 경로가 아니면 settings.json 에 shellPath 지정
+#  - cmd/PowerShell 에서 실행할 때 쓰임 (Git Bash 안에서 실행하면 pi 가 PATH 의 bash.exe 를 찾으므로 없어도 됨)
+#  - Python 없이 처리하고, 실패해도 설치는 계속한다 (python 이 Windows 스토어 바로가기뿐인 PC 대비)
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
-  if [ ! -e "/c/Program Files/Git/bin/bash.exe" ]; then
-    BASH_WIN="$(cygpath -w /usr/bin/bash.exe)"
-    for py in python3 python py; do command -v $py >/dev/null 2>&1 && break; done
-    $py - "$(cygpath -w "$AGENT_DIR/settings.json")" "$BASH_WIN" <<'PY'
-import json,sys
-p,b=sys.argv[1],sys.argv[2]; s=json.load(open(p,encoding="utf-8"))
-if not s.get("shellPath"): s["shellPath"]=b; json.dump(s,open(p,"w",encoding="utf-8"),indent=2); print("shellPath="+b)
-PY
+  if [ ! -e "/c/Program Files/Git/bin/bash.exe" ] && ! grep -q '"shellPath"' "$AGENT_DIR/settings.json" 2>/dev/null; then
+    GIT_BASH="$(cygpath -m /)"; GIT_BASH="${GIT_BASH%/}/bin/bash.exe"  # Git 설치 폴더의 bin/bash.exe (슬래시 경로라 JSON 이스케이프 불필요)
+    [ -e "$GIT_BASH" ] || GIT_BASH="$(cygpath -m /usr/bin/bash.exe)"
+    if sed -i "0,/{/s#{#{\n  \"shellPath\": \"${GIT_BASH//&/\\&}\",#" "$AGENT_DIR/settings.json" 2>/dev/null; then
+      echo "shellPath=$GIT_BASH"
+    else
+      echo "참고: settings.json 에 shellPath 를 넣지 못했습니다 (Git Bash 에서 pi 를 실행하면 영향 없음)"
+    fi
   fi;;
 esac
 PATH_LINE="export PATH=\"$PI_HOME/bin:\$PATH\""

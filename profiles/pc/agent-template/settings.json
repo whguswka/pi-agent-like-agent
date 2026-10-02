@@ -1,6 +1,6 @@
 {
   "defaultProvider": "copilot",
-  "defaultModel": "copilot",
+  "defaultModel": "gpt-6.0-sol",
   "enableInstallTelemetry": false,
   "retry": {
     "provider": {

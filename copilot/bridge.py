@@ -40,11 +40,34 @@ DEFAULT_CONFIG = {
                        "Like", "Dislike", "좋아요", "싫어요", "Share", "공유", "Edit in Pages", "Pages에서 편집", "Edit", "편집",
                        "Regenerate", "다시 생성", "AI-generated content may be incorrect", "AI 생성 콘텐츠가 잘못되었을 수 있습니다"],
     "ui_noise_selectors": ["[data-testid=\"chat-suggestion\"]"],
-    "first_reply_timeout_seconds": 180,
+    "first_reply_timeout_seconds": 300,
     "reply_timeout_seconds": 900,
     "max_questions_per_chat": 100,  # 이 수만큼 질문하면 새 대화로 (긴 대화에서 Copilot 이 규칙을 놓치므로). 0 이면 Copilot 한도까지
     "max_questions_per_minute": 0,  # 0 이면 끔. Copilot 사용량 제한을 피하려면 분당 질문 수 상한을 넣음
+    # 모델 선택: Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 화면의 모델 메뉴에서 고른다
+    "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT 6.0 Sol"). 비우면 화면 그대로
+    "copilot_models": {},  # pi 모델 id -> 화면 이름. 표에 없는 id 는 id 자체를 화면 이름으로 씀
+    "model_button_selector": "",  # 모델 메뉴 버튼 (비우면 자동: 메뉴가 달린 버튼 중 이름이 아래 이름으로 시작하는 것)
+    "model_button_names": ["자동", "빠른 응답", "깊이 생각하기", "Auto", "Quick response", "Think deeper", "GPT", "Claude"],
+    # 끝난 대화 삭제: 중계 서버가 만든 대화(copilot-chats.json 에 기록)만 왼쪽 목록에서 '… > 삭제 > 확인' 으로 지운다
+    "delete_finished_chats": True,
+    "chat_item_selector": "",  # 왼쪽 채팅 목록 항목 (비우면 자동: 대화 주소로 가는 링크)
+    "chat_more_pattern": "옵션|자세히|더 보기|추가 작업|기타|more|options|actions|…|\\.\\.\\.",
+    "delete_menu_pattern": "^(삭제|delete)$",
+    "delete_confirm_pattern": "^(삭제|delete)$",
+    "sidebar_pattern": "사이드바|탐색 창|navigation pane|sidebar|side ?panel",
 }
+
+
+def sq(s):
+    """이름 비교용: 소문자 + 글자·숫자만 ('GPT-6.0 Sol ⌄' == 'gpt 6.0 sol'). 버튼의 화살표 같은 기호는 무시"""
+    return re.sub(r"[\W_]+", "", (s or "").lower())
+
+
+def conversation_id(url):
+    """Copilot 대화 주소의 대화 id (https://m365.cloud.microsoft/chat/conversation/<id>)"""
+    m = re.search(r"/conversation/([^/?#]+)", url or "")
+    return m.group(1) if m else None
 
 
 def log(*a):
@@ -364,6 +387,86 @@ PAGE_LIB = r"""
 })()
 """
 
+# 모델 메뉴·채팅 목록 메뉴·확인 창 찾기 (PAGE_LIB 다음에 불러옴). 클릭은 파이썬에서 실제 마우스 동작(CDP Input)으로 한다
+UI_LIB = r"""
+(() => {
+  const V = 1;
+  if (window.__piUI && window.__piUI.v === V) return true;
+  const B = window.__piBridge;
+  const sq = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');  // 글자·숫자만 (파이썬 sq 와 같게)
+  const lines = (el) => (el.innerText || el.textContent || '').split('\n').map(s => s.trim()).filter(Boolean);
+  const title = (el) => lines(el)[0] || (el.getAttribute('aria-label') || '').trim();
+  const box = (el) => { el.scrollIntoView({block: 'nearest', inline: 'nearest'}); const r = el.getBoundingClientRect();
+    return {x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height)}; };
+  const snip = (el) => el ? el.outerHTML.replace(/\s+/g, ' ').slice(0, 260) : '';
+  const MENU = '[role="menu"], [role="listbox"]';
+  const ITEM = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"]';
+  const popup = (el) => { const h = el.getAttribute('aria-haspopup'); return !!h && h !== 'false'; };
+  const allMenus = () => [...document.querySelectorAll(MENU)].filter(B.visible);
+  // 메뉴를 열기 전에 이미 보이던 목록(채팅 목록이 listbox 일 수 있음)은 표시해 두고, 새로 뜬 메뉴만 본다
+  function markMenus() { allMenus().forEach(m => m.setAttribute('data-pi-old', '1')); return true; }
+  const fresh = () => allMenus().filter(m => !m.hasAttribute('data-pi-old'));
+  function menuItems(level) {
+    const ms = fresh(); const m = level < 0 ? ms[ms.length - 1] : ms[level];
+    if (!m) return null;
+    const its = [...m.querySelectorAll(ITEM)].filter(it => B.visible(it) && it.closest(MENU) === m);
+    return its.length ? its.map(it => ({title: title(it), text: lines(it).join(' / ').slice(0, 80),
+      sub: popup(it) || it.hasAttribute('aria-expanded'), checked: it.getAttribute('aria-checked') === 'true', rect: box(it)})) : null;
+  }
+  const inChatList = (el) => !!el.closest('a[href*="/conversation/"]');
+  function modelButton(sel, names) {
+    if (sel) { const el = document.querySelector(sel); return el && B.visible(el) ? el : null; }
+    const ns = names.map(sq).filter(Boolean);
+    const hit = (b) => { const t = sq(title(b)); return !!t && t.length <= 40 && ns.some(n => t === n || t.startsWith(n)); };
+    const all = [...document.querySelectorAll('button, [role="button"], [role="combobox"]')]
+      .filter(b => B.visible(b) && !b.closest(MENU) && !b.closest('[role="dialog"], [role="alertdialog"]') && !inChatList(b) && hit(b));
+    const top = (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top;
+    return all.filter(popup).sort(top)[0] || all.sort(top)[0] || null;
+  }
+  function modelState(sel, names) {
+    const b = modelButton(sel, names);
+    return b ? {found: true, text: title(b), rect: box(b), html: snip(b)} : {found: false};
+  }
+  function dialogState(pattern) {
+    const d = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter(B.visible).pop();
+    if (!d) return null;
+    const re = new RegExp(pattern, 'i');
+    const btns = [...d.querySelectorAll('button, [role="button"]')].filter(B.visible);
+    const ok = btns.find(b => re.test(title(b)) || re.test((b.getAttribute('aria-label') || '').trim()));
+    return {text: lines(d).join(' ').slice(0, 400), buttons: btns.map(title), confirm: ok ? box(ok) : null, html: snip(d)};
+  }
+  function chatItem(id, morePattern, itemSel) {
+    let links = [...document.querySelectorAll('a[href*="' + id + '"]')];
+    if (!links.length && itemSel) links = [...document.querySelectorAll(itemSel)].filter(e => e.outerHTML.includes(id));
+    const vis = links.filter(B.visible);
+    if (!vis.length) return {found: false, exists: links.length > 0};
+    const a = vis[0];
+    const re = new RegExp(morePattern, 'i');
+    const isMore = (b) => b !== a && B.visible(b) && !/고정|pin/i.test(B.label(b)) && (popup(b) || re.test(B.label(b)));
+    let boxEl = a, more = null;
+    for (let el = a, i = 0; el && el !== document.body && i < 5; el = el.parentElement, i++) {
+      if (el.querySelectorAll('a[href*="/conversation/"]').length > 1) break;  // 다른 대화까지 품은 목록으로는 올라가지 않음
+      boxEl = el;
+      more = [...el.querySelectorAll('button, [role="button"]')].find(isMore) || null;
+      if (more) break;
+    }
+    return {found: true, title: title(a) || title(boxEl), rect: box(boxEl),
+            more: more ? {rect: box(more), label: B.label(more)} : null, html: snip(boxEl)};
+  }
+  function chatList(limit) {
+    return [...document.querySelectorAll('a[href*="/conversation/"]')].filter(B.visible).slice(0, limit)
+      .map(a => ({title: title(a), href: a.getAttribute('href'), html: snip(a)}));
+  }
+  function sidebarToggle(pattern) {
+    const re = new RegExp(pattern, 'i');
+    const b = [...document.querySelectorAll('button, [role="button"]')].find(b => B.visible(b) && re.test(B.label(b)));
+    return b ? {rect: box(b), label: B.label(b)} : null;
+  }
+  window.__piUI = {v: V, markMenus, menus: () => fresh().length, menuItems, modelState, dialogState, chatItem, chatList, sidebarToggle};
+  return true;
+})()
+"""
+
 
 class Copilot:
     def __init__(self, tab, cfg):
@@ -656,6 +759,194 @@ class Copilot:
             url = self.js("location.origin + location.pathname")
             if url != self.thread_url:
                 raise ThreadReset("Copilot 대화창이 바뀌었습니다 ({} -> {})".format(self.thread_url, url))
+
+    # ---- 화면 조작: 모델 선택, 끝난 대화 삭제 (메뉴는 실제 마우스 동작으로 연다) ----
+
+    def ui(self, expr, timeout=30):
+        self.tab.eval(PAGE_LIB, timeout)
+        self.tab.eval(UI_LIB, timeout)
+        return self.tab.eval(expr, timeout)
+
+    def mouse(self, rect, kind="click"):
+        """move(올려 두기) / click(왼쪽 클릭) / right(오른쪽 클릭). rect 는 화면 좌표 {x, y}"""
+        x, y = rect["x"], rect["y"]
+        self.tab.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y, "button": "none", "buttons": 0})
+        if kind == "move":
+            return
+        btn, mask = ("right", 2) if kind == "right" else ("left", 1)
+        for t, b in (("mousePressed", mask), ("mouseReleased", 0)):
+            self.tab.call("Input.dispatchMouseEvent", {"type": t, "x": x, "y": y, "button": btn, "buttons": b, "clickCount": 1})
+
+    def escape(self):
+        self.key("Escape", "Escape", 27)
+
+    @staticmethod
+    def poll(fn, timeout=3.0, every=0.15):
+        """fn() 이 참이 될 때까지 기다린다 (마지막 값을 돌려줌)"""
+        deadline = time.time() + timeout
+        while True:
+            v = fn()
+            if v or time.time() >= deadline:
+                return v
+            time.sleep(every)
+
+    def model_names(self, extra=()):
+        names = list(self.cfg.get("model_button_names") or [])
+        names += [v for v in (self.cfg.get("copilot_models") or {}).values() if v]
+        return names + [n for n in [self.cfg.get("copilot_model")] + list(extra) if n]
+
+    def model_state(self, label=""):
+        return self.ui("window.__piUI.modelState(%s, %s)" % (self.q(self.cfg.get("model_button_selector") or ""),
+                                                                self.q(self.model_names([label]))))
+
+    @staticmethod
+    def pick(items, label):
+        """메뉴 항목에서 label 찾기: 이름(첫 줄)이 같은 것 우선, 없으면 label 을 포함하는 항목이 하나뿐일 때만"""
+        want = sq(label)
+        same = [i for i in items if sq(i["title"]) == want]
+        if same:
+            return same[0]
+        part = [i for i in items if want and want in sq(i["text"])]
+        return part[0] if len(part) == 1 else None
+
+    def open_menu(self, rect):
+        self.ui("window.__piUI.markMenus()")
+        self.mouse(rect)
+        return self.poll(lambda: self.ui("window.__piUI.menuItems(0)"), 3)
+
+    def open_submenu(self, item, prev=None):
+        """하위 메뉴(예: GPT ›) 열기: 마우스를 올리고, 안 열리면 클릭. prev 는 직전에 열었던 하위 메뉴의 항목 이름들"""
+        def get():
+            subs = self.ui("window.__piUI.menus() > 1 && window.__piUI.menuItems(-1)")
+            return subs if subs and [s["title"] for s in subs] != prev else None
+        self.mouse(item["rect"], "move")
+        subs = self.poll(get, 1.5)
+        if not subs:
+            self.mouse(item["rect"])
+            subs = self.poll(get, 1.5)
+        return subs or None
+
+    def close_menus(self):
+        for _ in range(3):
+            if not self.ui("window.__piUI.menus()"):
+                return
+            self.escape()
+            time.sleep(0.2)
+
+    def model_menu(self):
+        """진단용: 모델 메뉴 항목 목록 (하위 메뉴 포함). 메뉴는 닫고 끝낸다"""
+        st = self.model_state()
+        if not st.get("found"):
+            return st, None
+        tree, prev = [], None
+        for it in self.open_menu(st["rect"]) or []:
+            entry = {"title": it["title"], "text": it["text"], "checked": it["checked"], "sub": None}
+            if it["sub"]:
+                subs = self.open_submenu(it, prev) or []
+                prev = [s["title"] for s in subs] or prev
+                entry["sub"] = [s["title"] for s in subs]
+            tree.append(entry)
+        self.close_menus()
+        return st, tree
+
+    def select_model(self, label):
+        """모델 메뉴에서 label(화면에 보이는 이름)을 고른다 -> (성공 여부, 설명)
+        맨 위 항목(자동·빠른 응답·깊이 생각하기 등)에서 찾고, 없으면 하위 메뉴(GPT ›, Claude › 등)를 차례로 열어 찾는다"""
+        st = self.model_state(label)
+        if not st.get("found"):
+            return False, "모델 메뉴 버튼을 찾지 못했습니다 (bridge.json 의 model_button_selector 확인)"
+        if sq(st["text"]) == sq(label):
+            return True, "이미 '{}'".format(st["text"])
+        items = self.open_menu(st["rect"])
+        if not items:
+            return False, "모델 메뉴가 열리지 않았습니다 (버튼: {})".format(st["text"])
+        seen, hit, prev = [i["title"] for i in items], self.pick(items, label), None
+        if not hit:
+            for it in [i for i in items if i["sub"]]:
+                subs = self.open_submenu(it, prev)
+                if not subs:
+                    continue
+                prev = [s["title"] for s in subs]
+                seen += ["{} › {}".format(it["title"], t) for t in prev]
+                hit = self.pick(subs, label)
+                if hit:
+                    break
+        if not hit:
+            self.close_menus()
+            return False, "메뉴에서 '{}' 을(를) 찾지 못했습니다. 있는 항목: {}".format(label, ", ".join(seen))
+        self.mouse(hit["rect"])
+        time.sleep(0.6)
+        self.close_menus()
+        now = self.model_state(label)
+        return True, "'{}' 선택 (버튼 표시: {})".format(hit["title"], now.get("text") if now.get("found") else "?")
+
+    def find_chat(self, conv_id):
+        return self.ui("window.__piUI.chatItem(%s, %s, %s)" % (self.q(conv_id), self.q(self.cfg["chat_more_pattern"]),
+                                                              self.q(self.cfg.get("chat_item_selector") or "")))
+
+    def chat_list(self, limit=10):
+        return self.ui("window.__piUI.chatList(%d)" % limit)
+
+    def delete_chat(self, conv_id):
+        """왼쪽 채팅 목록에서 conv_id 대화를 '… > 삭제 > 확인' 으로 지운다 -> (성공 여부, 설명)
+        안전장치: 확인 창 문구에 그 대화의 제목이 있을 때만 마지막 '삭제' 를 누른다"""
+        def found():
+            r = self.find_chat(conv_id)
+            return r if r.get("found") else None
+        it = self.find_chat(conv_id)
+        widened = False
+        try:
+            if not it.get("found"):
+                # 창이 좁으면 왼쪽 목록이 접힘 -> 화면을 넓게 그리게 하고, 그래도 없으면 사이드바 열기 버튼
+                self.tab.call("Emulation.setDeviceMetricsOverride", {"width": 1400, "height": 900, "deviceScaleFactor": 0,
+                                                                     "mobile": False})
+                widened = True
+                it = self.poll(found, 3) or it
+            if not it.get("found"):
+                tog = self.ui("window.__piUI.sidebarToggle(%s)" % self.q(self.cfg["sidebar_pattern"]))
+                if tog:
+                    self.mouse(tog["rect"])
+                    it = self.poll(found, 3) or it
+            if not it.get("found"):
+                return False, "왼쪽 채팅 목록에서 대화를 찾지 못했습니다{}".format(
+                    " (목록에 있지만 화면에 안 보임)" if it.get("exists") else "")
+            title = it.get("title") or ""
+            if not sq(title):
+                return False, "대화 제목을 읽지 못해서 지우지 않았습니다"
+            self.mouse(it["rect"], "move")  # 마우스를 올려야 '…' 버튼이 나타나는 목록
+            time.sleep(0.4)
+            it = found() or it
+            self.ui("window.__piUI.markMenus()")
+            how = "'…' 버튼({})".format(it["more"]["label"]) if it.get("more") else "오른쪽 클릭"
+            self.mouse(it["more"]["rect"] if it.get("more") else it["rect"], "click" if it.get("more") else "right")
+            items = self.poll(lambda: self.ui("window.__piUI.menuItems(0)"), 3)
+            if not items:
+                return False, "대화 메뉴가 열리지 않았습니다 ({})".format(how)
+            pat = re.compile(self.cfg["delete_menu_pattern"], re.I)
+            hit = next((i for i in items if pat.search(i["title"])), None)
+            if not hit:
+                self.close_menus()
+                return False, "메뉴에 삭제가 없습니다 (있는 항목: {})".format(", ".join(i["title"] for i in items))
+            self.mouse(hit["rect"])
+            dlg = self.poll(lambda: self.ui("window.__piUI.dialogState(%s)" % self.q(self.cfg["delete_confirm_pattern"])), 3)
+            if not dlg:
+                return False, "삭제 확인 창이 뜨지 않았습니다"
+            if sq(title)[:12] not in sq(dlg["text"]):
+                self.escape()
+                return False, "확인 창의 대화 제목이 달라서 취소했습니다 (목록: {} / 확인 창: {})".format(title, dlg["text"][:80])
+            if not dlg.get("confirm"):
+                self.escape()
+                return False, "확인 창에서 삭제 버튼을 찾지 못했습니다 (버튼: {})".format(", ".join(dlg.get("buttons") or []))
+            self.mouse(dlg["confirm"])
+            if self.poll(lambda: not self.find_chat(conv_id).get("found"), 6):
+                return True, "'{}' 삭제 ({})".format(title, how)
+            return False, "삭제를 눌렀지만 목록에 남아 있습니다: {}".format(title)
+        finally:
+            if widened:
+                try:
+                    self.tab.call("Emulation.clearDeviceMetricsOverride")
+                except (BridgeError, TimeoutError):
+                    pass
 
 
 def load_config(path):

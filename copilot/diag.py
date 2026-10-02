@@ -6,6 +6,9 @@
 사용법:  python diag.py             (브라우저 탭 + Copilot 페이지 구조 확인)
          python diag.py --jupyter   (+ JupyterLab 터미널에서 시험 명령 실행: jupyter 모드 확인)
          python diag.py --send      (+ Copilot 에 시험 질문 1개를 새 대화로 보내서 답 읽기까지 확인)
+         python diag.py --model "GPT 6.0 Sol"   (+ 모델 메뉴 항목을 보여 주고 그 모델을 골라 봄. 이름 생략 시 copilot_model)
+         python diag.py --chats     (+ 왼쪽 채팅 목록을 어떻게 찾는지 보여 줌)
+         python diag.py --delete-test   (+ 시험 대화를 하나 만들어 '… > 삭제 > 확인' 으로 지워 봄. 다른 대화는 건드리지 않음)
 """
 import argparse
 import base64
@@ -82,6 +85,9 @@ def main():
     ap.add_argument("--config", default=os.path.join(HERE, "bridge.json"))
     ap.add_argument("--send", action="store_true", help="Copilot 에 시험 질문을 실제로 보냄")
     ap.add_argument("--jupyter", action="store_true", help="JupyterLab 터미널에서 시험 명령을 실행")
+    ap.add_argument("--model", nargs="?", const="", default=None, help="모델 메뉴 확인 + 그 모델 고르기")
+    ap.add_argument("--chats", action="store_true", help="왼쪽 채팅 목록 찾기 확인")
+    ap.add_argument("--delete-test", action="store_true", help="시험 대화를 만들어 삭제해 봄")
     args = ap.parse_args()
     cfg = bridge.load_config(args.config)
     ok = True
@@ -148,6 +154,63 @@ def main():
         show("도구 블록 해석", "OK {}".format(call) if good else "X {} / {}".format(call, err))
         ok = ok and good
         print("  --- 답 앞부분 ---\n  " + reply.get("text", "")[:300].replace("\n", "\n  "))
+
+    if args.model is not None:
+        print("\n[6] 모델 선택")
+        label = args.model or cfg.get("copilot_model") or ""
+        st, tree = copilot.model_menu()
+        if not st.get("found"):
+            show("모델 메뉴 버튼", "X 못 찾음 -> bridge.json 의 model_button_selector 를 지정하세요")
+            ok = False
+        else:
+            show("모델 메뉴 버튼", "'{}'".format(st["text"]))
+            show("  (버튼 HTML)", st.get("html", "")[:160])
+            for e in tree or []:
+                show("  메뉴 항목", "{}{}  ({})".format("(현재) " if e["checked"] else "", e["title"], e["text"]))
+                if e["sub"] is not None:
+                    show("    └ 하위 메뉴", ", ".join(e["sub"]) or "(열리지 않음)")
+            if not tree:
+                show("  메뉴 항목", "X 메뉴가 열리지 않음")
+                ok = False
+            if label:
+                good, info = copilot.select_model(label)
+                show("'{}' 고르기".format(label), ("OK " if good else "X ") + info)
+                ok = ok and good
+            else:
+                show("고르기", "건너뜀 (모델 이름이 없음: --model \"GPT 6.0 Sol\")")
+
+    if args.chats:
+        print("\n[7] 왼쪽 채팅 목록")
+        items = copilot.chat_list(8)
+        show("찾은 대화 수 (최대 8)", len(items))
+        for c in items:
+            show("  대화", "{} | {}".format(c["title"][:30], c["href"]))
+        if items:
+            show("  (첫 항목 HTML)", items[0]["html"][:200])
+        else:
+            show("  ", "X 대화 링크를 찾지 못함 (창이 좁아 목록이 접혀 있으면 펼친 뒤 다시 해 보세요)")
+            ok = False
+
+    if args.delete_test:
+        print("\n[8] 대화 삭제 시험 (시험 대화를 새로 만들어 그것만 지움)")
+        copilot.new_chat()
+        marker = "[pi-de1e7e]"
+        copilot.send("삭제 시험용 대화입니다. 'ok' 한 단어만 답하세요. {}".format(marker))
+        copilot.wait_reply(marker)
+        cid = bridge.conversation_id(copilot.thread_url)
+        show("시험 대화", cid or "X 대화 주소를 얻지 못함 ({})".format(copilot.thread_url))
+        if cid:
+            time.sleep(2)  # 왼쪽 목록에 새 대화가 나타날 시간
+            it = copilot.find_chat(cid)
+            show("목록에서 찾기", "OK '{}'".format(it.get("title")) if it.get("found") else "X 못 찾음")
+            if it.get("found"):
+                show("  '…' 버튼", it["more"]["label"] if it.get("more") else "(안 보임: 마우스를 올리거나 오른쪽 클릭으로 시도)")
+                show("  (항목 HTML)", it.get("html", "")[:200])
+            good, info = copilot.delete_chat(cid)
+            show("삭제", ("OK " if good else "X ") + info)
+            ok = ok and good
+        else:
+            ok = False
 
     print("\n결과:", "정상" if ok else "확인 필요 (위의 X 항목)")
     if not ok:

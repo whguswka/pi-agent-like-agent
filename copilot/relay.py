@@ -9,6 +9,9 @@
    - Copilot 은 도구 호출 기능이 없으므로, 정해진 코드 블록 형식으로 답하게 하고 그것을 tool_calls 로 바꾼다.
 2) 실행 환경(jupyter 모드): pi 확장(extensions/jupyter.ts)이 /jupyter/* 로 부르면, 브라우저의 JupyterLab 탭을
    통로로 Kubeflow 노트북 안에서 명령을 실행하고 파일을 읽고 쓴다 (jupyter.py).
+3) 모델 선택: 요청의 model(pi 모델 id)을 Copilot 화면의 모델 이름으로 바꿔(bridge.json 의 copilot_models) 모델 메뉴에서 고른다.
+4) 끝난 대화 삭제: 중계 서버가 만든 Copilot 대화를 copilot-chats.json 에 기록해 두고, 새 대화를 열 때와 pi 세션이 끝날 때
+   (pi 확장 extensions/copilot-session.ts 가 /v1/session/end 로 알림) 지난 대화를 지운다 (delete_finished_chats).
 
 사용법: python relay.py [--config bridge.json] [--port 8765] [--max-chars 10000]
 먼저 브라우저를 원격 디버깅 포트와 함께 실행해야 한다 (start-edge.cmd).
@@ -32,6 +35,8 @@ from jupyter import FsError, Jupyter  # noqa: E402
 
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
+# 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
+RELAY_VERSION = "2026-10-02.2"
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문
@@ -451,11 +456,87 @@ class ThreadReset(Exception):
     """Copilot 대화를 이어갈 수 없음 (대화 한도, 대화창이 바뀜, 탭 다시 연결) -> 새 대화로 다시"""
 
 
+def copilot_model_for(model_id, cfg):
+    """pi 가 고른 모델 id -> Copilot 화면의 모델 이름 ("" 이면 화면에 선택된 모델 그대로)
+    copilot_models 표에 있으면 그 이름, 'copilot'(또는 없음)이면 copilot_model, 표에 없는 id 는 id 자체를 화면 이름으로 쓴다"""
+    mid = (model_id or "").strip()
+    table = cfg.get("copilot_models") or {}
+    if mid in table:
+        return table[mid] or ""
+    if not mid or mid == MODEL_ID:
+        return cfg.get("copilot_model") or ""
+    return mid
+
+
+def default_registry_path():
+    agent = os.environ.get("PI_CODING_AGENT_DIR") or os.path.join(os.path.expanduser("~"), ".pi", "agent")
+    return os.path.join(agent, "copilot-chats.json")
+
+
+class ChatRegistry:
+    """중계 서버가 만든 Copilot 대화 목록. 삭제는 이 목록에 있는 대화만 한다 (사용자가 직접 쓴 대화는 건드리지 않음)
+    파일에 남겨 두므로 중계 서버를 다시 켜도 이어서 정리한다. state: active(쓰는 중) / finished(삭제 대상)"""
+    MAX_TRIES = 3
+
+    def __init__(self, path):
+        self.path = path
+        self.chats = []
+        try:
+            with open(path, encoding="utf-8") as f:
+                self.chats = json.load(f).get("chats") or []
+        except (OSError, ValueError):
+            pass
+        for c in self.chats:  # 지난번에 쓰던 대화는 이어 쓰지 않으므로 삭제 대상
+            if c.get("state") == "active":
+                c["state"] = "finished"
+
+    def save(self):
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"chats": self.chats}, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, self.path)
+        except OSError as e:
+            bridge.log("대화 목록 저장 실패 ({}): {}".format(self.path, e))
+
+    def add(self, cid, url):
+        if cid and not any(c["id"] == cid for c in self.chats):
+            self.chats.append({"id": cid, "url": url, "created": time.strftime("%Y-%m-%d %H:%M:%S"), "state": "active",
+                               "tries": 0})
+            self.save()
+
+    def finish_all(self):
+        """한 번에 한 대화만 쓰므로, 새 대화를 열거나 세션이 끝나면 쓰던 대화는 모두 끝난 것"""
+        changed = False
+        for c in self.chats:
+            if c["state"] == "active":
+                c["state"], changed = "finished", True
+        if changed:
+            self.save()
+
+    def pending(self):
+        return [c for c in self.chats if c["state"] == "finished" and c.get("tries", 0) < self.MAX_TRIES]
+
+    def deleted(self, cid):
+        self.chats = [c for c in self.chats if c["id"] != cid]
+        self.save()
+
+    def failed(self, cid):
+        for c in self.chats:
+            if c["id"] == cid:
+                c["tries"] = c.get("tries", 0) + 1
+        self.save()
+
+
 class CopilotLink:
-    def __init__(self, cfg):
+    def __init__(self, cfg, registry=None):
         self.cfg = cfg
         self.cop = None
         self.asked = 0  # 지금 Copilot 대화에서 보낸 질문 수 (max_questions_per_chat 용)
+        self.registry = registry
+        self.model_now = None  # 지금 대화에서 고른 Copilot 모델 (화면 이름)
+        self.model_failed = None  # 고르지 못한 모델 (같은 대화에서는 다시 시도하지 않음)
 
     def connect(self):
         try:
@@ -495,16 +576,32 @@ class CopilotLink:
             self.tokens, self.token_time = 1.0, time.time()
         self.tokens -= 1
 
-    def request(self, parts, new_thread):
-        """조각들을 차례로 Copilot 에 보내고 마지막 답을 돌려준다"""
+    def cleanup(self):
+        """끝난 대화(registry 의 finished) 삭제. 실패해도 요청은 계속한다 (3번까지 다시 시도)"""
+        if not self.registry or not self.cfg.get("delete_finished_chats", True):
+            return
+        for c in self.registry.pending():
+            try:
+                ok, info = self.cop.delete_chat(c["id"])
+            except (bridge.BridgeError, TimeoutError) as e:
+                ok, info = False, str(e)
+            bridge.log("  지난 Copilot 대화 삭제 {}: {}".format("OK" if ok else "실패", info))
+            (self.registry.deleted if ok else self.registry.failed)(c["id"])
+
+    def request(self, parts, new_thread, model=""):
+        """조각들을 차례로 Copilot 에 보내고 마지막 답을 돌려준다. model 은 Copilot 화면의 모델 이름 ("" 이면 그대로)"""
         reconnected = self.cop is None
         if reconnected:
             self.connect()
         try:
             limit = int(self.cfg.get("max_questions_per_chat") or 0)
             if new_thread:
+                if self.registry:
+                    self.registry.finish_all()
+                    self.cleanup()
                 self.cop.new_chat()
                 self.asked = 0
+                self.model_now = self.model_failed = None  # 새 채팅은 '자동' 으로 돌아감
             else:
                 if reconnected:
                     raise ThreadReset("Copilot 탭에 다시 연결했습니다")
@@ -513,6 +610,13 @@ class CopilotLink:
                     raise ThreadReset("Copilot 대화의 남은 질문 수가 부족합니다 ({}개)".format(self.cop.turns_left))
                 if limit and self.asked + len(parts) > limit:
                     raise ThreadReset("설정한 대화당 질문 수 한도({}개)에 닿았습니다".format(limit))
+            if model and model not in (self.model_now, self.model_failed):
+                ok, info = self.cop.select_model(model)
+                bridge.log("  Copilot 모델 {}: {}".format("선택" if ok else "선택 실패 (지금 모델로 계속)", info))
+                if ok:
+                    self.model_now = model
+                else:
+                    self.model_failed = model
             reply = None
             for i, part in enumerate(parts, 1):
                 m = re.search(r"\[pi[-#][0-9a-f]+\]\s*$", part)
@@ -524,6 +628,8 @@ class CopilotLink:
                 self.asked += 1
                 reply = self.cop.wait_reply(m.group(0).strip())
                 bridge.log("  <- 답 받음 ({}자, 코드 블록 {}개)".format(len(reply.get("text", "")), len(reply.get("code_blocks") or [])))
+                if new_thread and i == 1 and self.registry:  # 첫 답에서 대화 주소가 생김 -> 삭제 대상 목록에 기록
+                    self.registry.add(bridge.conversation_id(self.cop.thread_url), self.cop.thread_url)
             return reply
         except bridge.Throttled as e:
             # 계정 단위 사용량 제한: 새 대화를 열어도 같은 답이 오므로 열지 않고, 지금 대화는 나중에 그대로 이어 쓴다
@@ -555,13 +661,37 @@ class Relay:
         self.sent = []  # 현재 Copilot 대화창에 들어가 있는 메시지 지문
         self.fresh = True  # True 면 다음 요청은 새 대화로
         self.reminded_at = 0  # 마지막으로 진행 규칙 요약을 붙였을 때의 질문 수
+        self.model_label = ""  # 이번 요청에 쓸 Copilot 모델 (화면 이름)
 
     def log(self, *a):
         print(time.strftime("%H:%M:%S"), *a, flush=True)
 
     def ask(self, parts, new_thread):
-        self.log("요청 (새 대화={}, 조각 {}개, {}자)".format(new_thread, len(parts), sum(len(p) for p in parts)))
-        return self.link.request(parts, new_thread)
+        self.log("요청 (새 대화={}, 조각 {}개, {}자{})".format(new_thread, len(parts), sum(len(p) for p in parts),
+                                                       ", 모델 " + self.model_label if self.model_label else ""))
+        return self.link.request(parts, new_thread, model=self.model_label)
+
+    def end_session(self, reason=""):
+        """pi 세션이 끝남 (pi 확장 copilot-session.ts 가 알림) -> 다음 요청은 새 대화, 쓰던 대화는 삭제 대상으로 정리"""
+        with self.lock:
+            self.sent, self.fresh = [], True
+            link = self.link
+            registry = getattr(link, "registry", None)
+            if registry is None:
+                return
+            registry.finish_all()
+            if not link.cfg.get("delete_finished_chats", True) or not registry.pending():
+                return
+            self.log("pi 세션 끝 ({}) -> 지난 Copilot 대화 정리".format(reason or "?"))
+            try:
+                if link.cop is None:
+                    link.connect()
+                link.cleanup()
+            except (RelayError, bridge.BridgeError, OSError, TimeoutError) as e:
+                self.log("대화 정리 실패:", e)
+            if link.cop:
+                link.cop.thread_url = None
+            link.model_now = link.model_failed = None
 
     def handle(self, body):
         with self.lock:
@@ -572,6 +702,7 @@ class Relay:
                 return self._handle(body, True)
 
     def _handle(self, body, force_new):
+        self.model_label = copilot_model_for(body.get("model"), getattr(self.link, "cfg", None) or {})
         messages = body.get("messages") or []
         tools = body.get("tools") or []
         tool_names = {(t.get("function") or t).get("name") for t in tools}
@@ -748,7 +879,8 @@ def make_handler(relay, jup, cfg):
 
         def health(self):
             thr = getattr(relay.link, "throttled_at", None)
-            out = {"server": "ok", "thread_messages": len(relay.sent), "copilot_turns_left": relay.link.turns_left,
+            out = {"server": "ok", "version": RELAY_VERSION, "thread_messages": len(relay.sent),
+                   "copilot_turns_left": relay.link.turns_left,
                    "copilot_throttled_at": time.strftime("%H:%M:%S", time.localtime(thr)) if thr else None,
                    "jupyter": {"root": jup.root, "home": jup.home, "terminal": jup.term}}
             try:
@@ -766,8 +898,9 @@ def make_handler(relay, jup, cfg):
             if u.path.rstrip("/").endswith("/models"):
                 # max_model_len: vLLM 과 같은 이름의 맥락 한도. 대화 기억은 Copilot 대화창이 갖고 중계 서버는 새로 추가된 부분만
                 # 보내므로, 에이전트가 맥락을 줄이느라 앞부분을 바꾸지 않도록 크게 알려 준다
-                return self.send_json(200, {"object": "list", "data": [{"id": MODEL_ID, "object": "model", "owned_by": "copilot-web",
-                                                                        "max_model_len": 1000000}]})
+                ids = [MODEL_ID] + [k for k in (cfg.get("copilot_models") or {}) if k != MODEL_ID]
+                return self.send_json(200, {"object": "list", "data": [{"id": i, "object": "model", "owned_by": "copilot-web",
+                                                                        "max_model_len": 1000000} for i in ids]})
             if u.path.startswith("/health"):
                 return self.send_json(200, self.health())
             if u.path == "/jupyter/info":
@@ -784,10 +917,22 @@ def make_handler(relay, jup, cfg):
             if u.path.startswith("/reset"):
                 relay.reset()
                 return self.send_json(200, {"reset": True})
+            if u.path == "/shutdown":  # 새 코드로 바꿀 때 bin/pi 가 부름 (127.0.0.1 에서만 받음)
+                self.send_json(200, {"shutdown": True})
+                server = getattr(relay, "server", None)
+                if server:
+                    threading.Thread(target=server.shutdown, daemon=True).start()
+                return None
             try:
                 body = self.read_body()
             except Exception:  # noqa: BLE001
                 return self.send_json(400, {"error": {"message": "invalid json"}})
+            if u.path.rstrip("/").endswith("/session/end"):
+                # pi 가 끝나는 중이므로 바로 답하고, 대화 정리는 뒤에서 (설정 다시 읽기 reload 는 같은 대화를 이어 감)
+                reason = str(body.get("reason") or "")
+                if reason != "reload":
+                    threading.Thread(target=relay.end_session, args=(reason,), daemon=True).start()
+                return self.send_json(200, {"ok": True})
             if u.path == "/jupyter/exec":
                 def go():
                     rid = jup.start(body["cwd"], body["command"], int(body.get("timeout") or 0))
@@ -818,13 +963,14 @@ def make_handler(relay, jup, cfg):
                 relay.log("오류:", repr(e))
                 return self.send_json(500, {"error": {"message": "중계 서버 내부 오류: {}".format(e)}})
             finish = "tool_calls" if msg.get("tool_calls") else "stop"
+            model_id = body.get("model") or MODEL_ID
             created = int(time.time())
             cid = "chatcmpl-" + uuid.uuid4().hex[:12]
             usage = {"prompt_tokens": sum(len(content_text(m.get("content"))) for m in body.get("messages", [])) // 4,
                      "completion_tokens": len(json.dumps(msg, ensure_ascii=False)) // 4}
             usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
             if not body.get("stream"):
-                return self.send_json(200, {"id": cid, "object": "chat.completion", "created": created, "model": MODEL_ID,
+                return self.send_json(200, {"id": cid, "object": "chat.completion", "created": created, "model": model_id,
                                             "choices": [{"index": 0, "message": msg, "finish_reason": finish}], "usage": usage})
             try:
                 self.send_response(200)
@@ -834,7 +980,7 @@ def make_handler(relay, jup, cfg):
                 self.end_headers()
 
                 def chunk(delta, finish_reason=None, **extra):
-                    obj = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": MODEL_ID,
+                    obj = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model_id,
                            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]}
                     obj.update(extra)
                     self.wfile.write(("data: " + json.dumps(obj, ensure_ascii=False) + "\n\n").encode("utf-8"))
@@ -843,7 +989,7 @@ def make_handler(relay, jup, cfg):
                 for i, tc in enumerate(msg.get("tool_calls") or []):
                     chunk({"tool_calls": [dict(tc, index=i)]})
                 chunk({}, finish)
-                usage_chunk = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": MODEL_ID,
+                usage_chunk = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model_id,
                                "choices": [], "usage": usage}
                 self.wfile.write(("data: " + json.dumps(usage_chunk) + "\n\n").encode("utf-8"))
                 self.wfile.write(b"data: [DONE]\n\n")
@@ -864,6 +1010,7 @@ def main():
     ap.add_argument("--max-chars", type=int, default=int(os.environ.get("PI_COPILOT_MAX_CHARS", "10000")),
                     help="Copilot 메시지 하나의 최대 글자 수 (넘으면 나눠 보냄)")
     ap.add_argument("--tool-result-chars", type=int, default=6000, help="도구 결과 하나를 보낼 최대 글자 수")
+    ap.add_argument("--chats", default="", help="중계 서버가 만든 Copilot 대화 기록 파일 (기본: ~/.pi/agent/copilot-chats.json)")
     args = ap.parse_args()
     if not sys.stdout.isatty():  # 로그 파일로 보낼 때는 UTF-8 (Git Bash 에서 tail 로 읽기 좋게)
         try:
@@ -871,7 +1018,8 @@ def main():
         except AttributeError:
             pass
     cfg = bridge.load_config(args.config)
-    relay = Relay(args, CopilotLink(cfg))
+    registry = ChatRegistry(args.chats or default_registry_path())
+    relay = Relay(args, CopilotLink(cfg, registry))
     jup = Jupyter(cfg)
     try:
         server = ThreadingHTTPServer((args.host, args.port), make_handler(relay, jup, cfg))
@@ -879,8 +1027,9 @@ def main():
         relay.log("포트 {} 를 열 수 없습니다 (이미 실행 중일 수 있음): {}".format(args.port, e))
         sys.exit(1)
     server.daemon_threads = True
-    relay.log("중계 서버 시작: http://{}:{}/v1  (브라우저 원격 디버깅 포트 {}, 설정 {})".format(
-        args.host, args.port, cfg["cdp_port"], args.config if os.path.exists(args.config) else "기본값"))
+    relay.server = server
+    relay.log("중계 서버 시작: http://{}:{}/v1  (버전 {}, 브라우저 원격 디버깅 포트 {}, 설정 {})".format(
+        args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.config if os.path.exists(args.config) else "기본값"))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
