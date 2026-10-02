@@ -1,6 +1,6 @@
 ---
 name: kubeflow-notebook
-description: Kubeflow JupyterLab 노트북 안에서 작업할 때 사용. 패키지 설치, GPU·메모리·디스크 확인, 오래 걸리는 학습·처리를 백그라운드로 실행하고 로그 확인, 파드를 다시 시작해도 남게 저장하기.
+description: Kubeflow 노트북에서 패키지 설치, GPU·자원 확인, 오래 걸리는 학습을 실행할 때 사용.
 ---
 # Kubeflow 노트북에서 일하기
 

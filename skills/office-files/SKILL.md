@@ -1,6 +1,6 @@
 ---
 name: office-files
-description: 엑셀(xlsx, xls, csv)·워드(docx)·PDF·한글(hwp, hwpx) 파일을 읽거나 만들 때 사용. 표를 엑셀로 저장하거나, 문서 내용을 뽑아 요약·비교하는 작업.
+description: 엑셀·CSV·워드·PDF·한글(hwp) 파일을 읽거나 만들 때 사용.
 ---
 # 사무 파일 다루기
 
