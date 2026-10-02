@@ -9,7 +9,7 @@ pi 는 터미널에서 동작하는 코딩 보조 에이전트입니다. 사용�
 | 설정 | 실행 위치 | LLM |
 |---|---|---|
 | `jupyter` | Kubeflow JupyterLab 터미널 | 사내 vLLM (OpenAI 호환 API) |
-| `pc` | 업무 PC 의 Git Bash | Copilot 웹 채팅 (Edge 브라우저, PC 내부 중계기 경유) |
+| `pc` | 업무 PC 의 Git Bash | Copilot 웹 채팅 (Chrome 전용 창, PC 내부 중계기 경유) |
 
 ## 빠른 시작
 1. 압축을 풀어 `~/tools/pi` 에 둡니다.

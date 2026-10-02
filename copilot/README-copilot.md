@@ -6,11 +6,11 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 [Windows PC]
   Git Bash ── pi (PC 에 설치)
                ├─ 두뇌(LLM): 중계 서버 copilot/relay.py (127.0.0.1:8765, pi 에게는 OpenAI 호환 API 로 보임)
-               │              └─ 원격 디버깅 ──► Edge 의 [Copilot 탭]  (같은 대화에 이어서 질문)
+               │              └─ 원격 디버깅 ──► Chrome 전용 창의 [Copilot 탭]  (같은 대화에 이어서 질문)
                └─ 실행 환경(명령·파일 작업), 둘 중 선택
                     ├─ local  : 이 PC 의 Git Bash                    →  pi
                     └─ jupyter: Kubeflow 노트북 안 (JupyterLab 터미널) →  pi --jupyter work/프로젝트
-                                  └─ 중계 서버 ──► Edge 의 [JupyterLab 탭] ──► Jupyter 터미널 'pibridge'
+                                  └─ 중계 서버 ──► 같은 창의 [JupyterLab 탭] ──► Jupyter 터미널 'pibridge'
 ```
 
 - 중계 서버와 브라우저 조작은 **Python 표준 라이브러리만** 씁니다. 노트북(Jupyter)에는 아무것도 설치하지 않습니다.
@@ -35,16 +35,16 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 
 ## 1. 처음 한 번
 1. `docs/설치.md` 대로 Git Bash 에 설치합니다 (`bash install.sh pc`).
-2. Edge 를 전용 프로필 + 원격 디버깅으로 실행합니다 (cmd 또는 Git Bash):
+2. **Chrome 전용 창**을 띄웁니다 (Git Bash, 또는 탐색기에서 더블클릭):
    ```
-   copilot/start-edge.cmd https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab
+   ~/tools/pi/copilot/start-chrome.cmd https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab
    ```
-   - 열린 창에서 **Copilot 에 로그인**합니다. jupyter 모드를 쓰려면 **Kubeflow 에도 로그인**해 JupyterLab 을 열어 둡니다.
-   - 로그인은 전용 프로필(`%LOCALAPPDATA%\pi-copilot-edge`)에 저장됩니다.
-   - 이 Edge 의 Copilot 탭은 **pi 전용**으로 두세요. 직접 대화하면 대화 흐름이 섞입니다.
+   - 평소 쓰는 Chrome 과 따로 뜨는 창입니다 (전용 프로필 `%LOCALAPPDATA%\pi-copilot-chrome`). 평소 Chrome 의 탭·로그인은 건드리지 않습니다.
+     최신 Chrome(136 이후)은 평소 프로필에는 원격 조작을 허용하지 않아서 전용 프로필이 꼭 필요합니다.
+   - 열린 창에서 **Copilot 에 로그인**합니다 (처음 한 번. 로그인은 전용 프로필에 남음). jupyter 모드를 쓰려면 **Kubeflow 에도 로그인**해 JupyterLab 을 이 창에 열어 둡니다.
+   - 이 창의 Copilot 탭은 **pi 전용**으로 두세요. 직접 대화하면 대화 흐름이 섞입니다.
    - 창은 최소화하거나 다른 창 뒤에 두어도 됩니다. 닫으면 안 됩니다.
-   - Edge 대신 **Chrome** 을 쓰려면 `copilot/start-chrome.cmd` (전용 프로필 `%LOCALAPPDATA%\pi-copilot-chrome`). 같은 포트를 쓰므로 둘 중 하나만 실행하세요.
-     Chrome 은 Windows 계정 자동 로그인이 안 될 수 있어 Copilot 에 직접 한 번 로그인해야 합니다.
+   - Edge 를 쓰려면 `~/tools/pi/copilot/start-edge.cmd` (전용 프로필 `%LOCALAPPDATA%\pi-copilot-edge`). 같은 포트를 쓰므로 둘 중 하나만 실행하세요.
 3. 진단:
    ```
    python copilot/diag.py              (브라우저 탭 + Copilot 입력창 확인)
@@ -134,7 +134,7 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 ## 3. 설정 (copilot/bridge.json, 중계 서버 옵션)
 | 항목 | 의미 |
 |---|---|
-| `cdp_port` | Edge 원격 디버깅 포트 (start-edge.cmd 와 같아야 함, 기본 9222) |
+| `cdp_port` | 전용 브라우저 창의 원격 디버깅 포트 (start-chrome.cmd·start-edge.cmd 와 같아야 함, 기본 9222) |
 | `copilot_url_contains` / `copilot_new_chat_url` | Copilot 탭을 찾을 주소 / 새 채팅 주소 |
 | `jupyter_url_contains` | JupyterLab 탭이 여러 개일 때 고를 주소 일부 (예: `/notebook/내네임스페이스/내노트북/`) |
 | `input_selector`, `send_button_selector`, `new_chat_selector`, `reply_selector` | 자동 인식이 안 될 때 CSS 선택자를 직접 지정. diag.py 가 후보를 보여줌 |
@@ -158,10 +158,11 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 ## 4. 문제 해결
 | 증상 | 확인 |
 |---|---|
-| pi 에 `Copilot 탭을 찾지 못했습니다` | start-edge.cmd 로 연 Edge 에 Copilot 탭이 열려 있고 로그인돼 있는지 |
+| pi 에 `Copilot 탭을 찾지 못했습니다` | start-chrome.cmd(또는 start-edge.cmd)로 연 전용 창에 Copilot 탭이 열려 있고 로그인돼 있는지 |
+| pi 에 `브라우저 원격 디버깅 포트(9222)에 연결할 수 없습니다` | 전용 창이 꺼져 있음. start-chrome.cmd 로 다시 띄우세요. 평소 쓰는 Chrome 창으로는 연결되지 않습니다 |
 | pi 에 `중계 서버에 연결할 수 없습니다` | `~/.pi/agent/copilot-relay.log` 확인. Python 을 못 찾으면 `export PI_PYTHON=/c/.../python.exe` |
-| `JupyterLab 탭을 찾지 못했습니다` (jupyter 모드) | 같은 Edge 에 JupyterLab 이 열려 있는지. 여러 개면 `jupyter_url_contains` 지정 |
-| `JupyterLab 로그인이 만료되었습니다` | Edge 의 JupyterLab 탭을 새로고침해 다시 로그인 (중계 서버는 자동으로 다시 붙음) |
+| `JupyterLab 탭을 찾지 못했습니다` (jupyter 모드) | 같은 전용 창에 JupyterLab 이 열려 있는지 (평소 Chrome 에 열린 탭은 쓸 수 없음). 여러 개면 `jupyter_url_contains` 지정 |
+| `JupyterLab 로그인이 만료되었습니다` | 전용 창의 JupyterLab 탭을 새로고침해 다시 로그인 (중계 서버는 자동으로 다시 붙음) |
 | `Copilot 입력창을 찾지 못했습니다` | `diag.py` 결과의 선택자를 `input_selector` 에 지정 |
 | pi 에 `429 Copilot 사용량 제한에 걸렸습니다` | Copilot 이 "현재 요청이 너무 많아 일시적으로 응답할 수 없습니다" 라고 답한 상태입니다 (계정 단위 제한, Throttled). 새 대화를 열어도 같으므로 중계 서버는 새 대화를 열지 않습니다. 기다렸다가 같은 요청을 다시 하면 같은 대화에 이어서 보냅니다. 시험에서는 30분 동안 질문 약 145개를 보냈을 때 걸렸습니다 |
 | Copilot 이 "실행할 수 없다" 며 거절 | 중계 서버가 한 번 설명하고 다시 부탁합니다. 계속되면 요청을 더 구체적으로 적어 보세요 |

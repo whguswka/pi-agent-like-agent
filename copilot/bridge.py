@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """브라우저 조작 모듈 (Windows PC, Python 3.8+ 표준 라이브러리만 사용) - relay.py 가 불러서 쓴다
 
-브라우저(Edge/Chrome)를 원격 디버깅(CDP)으로 제어한다.
+브라우저(Chrome 또는 Edge 전용 창)를 원격 디버깅(CDP)으로 제어한다.
  - Copilot 탭: 질문을 입력하고, 답이 끝날 때까지 기다린 뒤 답을 읽는다 (같은 대화창에 이어서).
  - JupyterLab 탭 조작은 jupyter.py 에 있다.
-먼저 브라우저를 원격 디버깅 포트와 함께 실행해야 한다 (start-edge.cmd 참고).
+먼저 브라우저를 원격 디버깅 포트와 함께 실행해야 한다 (start-chrome.cmd 또는 start-edge.cmd).
 """
 import base64
 import json
@@ -270,7 +270,7 @@ def list_tabs(port):
         with urllib.request.urlopen("http://127.0.0.1:{}/json/list".format(port), timeout=5) as r:
             return [t for t in json.load(r) if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
     except OSError as e:
-        raise BridgeError("브라우저 원격 디버깅 포트({})에 연결할 수 없습니다. start-edge.cmd 로 브라우저를 실행했는지 "
+        raise BridgeError("브라우저 원격 디버깅 포트({})에 연결할 수 없습니다. start-chrome.cmd(또는 start-edge.cmd)로 전용 창을 띄웠는지 "
                           "확인하세요. ({})".format(port, e))
 
 

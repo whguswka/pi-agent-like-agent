@@ -1,9 +1,12 @@
 @echo off
-rem pi Copilot 브리지용 Edge 실행 (원격 디버깅 포트 9222, 전용 프로필)
-rem 사용법: start-edge.cmd https://<kubeflow 주소>/notebook/<네임스페이스>/<노트북>/lab
-rem  - 전용 프로필(%LOCALAPPDATA%\pi-copilot-edge)을 써서 평소 쓰는 Edge 와 따로 실행됩니다.
-rem  - 처음 한 번은 이 창에서 Copilot 과 Kubeflow 에 로그인하세요. 로그인은 전용 프로필에 저장됩니다.
-rem  - 뒤쪽 탭이 느려지거나 멈추지 않도록 백그라운드 절전 기능을 끕니다.
+rem Starts a dedicated Edge window for the pi Copilot bridge (remote debugging port 9222, separate profile).
+rem Use this instead of start-chrome.cmd if you prefer Edge (Edge may sign in to M365 with your Windows account).
+rem Usage: start-edge.cmd https://<kubeflow address>/notebook/<namespace>/<notebook>/lab
+rem  - Uses its own profile (%LOCALAPPDATA%\pi-copilot-edge), separate from your everyday Edge.
+rem  - The first time, log in to Copilot (and Kubeflow for jupyter mode) in this window. Logins are kept in the profile.
+rem  - Background throttling is turned off so tabs behind other windows keep working.
+rem  - start-chrome.cmd uses the same port: run only one of the two.
+rem  (Comments are in English on purpose: cmd reads .cmd files in the console code page, so Korean text can break lines.)
 setlocal
 set "JUPYTER_URL=%~1"
 if "%JUPYTER_URL%"=="" set "JUPYTER_URL=about:blank"

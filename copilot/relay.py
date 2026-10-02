@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """브리지 pi 의 PC 쪽 중계 서버 (Windows PC, Python 3.8+ 표준 라이브러리만 사용)
 
-1) 두뇌: pi 에게 OpenAI 호환 API(/v1/chat/completions)로 보이고, 실제 답은 브라우저(Edge)의 Copilot 웹 채팅
+1) 두뇌: pi 에게 OpenAI 호환 API(/v1/chat/completions)로 보이고, 실제 답은 브라우저(Chrome 또는 Edge 전용 창)의 Copilot 웹 채팅
    탭에 질문해서 받는다 (bridge.py 가 원격 디버깅으로 탭을 조작).
    - 같은 Copilot 대화창을 이어서 쓴다: pi 가 보낸 대화 기록이 이전에 보낸 내용의 연장이면 새로 추가된 부분만 보낸다.
      기록이 달라지면(새 세션, 압축 등) 또는 대화 한도에 닿으면 새 대화를 열고 지침 + 도구 + 대화 내용을 다시 넣는다.
@@ -14,7 +14,7 @@
    (pi 확장 extensions/copilot-session.ts 가 /v1/session/end 로 알림) 지난 대화를 지운다 (delete_finished_chats).
 
 사용법: python relay.py [--config bridge.json] [--port 8765] [--max-chars 10000]
-먼저 브라우저를 원격 디버깅 포트와 함께 실행해야 한다 (start-edge.cmd).
+먼저 브라우저를 원격 디버깅 포트와 함께 실행해야 한다 (start-chrome.cmd 또는 start-edge.cmd).
 """
 import argparse
 import base64
@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.2"
+RELAY_VERSION = "2026-10-02.3"
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문
@@ -545,7 +545,7 @@ class CopilotLink:
             raise RelayError(503, str(e))
         cop = [t for t in tabs if self.cfg["copilot_url_contains"] in t.get("url", "")]
         if not cop:
-            raise RelayError(503, "Copilot 탭을 찾지 못했습니다. start-edge.cmd 로 연 브라우저에서 {} 에 로그인해 열어 두세요.".format(
+            raise RelayError(503, "Copilot 탭을 찾지 못했습니다. start-chrome.cmd(또는 start-edge.cmd)로 연 전용 창에서 {} 에 로그인해 열어 두세요.".format(
                 self.cfg["copilot_url_contains"]))
         self.cop = bridge.Copilot(bridge.Tab(cop[0]), self.cfg)
         bridge.log("Copilot 탭 연결: {}".format(cop[0].get("url", "")[:90]))
