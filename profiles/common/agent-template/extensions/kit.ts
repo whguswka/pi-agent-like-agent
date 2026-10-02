@@ -4,13 +4,15 @@
  *  /kit     한글 빠른 도움말 (키, 세션, 명령·스킬 목록, 설정 파일 위치). 명령·스킬은 ~/.pi/agent 에 있는 것을 그대로 보여 줌
  *  /doctor  상태 요약: pc 설정은 copilot/diag.py --report (판 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그),
  *           jupyter 설정은 판 번호와 Node 확인. 문제가 생기면 이 화면을 찍어 보내면 된다
+ *  /kit share <폴더>    팀이 같이 쓰는 폴더(공유 드라이브 등)의 skills·prompts 를 settings.json 에 등록하고 바로 다시 읽음
+ *  /kit unshare <폴더>  등록을 뺌.  /kit share (폴더 없이) 는 지금 등록된 폴더를 보여 줌
  * 편집기 위에 띄우고, 다음 요청을 보내거나 같은 명령을 다시 입력하면 닫는다. LLM 에게는 보내지 않는다.
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const agentDirRaw = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -109,6 +111,31 @@ async function doctorLines(): Promise<string[]> {
 	return [head, ...body.map((l) => " " + l)];
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// 팀 공유 폴더: <폴더>/skills/<이름>/SKILL.md, <폴더>/prompts/<이름>.md 를 settings.json 의 skills·prompts 목록에 등록
+// ---------------------------------------------------------------------------------------------------------------
+const settingsFile = join(agentDir, "settings.json");
+const norm = (p: string) => p.split("\\").join("/").replace(/\/+$/, "").toLowerCase();
+/** 입력한 폴더 -> 절대 경로 (~, Git Bash 형식 /c/..., 역슬래시도 받음) */
+function folder(arg: string, cwd: string): string {
+	let s = arg.trim().replace(/^["']|["']$/g, "").split("\\").join("/");
+	const m = s.match(/^\/([a-zA-Z])(\/.*)?$/);
+	if (m && process.platform === "win32") s = `${m[1].toUpperCase()}:${m[2] || "/"}`;
+	if (s === "~" || s.startsWith("~/")) s = homedir().split("\\").join("/") + s.slice(1);
+	return (isAbsolute(s) || s.startsWith("//") ? s : resolve(cwd, s).split("\\").join("/")).replace(/\/+$/, "");
+}
+function readSettings(): any {
+	const text = readFileSync(settingsFile, "utf8").replace(/^\uFEFF/, "");
+	const v = JSON.parse(text);
+	if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("settings.json 이 { } 형식이 아닙니다");
+	return v;
+}
+function writeSettings(v: any) {
+	copyFileSync(settingsFile, settingsFile + ".bak");
+	writeFileSync(settingsFile, JSON.stringify(v, null, 2) + "\n");
+}
+const shared = (v: any) => [...(v.skills || []), ...(v.prompts || [])] as string[];
+
 export default function (pi: ExtensionAPI) {
 	let shown: string | null = null; // 지금 띄운 것 ("kit" | "doctor")
 	const show = (ctx: any, what: string, lines: string[] | undefined) => {
@@ -116,12 +143,68 @@ export default function (pi: ExtensionAPI) {
 		shown = lines ? what : null;
 	};
 	pi.registerCommand("kit", {
-		description: "pi 빠른 도움말 (키, 세션, 명령·스킬, 설정 파일 위치)",
-		handler: async (_args, ctx) => {
+		description: "pi 빠른 도움말. /kit share <폴더> 로 팀 공유 폴더의 스킬·명령 등록, /kit unshare <폴더> 로 빼기",
+		handler: async (args, ctx) => {
+			const [sub, ...rest] = (args || "").trim().split(/\s+/);
+			if (sub === "share" || sub === "unshare") return share(sub, rest.join(" "), ctx);
 			if (shown === "kit") return show(ctx, "kit", undefined);
 			show(ctx, "kit", helpLines());
 		},
 	});
+	async function share(sub: string, arg: string, ctx: any) {
+		let v: any;
+		try {
+			v = readSettings();
+		} catch (e) {
+			return ctx.ui.notify(`settings.json 을 읽지 못했습니다: ${(e as Error).message}`, "error");
+		}
+		if (!arg) {
+			const list = shared(v);
+			return ctx.ui.notify(list.length ? `등록된 공유 폴더: ${list.join(", ")}` : "등록된 공유 폴더가 없습니다. /kit share <폴더>", "info");
+		}
+		const dir = folder(arg, process.cwd());
+		const subs = { skills: `${dir}/skills`, prompts: `${dir}/prompts` };
+		if (sub === "unshare") {
+			let n = 0;
+			for (const key of ["skills", "prompts"] as const) {
+				if (!Array.isArray(v[key])) continue;
+				const keep = v[key].filter((x: string) => norm(x) !== norm(subs[key]) && norm(x) !== norm(dir));
+				n += v[key].length - keep.length;
+				if (keep.length) v[key] = keep;
+				else delete v[key];
+			}
+			if (!n) return ctx.ui.notify(`등록되어 있지 않은 폴더입니다: ${dir}`, "warning");
+			writeSettings(v);
+			ctx.ui.notify(`공유 폴더 등록을 뺐습니다: ${dir}. 다시 읽는 중...`, "info");
+			return ctx.reload();
+		}
+		let isDir = false;
+		try {
+			isDir = statSync(dir).isDirectory();
+		} catch {}
+		if (!isDir) return ctx.ui.notify(`그 폴더가 없거나 열 수 없습니다: ${dir}`, "error");
+		const missing = (["skills", "prompts"] as const).filter((k) => !existsSync(subs[k]));
+		if (missing.length === 2) {
+			const ok = await ctx.ui.confirm(
+				"공유 폴더 만들기",
+				`${dir} 안에 skills·prompts 폴더가 없습니다. 새로 만들까요?\n(스킬: skills/<이름>/SKILL.md, 명령: prompts/<이름>.md)`,
+			);
+			if (!ok) return;
+			for (const k of missing) mkdirSync(subs[k], { recursive: true });
+		}
+		const added: string[] = [];
+		for (const key of ["skills", "prompts"] as const) {
+			if (!existsSync(subs[key])) continue;
+			const list: string[] = Array.isArray(v[key]) ? v[key] : [];
+			if (list.some((x) => norm(x) === norm(subs[key]))) continue;
+			v[key] = [...list, subs[key]];
+			added.push(subs[key]);
+		}
+		if (!added.length) return ctx.ui.notify(`이미 등록된 폴더입니다: ${dir}`, "info");
+		writeSettings(v);
+		ctx.ui.notify(`공유 폴더를 등록했습니다: ${added.join(", ")}. 다시 읽는 중...`, "info");
+		return ctx.reload();
+	}
 	pi.registerCommand("doctor", {
 		description: "상태 요약 (판 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그). 문제가 생기면 이 화면을 찍어 보내 주세요",
 		handler: async (_args, ctx) => {
