@@ -1,0 +1,20 @@
+{
+  "providers": {
+    "vllm": {
+      "baseUrl": "http://VLLM-서버-주소:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "EMPTY",
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "models": [
+        {
+          "id": "vLLM-에-올린-모델-이름",
+          "name": "사내 vLLM",
+          "contextWindow": 32768,
+          "maxTokens": 4096
+        }
+      ]
+    }
+  }
+}

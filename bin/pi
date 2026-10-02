@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# pi launcher (Linux: JupyterLab / code-server 터미널, Windows: Git Bash 공용)
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+PI_HOME="$(cd "$(dirname "$SELF")/.." && pwd)"
+. "$PI_HOME/bin/find-node.sh"
+NODE="$(pi_find_node)" || {
+  echo "[pi] 사용할 수 있는 Node.js(20.15 이상)를 찾지 못했습니다." >&2
+  echo "     export PI_NODE=/node/실행파일/경로   로 지정하세요.  (진단: $PI_HOME/check-node.sh)" >&2
+  exit 1
+}
+[ -n "$PI_DEBUG" ] && echo "[pi] node: $NODE ($(pi_node_exec "$NODE" -v | tr -d '\r'))" >&2
+export PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1
+
+# jupyter 모드 (브리지 pi): pi --jupyter <노트북 안 폴더>
+#  - Git Bash 가 ~ 를 PC 홈으로 바꿔 넘긴 값은 ~ 로 되돌린다
+#  - PC 쪽 작업 폴더는 프로젝트별 빈 폴더(~/.pi/jupyter-work/<이름>)로 옮긴다 (세션도 프로젝트별로 저장됨)
+pi_untilde() { case "$1" in "$HOME") echo "~" ;; "$HOME"/*) echo "~/${1#"$HOME"/}" ;; *) echo "$1" ;; esac; }
+PI_ARGS=(); PI_JUPYTER=; _next=
+for _a in "$@"; do
+  if [ -n "$_next" ]; then PI_JUPYTER="$(pi_untilde "$_a")"; PI_ARGS+=("$PI_JUPYTER"); _next=; continue; fi
+  case "$_a" in
+    --jupyter) _next=1; PI_ARGS+=("$_a") ;;
+    --jupyter=*) PI_JUPYTER="$(pi_untilde "${_a#--jupyter=}")"; PI_ARGS+=(--jupyter "$PI_JUPYTER") ;;
+    *) PI_ARGS+=("$_a") ;;
+  esac
+done
+set -- "${PI_ARGS[@]}"
+if [ -n "$PI_JUPYTER" ]; then
+  _name="$(printf '%s' "$PI_JUPYTER" | sed 's#^~/##; s#^/##; s#[^A-Za-z0-9._-]#_#g')"
+  mkdir -p "$HOME/.pi/jupyter-work/${_name:-home}" && cd "$HOME/.pi/jupyter-work/${_name:-home}" || exit 1
+  export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'  # /home/... 같은 노트북 경로를 Windows 경로로 바꾸지 않게
+fi
+
+# 중계 서버 자동 시작 (브리지 pi): 설정(models.json)이 중계 서버 주소를 쓰는데 꺼져 있으면 백그라운드로 켠다
+pi_find_python() {
+  local p
+  [ -n "$PI_PYTHON" ] && { echo "$PI_PYTHON"; return 0; }
+  for p in python3 python py; do
+    p="$(command -v "$p" 2>/dev/null)" || continue
+    case "$p" in *WindowsApps*) continue ;; esac  # Windows 스토어 바로가기(실제 Python 아님)
+    echo "$p"; return 0
+  done
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+    for p in "$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")"/Programs/Python/Python3*/python.exe; do
+      [ -x "$p" ] && { echo "$p"; return 0; }
+    done ;;
+  esac
+  return 1
+}
+pi_port_open() { (exec 3<>/dev/tcp/127.0.0.1/8765) 2>/dev/null; }
+pi_relay_autostart() {
+  local agent="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" py a i log script="$PI_HOME/copilot/relay.py"
+  for a in "$@"; do case "$a" in -v|--version|-h|--help) return 0 ;; esac; done  # 버전/도움말만 볼 때는 켜지 않음
+  grep -q "127.0.0.1:8765" "$agent/models.json" 2>/dev/null || return 0
+  [ -f "$script" ] || return 0
+  pi_port_open && return 0  # 이미 실행 중
+  py="$(pi_find_python)" || { echo "[pi] 중계 서버를 켤 Python 을 찾지 못했습니다. PI_PYTHON=/python/경로 로 지정하세요." >&2; return 0; }
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) script="$(cygpath -w "$script")" ;; esac
+  log="$agent/copilot-relay.log"
+  mkdir -p "$agent"
+  nohup "$py" "$script" >> "$log" 2>&1 < /dev/null &
+  for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open && break; sleep 0.5; done
+  [ -n "$PI_DEBUG" ] && echo "[pi] 중계 서버 시작 (로그: $log)" >&2
+  return 0
+}
+pi_relay_autostart "$@"
+CLI="$PI_HOME/runtime/dist/bundle/cli.js"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  CLI="$(cygpath -w "$CLI")"; URL_BASE="file:///$(cygpath -m "$PI_HOME")" ;;
+*) URL_BASE="file://$PI_HOME" ;;
+esac
+ARGS=()
+RELAY=
+# VS Code 계열 편집기 내장 Node: Node 모드로 실행하고, 하위 프로세스에는 환경변수가 상속되지 않도록 preload 에서 제거
+if pi_is_electron "$NODE"; then
+  export ELECTRON_RUN_AS_NODE=1
+  ARGS+=(--import "$URL_BASE/compat/electron.mjs")
+  # Code.exe 는 GUI 프로그램이라 터미널을 직접 쓰지 못함 -> 대화형 화면(TUI)은 터미널<->파이프 중계로 실행
+  if [ -t 0 ] && [ -t 1 ]; then
+    RELAY=1
+    for a in "$@"; do case "$a" in -p|--print|--mode|--mode=*|--export|--list-models|-h|--help|-v|--version) RELAY= ;; esac; done
+  fi
+fi
+# Node 22.19 미만(20.x 등)이면 호환 레이어를 먼저 로드
+if ! pi_node_ok "$NODE"; then
+  ARGS+=(--import "$URL_BASE/compat/node20.mjs")
+  # cli.js 는 require(esm) 을 써서 Node 20.15~20.18 에서 실패 -> 실제 진입점 cli-runtime.js 를 직접 실행
+  CLI="${CLI%cli.js}cli-runtime.js"
+fi
+if [ -n "$RELAY" ]; then
+  . "$PI_HOME/bin/tty-relay.sh"
+  ARGS+=(--import "$URL_BASE/compat/tty-relay.mjs")
+  pi_tty_relay "$NODE" "${ARGS[@]}" "$CLI" "$@"
+  exit $?
+fi
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  # 구형 mintty 창에서는 node 가 TTY 를 인식 못함 -> winpty 경유 (편집기 내장 Node 는 위의 중계를 쓰므로 제외)
+  if ! pi_is_electron "$NODE" && [ -t 0 ] && [ -t 1 ] && ! "$NODE" -e "process.exit(process.stdin.isTTY&&process.stdout.isTTY?0:1)"; then
+    command -v winpty >/dev/null 2>&1 && exec winpty "$NODE" "${ARGS[@]}" "$CLI" "$@"
+  fi;;
+esac
+exec "$NODE" "${ARGS[@]}" "$CLI" "$@"

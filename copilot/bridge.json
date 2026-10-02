@@ -1,0 +1,17 @@
+{
+  "_설명": "브리지 pi 중계 서버(relay.py)와 진단(diag.py) 설정. 비워 둔 항목은 자동. 항목 설명은 README-copilot.md 참고",
+  "cdp_port": 9222,
+  "copilot_url_contains": "m365.cloud.microsoft/chat",
+  "copilot_new_chat_url": "https://m365.cloud.microsoft/chat",
+  "jupyter_url_contains": "",
+  "input_selector": "",
+  "send_button_selector": "",
+  "new_chat_selector": "",
+  "reply_selector": "",
+  "use_stream": true,
+  "stable_seconds": 4.0,
+  "first_reply_timeout_seconds": 180,
+  "reply_timeout_seconds": 900,
+  "max_questions_per_chat": 100,
+  "max_questions_per_minute": 0
+}

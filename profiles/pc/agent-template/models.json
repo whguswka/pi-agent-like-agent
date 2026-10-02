@@ -1,0 +1,21 @@
+{
+  "providers": {
+    "copilot": {
+      "baseUrl": "http://127.0.0.1:8765/v1",
+      "api": "openai-completions",
+      "apiKey": "copilot-relay",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "copilot",
+          "name": "Copilot (web chat)",
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        }
+      ]
+    }
+  }
+}

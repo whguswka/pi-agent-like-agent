@@ -1,0 +1,11 @@
+{
+  "defaultProvider": "copilot",
+  "defaultModel": "copilot",
+  "enableInstallTelemetry": false,
+  "retry": {
+    "provider": {
+      "timeoutMs": 900000,
+      "maxRetries": 0
+    }
+  }
+}
