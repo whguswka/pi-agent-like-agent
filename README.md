@@ -374,6 +374,7 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 |---|---|
 | `pi: command not found` | 새 Git Bash 창을 여세요. 지금 창에서 바로 쓰려면 `export PATH="$HOME/tools/pi/bin:$PATH"` |
 | Node 를 찾지 못했다는 메시지 | `bash ~/tools/pi/check-node.sh` 결과대로 준비 ([2-2](#2-2-nodejs-확인)) |
+| 시작 화면에 `Warning: fd not found` / `ripgrep not found` | 무시해도 됩니다. 기본 도구(명령 실행, 파일 읽기·쓰기·고치기)는 이 둘 없이 동작합니다 |
 | `브라우저 원격 디버깅 포트(9222)에 연결할 수 없습니다` | 전용 창이 꺼져 있습니다. `pi` 를 다시 실행하면 다시 띄웁니다 (또는 `start-chrome.cmd`). 평소 쓰는 Chrome 창으로는 연결되지 않습니다 |
 | `Copilot 탭을 찾지 못했습니다` | 전용 창에 Copilot 탭이 열려 있고 로그인돼 있는지 확인 |
 | `중계 서버에 연결할 수 없습니다` | `~/.pi/agent/copilot-relay.log` 확인. Python 을 못 찾으면 `~/.bashrc` 에 `export PI_PYTHON=/c/.../python.exe` |
