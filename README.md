@@ -122,6 +122,7 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 - pi 는 **시작한 폴더**를 작업 폴더로 씁니다. 파일 작업, 지침(AGENTS.md), 세션 기록이 모두 이 폴더 기준입니다.
 - 종료: `/quit`, `Ctrl+C` 두 번, 또는 입력창이 비었을 때 `Ctrl+D`.
 - 중계 서버는 `pi` 를 실행하면 자동으로 켜지고, 따로 끌 필요 없습니다. 로그: `~/.pi/agent/copilot-relay.log`
+- 요청 하나가 30초 넘게 걸리면 끝날 때 터미널 벨과 알림으로 알려 줍니다. 다른 창을 보고 있어도 됩니다 (시간은 [10장](#10-설정)의 `notify_after_seconds`).
 
 ### 3-2. 화면에서 쓰는 키와 명령
 | 하고 싶은 것 | 방법 |
@@ -388,12 +389,13 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 | `guard_allow` | `[]` | 묻지 않을 명령 (정규식 목록, 예: `["^git push origin feature/"]`) |
 | `guard_patterns` | `[]` | 더 물어볼 명령 (정규식 목록, 예: `["make deploy"]`) |
 | `guard_outside_writes` | `true` | 작업 폴더 밖 파일 쓰기도 묻기 |
+| `notify_after_seconds` | `30` | 요청이 이 초보다 오래 걸리면 끝날 때 터미널 벨과 알림 (0 이면 끔) |
 
 - **설정을 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다.** 아래 명령으로 끄면 다음 `pi` 실행 때 새 설정으로 켜집니다.
   ```bash
   curl -s -X POST http://127.0.0.1:8765/shutdown
   ```
-  (`browser`, `auto_start_browser`, `jupyter_url` 은 `pi` 를 실행할 때마다 읽고, `guard` 로 시작하는 항목은 고치면 바로 적용됩니다.)
+  (`browser`, `auto_start_browser`, `jupyter_url` 은 `pi` 를 실행할 때마다 읽고, `guard` 로 시작하는 항목과 `notify_after_seconds` 는 고치면 바로 적용됩니다.)
 - JSON 파일에 Windows 경로를 쓸 때는 `/` 로 씁니다 (`"C:/Users/..."`). `\` 를 하나만 쓰면 JSON 오류가 납니다.
 - 전체 항목: [copilot/README-copilot.md 3장](copilot/README-copilot.md#3-설정-copilotbridgejson-중계-서버-옵션)
 - 중계 서버를 다른 에이전트에서 OpenAI 호환 API 로 쓰기: [copilot/README-copilot.md 5장](copilot/README-copilot.md#5-다른-에이전트에서-쓰기-중계-서버-api)
@@ -439,7 +441,7 @@ bash ~/tools/pi/install.sh jupyter
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
-| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인 등) |
+| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 끝 알림) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`) |
 | `docs/` | [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
