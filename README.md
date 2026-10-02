@@ -1,4 +1,4 @@
-# pi-agent-kit
+# pi-agent-like-agent
 
 오픈소스 코딩 에이전트 **pi**([earendil-works/pi](https://github.com/earendil-works/pi), npm `@earendil-works/pi-coding-agent` 0.87.1, MIT)를
 npm 없이 사내 환경에서 실행하기 위한 소스 모음입니다. pi 원본 코드는 수정하지 않았고, 실행 스크립트와 사내 LLM 연결 설정을 더했습니다.

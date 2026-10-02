@@ -1,4 +1,4 @@
-# pi-agent-kit 의 PyPI 의존성
+# pi-agent-like-agent 의 PyPI 의존성
 # Node.js 실행환경: Node 20.15 이상이 이미 있으면 설치하지 않아도 됩니다 (bash check-node.sh 로 확인)
 nodejs-wheel-binaries==24.19.0
 # (선택) pi 의 grep 도구를 쓸 때만
