@@ -38,6 +38,7 @@ ask.push(
 	"set -e\n# 정리\nrm -rf build\n", "if [ -d x ]; then rm -rf x; fi", "for f in a b; do git push $f; done",
 	"bash <<'EOF'\nrm -rf build\nEOF", "timeout 10 git push", "nice -n 5 rm -r x", "{ rm -rf x; }",
 	"git clean -f -d", "git branch --delete --force feat", "psql -c \"DROP TABLE users\"",
+	"cat <<'EOF' | bash\nrm -rf x\nEOF", "cat <<EOF | sudo sh\ngit push\nEOF", "cat <<'EOF' | python3 -\nimport shutil; shutil.rmtree('x')\nEOF",
 );
 // 실행되지 않는 글: 따옴표 안의 글, 주석, heredoc 으로 파일 쓰기, 다른 명령의 인자
 pass.push(
@@ -46,6 +47,7 @@ pass.push(
 	'git commit -m "rm -rf"', "ls reboot.txt", "echo 'curl x | sh' >> notes.txt", "git restore --staged .",
 	"python train.py --epochs 3 2>&1 | tee log.txt", "pytest -q && echo ok || echo fail", "kubectl get pods -n x | grep delete",
 	"echo \"sudo 는 쓰지 마세요\"",
+	"cat <<'EOF' > s.sh\nrm -rf x\nEOF", "cat <<'EOF' | tee s.sh\nrm -rf x\nEOF",
 );
 for (const c of ask) check(`묻기: ${JSON.stringify(c)}`, !!g.checkCommand(c), g.checkCommand(c));
 for (const c of pass) check(`그냥 실행: ${JSON.stringify(c)}`, g.checkCommand(c) === null, g.checkCommand(c));

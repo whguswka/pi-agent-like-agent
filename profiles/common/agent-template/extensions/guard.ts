@@ -93,7 +93,7 @@ const LABEL = {
 };
 
 type Simple = { words: string[] };
-type Parsed = { pipelines: Simple[][]; nested: string[]; heredocs: { words: string[]; body: string }[] };
+type Parsed = { pipelines: Simple[][]; nested: string[]; heredocs: { words: string[]; body: string; pipe: number }[] };
 
 /** 셸 글 -> 파이프라인(단순 명령 목록)들, 안에서 실행되는 글($(...), `...`), heredoc 본문 */
 function parseShell(src: string): Parsed {
@@ -202,6 +202,7 @@ function parseShell(src: string): Parsed {
 		}
 		if (c === "\n") {
 			endPipe();
+			const pipe = out.pipelines.length - 1; // heredoc 이 붙은 파이프라인 (cat <<EOF | bash 처럼 본문을 셸에 넘기는지 보려고)
 			i++;
 			// heredoc 본문: 끝 표시 줄까지 건너뜀 (본문은 따로 모아 둠)
 			for (const h of pending.splice(0)) {
@@ -213,7 +214,7 @@ function parseShell(src: string): Parsed {
 					if ((h.strip ? line.replace(/^\t+/, "") : line) === h.delim) break;
 					lines.push(line);
 				}
-				out.heredocs.push({ words: h.words, body: lines.join("\n") });
+				out.heredocs.push({ words: h.words, body: lines.join("\n"), pipe });
 			}
 			continue;
 		}
@@ -426,14 +427,19 @@ function analyze(src: string, depth = 0): string | null {
 		const f = names.findIndex((n) => n === "curl" || n === "wget");
 		if (f >= 0 && names.slice(f + 1).some((n) => SHELLS.has(n))) return LABEL.pipe;
 	}
-	// heredoc 본문: 셸에 넘기면 명령으로, 인터프리터에 넘기면 코드로 본다 (cat 등 파일 쓰기는 보지 않음)
+	// heredoc 본문: 셸에 넘기면(bash <<EOF, cat <<EOF | bash) 명령으로, 인터프리터에 넘기면 코드로 본다
+	// (cat <<EOF > 파일 처럼 파일로 쓰는 것은 보지 않음)
 	for (const h of p.heredocs) {
 		const s = strip(h.words).rest;
-		const n = s.length ? base(s[0]) : "";
-		if (SHELLS.has(n) || n === "ssh") {
+		const names = [s.length ? base(s[0]) : ""];
+		for (const cmd of p.pipelines[h.pipe] || []) {
+			const r = strip(cmd.words).rest;
+			if (r.length) names.push(base(r[0]));
+		}
+		if (names.some((n) => SHELLS.has(n) || n === "ssh")) {
 			const r = analyze(h.body, depth + 1);
 			if (r) return r;
-		} else if (INTERP[n.replace(/[0-9.]+$/, "")] || ["psql", "mysql", "sqlite3"].includes(n)) {
+		} else if (names.some((n) => INTERP[n.replace(/[0-9.]+$/, "")] || ["psql", "mysql", "sqlite3"].includes(n))) {
 			const r = legacy(h.body);
 			if (r) return r;
 		}
