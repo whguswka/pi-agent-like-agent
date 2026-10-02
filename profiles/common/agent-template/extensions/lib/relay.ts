@@ -1,5 +1,5 @@
 /**
- * 확장끼리 함께 쓰는 도우미 (undo.ts, memory.ts, files.ts): 지금 작업 폴더, 파일 읽기·쓰기·지우기.
+ * 확장끼리 함께 쓰는 도우미 (undo.ts, memory.ts, modes.ts, files.ts): 지금 작업 폴더, 파일 읽기·쓰기·지우기.
  * jupyter 모드(PC 의 pi 가 명령·파일 작업을 노트북에서)면 중계 서버를 거쳐 노트북 파일을 다룬다.
  * 지금 작업 폴더는 jupyter.ts 가 globalThis.__piWorkDir 로 알려 준다 (없으면 pi 를 시작한 폴더).
  * 이 폴더(lib)에는 index.ts 가 없으므로 pi 가 확장으로 불러오지 않는다.
@@ -91,6 +91,42 @@ export async function readTarget(t: Target): Promise<Buffer | null> {
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
 		throw e;
+	}
+}
+
+/** 파일 앞부분(최대 n 바이트)과 전체 크기. 없거나 폴더면 null (큰 파일을 통째로 읽지 않으려고) */
+export async function readHead(t: Target, n: number): Promise<{ data: Buffer; size: number } | null> {
+	if (t.remote) {
+		let st: any;
+		try {
+			st = await call("/jupyter/fs", { op: "stat", path: t.abs });
+		} catch (e) {
+			if ((e as RelayError).code === "ENOENT") return null;
+			throw e;
+		}
+		if (st.kind === "directory") return null;
+		const size = Number(st.size) || 0;
+		if (size > 256 * 1024) {
+			// 큰 파일은 앞부분만 (노트북 홈 안, 숨김이 아닌 경로만 됨)
+			const r = await call("/jupyter/fs", { op: "read_range", path: t.abs, start: 0, end: n - 1 });
+			return { data: Buffer.from(r.data || "", "base64"), size: Number(r.total) || size };
+		}
+		const all = await readTarget(t);
+		return all && { data: all.subarray(0, n), size: all.length };
+	}
+	let fh: Awaited<ReturnType<typeof fsp.open>> | undefined;
+	try {
+		const st = await fsp.stat(t.abs);
+		if (!st.isFile()) return null;
+		fh = await fsp.open(t.abs, "r");
+		const buf = Buffer.alloc(Math.min(n, st.size));
+		const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+		return { data: buf.subarray(0, bytesRead), size: st.size };
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw e;
+	} finally {
+		await fh?.close();
 	}
 }
 

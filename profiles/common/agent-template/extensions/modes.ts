@@ -75,7 +75,7 @@ function sub(args: string[], withValue: Set<string>): { name: string; rest: stri
 function gitRead(args: string[]): boolean {
 	const { name, rest } = sub(args, new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]));
 	if (!name) return args.some((a) => a === "--version" || a === "--help");
-	if (rest.some((a) => /^--output(=|$)|^--ext-diff$/.test(a))) return false;
+	if (rest.some((a) => /^--output(=|$)|^--ext-diff$|^-O|^--open-files-in-pager/.test(a))) return false; // 파일로 쓰기, 다른 프로그램 실행
 	if (GIT_READ.has(name)) return true;
 	const flags = rest.filter((a) => a.startsWith("-"));
 	const pos = rest.filter((a) => !a.startsWith("-"));

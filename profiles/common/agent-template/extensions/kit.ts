@@ -48,7 +48,7 @@ function helpLines(): string[] {
 	const bridge = isBridge();
 	const lines = [
 		`── pi 빠른 도움말 (판 ${version()}) ── 닫기: /kit 다시 입력 또는 요청 보내기`,
-		" 입력  Enter 보내기 · Shift+Enter 줄바꿈 · Esc 멈추기 · Ctrl+O 도구 출력 펼치기 · !명령 직접 실행",
+		" 입력  Enter 보내기 · Shift+Enter 줄바꿈 · Esc 멈추기 · Ctrl+O 도구 출력 펼치기 · !명령 직접 실행 · @ 파일 고르기(내용이 함께 감)",
 		" 모델  /model 또는 Ctrl+L 고르기 · Ctrl+P 다음 모델",
 		" 세션  pi -c 이어서 · /resume 고르기 · /new 새로 · /name 이름 붙이기 · 끝내기 /quit 또는 Ctrl+C 두 번",
 		" 작업  /plan 계획부터 (승인하면 진행) · /mode 계획·확인·자동 · /undo pi 가 고친 파일 되돌리기",
