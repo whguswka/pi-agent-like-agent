@@ -21,14 +21,14 @@ RUN_DIR = "pi-bridge/run"  # Jupyter 루트 기준 (숨김 폴더는 파일 API 
 
 PAGE_JS = r"""
 (() => {
-  const V = 3;
+  const V = 4;
   if (window.__piJ && window.__piJ.v === V) return true;
   const el = document.getElementById('jupyter-config-data');
   if (!el) return false;
   const cfg = JSON.parse(el.textContent);
   const base = cfg.baseUrl || '/';
   const xsrf = () => { const m = document.cookie.match(/(?:^|;\s*)_xsrf=([^;]+)/); return m ? decodeURIComponent(m[1]) : null; };
-  const J = {v: V, base, ws: null, name: null, done: {}, scan: '', tail: ''};
+  const J = {v: V, base, terms: {}, done: {}, scan: {}, tail: {}};  // 터미널 이름별 연결 (pi 여러 개 동시 실행: pibridge, pibridge2, ...)
   J.fetch = async (method, path, body) => {
     const headers = {'Content-Type': 'application/json'};
     const x = xsrf(); if (x) headers['X-XSRFToken'] = x;
@@ -88,22 +88,23 @@ PAGE_JS = r"""
   // 터미널 출력에 섞여 오는 완료 신호(화면에는 안 보이는 OSC 777 문자열)를 모은다
   const DONE_RE = /\x1b\]777;pi-done;([0-9a-f]+);(-?\d+)\x07/g;
   J.connect = (name) => new Promise((resolve) => {
-    if (J.ws && J.ws.readyState === 1 && J.name === name) return resolve('open');
-    try { if (J.ws) J.ws.close(); } catch (e) {}
-    const ws = new WebSocket(J.wsUrl(name)); J.ws = ws; J.name = name;
+    const cur = J.terms[name];
+    if (cur && cur.readyState === 1) return resolve('open');
+    try { if (cur) cur.close(); } catch (e) {}
+    const ws = new WebSocket(J.wsUrl(name)); J.terms[name] = ws; J.scan[name] = '';
     const t = setTimeout(() => resolve('timeout'), 15000);
     ws.onopen = () => { clearTimeout(t); resolve('open'); };
     ws.onmessage = (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m[0] !== 'stdout') return;
-      J.tail = (J.tail + m[1]).slice(-6000);
-      J.scan += m[1];
-      for (const x of J.scan.matchAll(DONE_RE)) J.done[x[1]] = +x[2];
-      J.scan = J.scan.slice(-300);
+      J.tail[name] = ((J.tail[name] || '') + m[1]).slice(-6000);
+      J.scan[name] = (J.scan[name] || '') + m[1];
+      for (const x of J.scan[name].matchAll(DONE_RE)) J.done[x[1]] = +x[2];
+      J.scan[name] = J.scan[name].slice(-300);
     };
     ws.onclose = () => { clearTimeout(t); resolve('closed'); };
   });
-  J.send = (data) => { if (!J.ws || J.ws.readyState !== 1) return false; J.ws.send(JSON.stringify(['stdin', data])); return true; };
+  J.send = (name, data) => { const ws = J.terms[name]; if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(['stdin', data])); return true; };
   window.__piJ = J;
   return true;
 })()
@@ -140,12 +141,15 @@ class Jupyter:
         self.cfg = cfg
         self.tab = None
         self.lock = threading.RLock()       # CDP 탭 하나를 여러 요청이 나눠 쓰므로 한 번에 하나씩
-        self.run_lock = threading.RLock()   # 터미널 하나에서는 명령도 한 번에 하나씩
-        self.term = None
+        self.locks = {}                     # 터미널마다: 그 터미널에서는 명령도 한 번에 하나씩
+        self.locks_lock = threading.Lock()
+        self.init_lock = threading.Lock()   # 터미널 준비는 한 번에 하나씩 (기본 터미널 준비가 실행 폴더를 비우므로)
+        self.term = None   # 기본 터미널(pibridge)의 실제 이름
+        self.ready = set()  # 준비(셸 설정)를 마친 터미널
         self.root = None   # Jupyter 루트 절대 경로 (터미널에서 확인)
         self.home = None
         self.runs = {}
-        self.current = None
+        self.current = {}  # 터미널 -> 실행 중인 명령 번호
         self.stale = []    # 다 읽은 실행 파일 (다음 명령 때 지움. 파일 API 의 DELETE 는 휴지통으로 가므로 안 씀)
 
     # ------------------------------------------------------------------ 탭
@@ -199,49 +203,75 @@ class Jupyter:
         return self.check(self.js("window.__piJ.{}({})".format(fn, ", ".join(json.dumps(a) for a in args)), timeout))
 
     # ------------------------------------------------------------------ 터미널
-    def send(self, data):
-        if not self.js("window.__piJ.send({})".format(json.dumps(data))):
+    def term_lock(self, name):
+        with self.locks_lock:
+            return self.locks.setdefault(name, threading.RLock())
+
+    def send(self, data, term=None):
+        name = term or self.term or TERM_NAME
+        if not self.js("window.__piJ.send({}, {})".format(json.dumps(name), json.dumps(data))):
             raise BridgeError("Jupyter 터미널로 입력을 보내지 못했습니다")
 
-    def ensure_terminal(self):
-        with self.run_lock:
+    def ensure_terminal(self, term=None):
+        """터미널 준비 (없으면 만들고 연결). term 이 없으면 기본 터미널 pibridge.
+        pi 여러 개 동시 실행(max_tabs)일 때 창 2 부터는 pibridge2, pibridge3 ... 을 따로 쓴다"""
+        want = term or TERM_NAME
+        with self.term_lock(want):
             r = self.call("fetch", "GET", "api/terminals", None)
             if r["status"] != 200:
                 raise BridgeError("Jupyter 터미널 목록을 읽지 못했습니다 ({}): {}".format(r["status"], r.get("text", "")[:200]))
             names = [t.get("name") for t in json.loads(r.get("text") or "[]")]
+            name = self.term if want == TERM_NAME and self.term else want
             fresh = False
-            if not self.term or self.term not in names:
-                if TERM_NAME in names:
-                    self.term = TERM_NAME
+            if name not in names:
+                if want in names:
+                    name = want
                 else:
-                    r = self.call("fetch", "POST", "api/terminals", {"name": TERM_NAME})
+                    r = self.call("fetch", "POST", "api/terminals", {"name": want})
                     if r["status"] not in (200, 201):
                         raise BridgeError("Jupyter 터미널을 만들지 못했습니다 ({}): {}".format(r["status"], r.get("text", "")[:200]))
-                    self.term = json.loads(r["text"])["name"]
-                    log("Jupyter 터미널 생성: {}".format(self.term))
+                    name = json.loads(r["text"])["name"]
+                    log("Jupyter 터미널 생성: {}".format(name))
                 fresh = True
-            state = self.js("window.__piJ.connect({})".format(json.dumps(self.term)), timeout=30)
+            if want == TERM_NAME:
+                self.term = name
+            state = self.js("window.__piJ.connect({})".format(json.dumps(name)), timeout=30)
             if state != "open":
                 raise BridgeError("Jupyter 터미널에 연결하지 못했습니다 ({})".format(state))
-            if fresh or not self.root:
-                self.init_shell()
+            if fresh or not self.root or name not in self.ready:
+                self.init_shell(name)
+            return name
 
-    def init_shell(self):
-        """터미널 셸 준비: 명령 기록을 남기지 않게 하고, 실행 폴더를 만들고, 루트·홈 경로를 알아낸다"""
+    def init_shell(self, term=None):
+        """터미널 셸 준비: 명령 기록을 남기지 않게 하고, 실행 폴더를 만들고, 루트·홈 경로를 알아낸다.
+        실행 폴더를 비우는 것은 기본 터미널을 준비할 때, 다른 터미널에서 실행 중인 명령이 없을 때만 (그 명령의 파일을 지우지 않게)"""
+        with self.init_lock:
+            self._init_shell(term)
+
+    def _init_shell(self, term=None):
+        name = term or self.term or TERM_NAME
+        busy_elsewhere = any(r.get("term", name) != name and not r["done"] and not r["aborted"] for r in self.runs.values())
+        wipe = " && rm -f \"$PIB\"/run/*" if name == (self.term or TERM_NAME) and not busy_elsewhere else ""
         token = uuid.uuid4().hex[:8]
         self.send(" unset HISTFILE; set +o history 2>/dev/null; PIB=\"${JUPYTER_SERVER_ROOT:-$PWD}/pi-bridge\"; "
-                  "mkdir -p \"$PIB/run\" && rm -f \"$PIB\"/run/*; "
+                  "mkdir -p \"$PIB/run\"" + wipe + "; "
                   "printf '%s\\n%s\\n' \"${JUPYTER_SERVER_ROOT:-$PWD}\" \"$HOME\" > \"$PIB/run/env-" + token + ".txt\"; "
-                  "clear; echo '[pi-bridge] PC 의 pi 가 이 터미널에서 명령을 실행합니다.'\r")
+                  "clear; echo '[pi-bridge] PC 의 pi 가 이 터미널에서 명령을 실행합니다.'\r", name)
         deadline = time.time() + 40
         while time.time() < deadline:
             r = self.call("readFile", RUN_DIR + "/env-" + token + ".txt")
             if r["status"] == 200:
                 lines = base64.b64decode(r["b64"]).decode("utf-8", "replace").splitlines()
                 self.root, self.home = lines[0].rstrip("/") or "/", lines[1].rstrip("/") or "/"
-                self.stale = ["env-" + token]
-                self.runs, self.current = {}, None
-                log("Jupyter 터미널 준비: 루트 {}  홈 {}".format(self.root, self.home))
+                if wipe:
+                    self.stale = ["env-" + token]
+                else:
+                    self.stale.append("env-" + token)
+                for k in [k for k, v in list(self.runs.items()) if v.get("term", name) == name]:
+                    self.runs.pop(k, None)
+                self.current[name] = None
+                self.ready.add(name)
+                log("Jupyter 터미널 준비 ({}): 루트 {}  홈 {}".format(name, self.root, self.home))
                 return
             time.sleep(0.5)
         raise BridgeError("Jupyter 터미널이 응답하지 않습니다 (준비 확인 파일이 생기지 않음). "
@@ -253,15 +283,17 @@ class Jupyter:
                 "url": (self.tab.info.get("url", "") if self.tab else "")}
 
     # ------------------------------------------------------------------ 명령 실행
-    def start(self, cwd, command, timeout=0, title=None):
-        with self.run_lock:
-            if self.current:  # 앞 명령이 남아 있으면 끝날 때까지 (최대 60초) 기다림
+    def start(self, cwd, command, timeout=0, title=None, term=None):
+        want = term or TERM_NAME
+        with self.term_lock(want):
+            name = (self.term or TERM_NAME) if want == TERM_NAME else want
+            if self.current.get(name):  # 앞 명령이 남아 있으면 끝날 때까지 (최대 60초) 기다림
                 deadline = time.time() + 60
-                while self.current and not self.status(self.current, None)["done"]:
+                while self.current.get(name) and not self.status(self.current[name], None)["done"]:
                     if time.time() > deadline:
                         raise BridgeError("Jupyter 터미널에서 이전 명령이 아직 실행 중입니다")
                     time.sleep(0.5)
-            self.ensure_terminal()
+            name = self.ensure_terminal(want)
             rid = uuid.uuid4().hex[:10]
             R = self.root.rstrip("/") + "/" + RUN_DIR
             self.write_rel(RUN_DIR + "/" + rid + ".sh", command.encode("utf-8"))
@@ -272,10 +304,10 @@ class Jupyter:
             self.write_rel(RUN_DIR + "/" + rid + ".run", wrapper.encode("utf-8"))
             rm = ("rm -f " + " ".join(shq(R + "/" + s) + ".*" for s in self.stale) + "; ") if self.stale else ""
             self.stale = []
-            self.send(" {}bash {}\r".format(rm, shq(R + "/" + rid + ".run")))
+            self.send(" {}bash {}\r".format(rm, shq(R + "/" + rid + ".run")), name)
             self.runs[rid] = {"start": time.time(), "timeout": timeout or 0, "done": False, "rc": None,
-                              "aborted": False, "timed_out": False, "last_list": 0}
-            self.current = rid
+                              "aborted": False, "timed_out": False, "last_list": 0, "term": name}
+            self.current[name] = rid
             return rid
 
     def status(self, rid, offset=0, wait=0.0):
@@ -312,8 +344,8 @@ class Jupyter:
                 break
             time.sleep(1.0)
         if run["done"] or run["aborted"]:
-            if self.current == rid:
-                self.current = None
+            if self.current.get(run.get("term")) == rid:
+                self.current[run.get("term")] = None
             if rid not in self.stale:
                 self.stale.append(rid)
         out = {"done": run["done"], "exitCode": run["rc"], "aborted": run["aborted"] and not run["timed_out"],
@@ -329,11 +361,11 @@ class Jupyter:
         if run and not run["done"]:
             run["aborted"] = True
             try:
-                self.send("\x03")
+                self.send("\x03", run.get("term"))
             except BridgeError:
                 pass
-            if self.current == rid:
-                self.current = None
+            if self.current.get(run.get("term")) == rid:
+                self.current[run.get("term")] = None
 
     def run(self, cwd, command, timeout=60, title=None):
         """짧은 내부 명령을 끝까지 실행 -> (종료 코드, 출력 bytes)"""

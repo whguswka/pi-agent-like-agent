@@ -15,7 +15,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
-const SESSION = process.env.PI_COPILOT_SESSION || `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+// 이 pi 의 세션 값 (jupyter.ts 와 같은 값을 쓰도록 globalThis 에 한 번만 만듦)
+const SESSION: string = ((globalThis as any).__piSession ||=
+	process.env.PI_COPILOT_SESSION || `${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
 
 export default function (pi: ExtensionAPI) {
 	pi.on("before_provider_headers", async (event: any) => {

@@ -29,6 +29,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
+// 이 pi 의 세션 값 (copilot-session.ts 와 같은 값). 중계 서버에서 max_tabs 가 2 이상이면 창마다 노트북 터미널도 따로 씀
+const SESSION: string = ((globalThis as any).__piSession ||=
+	process.env.PI_COPILOT_SESSION || `${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
 
 type Remote = { arg: string; cwd: string; home: string; root: string };
 
@@ -41,7 +44,7 @@ async function call(path: string, body?: unknown): Promise<any> {
 	try {
 		res = await fetch(SERVER + path, {
 			method: body === undefined ? "GET" : "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: { "Content-Type": "application/json", "X-Pi-Session": SESSION },
 			body: body === undefined ? undefined : JSON.stringify(body),
 		});
 	} catch (e) {

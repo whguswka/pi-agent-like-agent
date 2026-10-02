@@ -82,7 +82,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `max_questions_per_minute` | 0 이면 끔. 숫자를 넣으면 분당 그 수를 넘지 않게 기다렸다 보냄 (Copilot 사용량 제한 예방, 아래 참고) |
 | `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |
 | `tool_result_chars` | 도구 결과 하나를 보낼 최대 글자 수 (기본 6000, 가운데 생략) |
-| `max_tabs` | 기본 1. 2 이상이면 요청 머리글 `X-Pi-Session`(pi 확장 copilot-session.ts 가 pi 프로세스마다 붙임)별로 Copilot 창을 따로 씀. 창 1 은 처음부터 열려 있던 Copilot 탭, 나머지는 필요할 때 새 창(뒤에서 열림). 대화 기록에는 창 번호(owner)를 남겨 각 창은 자기 대화만 '끝난 대화' 로 돌림. 창이 모두 쓰이는 중이면 가장 오래 쉰 창을 넘겨받음. 분당 질문 수 제한은 모든 창을 합쳐서 셈 |
+| `max_tabs` | 기본 1. 2 이상이면 요청 머리글 `X-Pi-Session`(pi 확장 copilot-session.ts 가 pi 프로세스마다 붙임)별로 Copilot 창을 따로 씀. 창 1 은 처음부터 열려 있던 Copilot 탭, 나머지는 필요할 때 새 창(뒤에서 열림). 대화 기록에는 창 번호(owner)를 남겨 각 창은 자기 대화만 '끝난 대화' 로 돌림. 창이 모두 쓰이는 중이면 가장 오래 쉰 창을 넘겨받음. 분당 질문 수 제한은 모든 창을 합쳐서 셈. jupyter 모드의 노트북 명령도 창마다 터미널을 따로 씀 (창 1: pibridge, 창 2: pibridge2 …. jupyter.ts 도 같은 X-Pi-Session 을 보냄) |
 | `multi_read` | 기본 false. true 면 진행 규칙에 "여러 파일을 읽을 때는 read 블록 여러 개를 한 번에 써도 된다" 를 넣고, 답의 맨 앞부터 이어지는 read 블록을 모두 tool_calls 로 돌려줌 (pi 는 한 답의 도구들을 동시에 실행하므로 read 만) |
 | `resend_recent_chars` / `resend_summary_chars` | 새 대화를 열 때 다시 넣는 기록: 최근 것은 이 글자 수만큼 그대로, 그 앞은 이 글자 수만큼 한 줄 요약 (기본 20000 / 40000). `max_chars` 를 늘려도 이 양은 그대로 |
 
@@ -127,7 +127,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 
 **Kubeflow 노트북 실행 (`/jupyter/*`)** - 응답은 JSON, 실패하면 `{"ok": false, "code": ..., "error": ...}`
 - `GET /jupyter/info` → `root`, `home` (노트북 안 절대 경로), `terminal` (실행에 쓰는 터미널 이름)
-- `POST /jupyter/exec` `{"cwd": "/home/jovyan/work/x", "command": "bash 명령", "timeout": 초(0=없음)}` → `{"id": ...}`
+- `POST /jupyter/exec` `{"cwd": "/home/jovyan/work/x", "command": "bash 명령", "timeout": 초(0=없음)}` → `{"id": ...}` (max_tabs 가 2 이상이면 머리글 `X-Pi-Session` 의 창에 맞는 터미널에서)
 - `GET /jupyter/exec/<id>?offset=N&wait=2` → `done`, `exitCode`, `aborted`, `timedOut`, `data`(offset 이후 출력, base64), `size`
   (wait 초 동안 끝나기를 기다렸다 답함. 출력은 stdout+stderr 합친 것. 명령은 입력 없이(stdin 없음) 한 번에 하나씩 실행)
 - `POST /jupyter/exec/<id>/abort` → 터미널에 Ctrl+C

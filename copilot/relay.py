@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.13"
+RELAY_VERSION = "2026-10-02.14"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -1005,6 +1005,12 @@ class Lanes:
         lane = self.find(session)
         return status(lane["relay"].status) if lane else status({"busy": False, "phase": "", "since": 0, "started": 0})
 
+    def terminal(self, session):
+        """이 세션이 쓰는 창의 노트북 터미널 이름 (창 1: 기본 pibridge -> None)"""
+        relay = self.pick(session)
+        owner = getattr(relay.link, "owner", "1")
+        return None if owner == "1" else "pibridge{}".format(owner)
+
     def summary(self):
         with self.lock:
             return [{"window": ln["owner"], "session": ln["session"], "busy": ln["relay"].status["busy"]} for ln in self.lanes]
@@ -1070,8 +1076,10 @@ def make_handler(relay, jup, cfg, lanes=None):
             except FsError as e:
                 return self.send_json(200, {"ok": False, "code": e.code, "error": str(e)})
             except bridge.SessionExpired as e:
+                relay.log("Jupyter 오류:", e)
                 return self.send_json(401, {"ok": False, "code": "AUTH", "error": str(e)})
             except bridge.BridgeError as e:
+                relay.log("Jupyter 오류:", e)
                 return self.send_json(503, {"ok": False, "code": "BRIDGE", "error": str(e)})
             except Exception as e:  # noqa: BLE001
                 relay.log("Jupyter 처리 오류:", repr(e))
@@ -1141,8 +1149,11 @@ def make_handler(relay, jup, cfg, lanes=None):
                         threading.Thread(target=relay.end_session, args=(reason,), daemon=True).start()
                 return self.send_json(200, {"ok": True})
             if u.path == "/jupyter/exec":
+                # 창이 여러 개면(max_tabs) 창마다 노트북 터미널도 따로: 창 1 은 pibridge, 창 2 는 pibridge2 ...
+                term = lanes.terminal(self.headers.get("X-Pi-Session")) if lanes else None
+
                 def go():
-                    rid = jup.start(body["cwd"], body["command"], int(body.get("timeout") or 0))
+                    rid = jup.start(body["cwd"], body["command"], int(body.get("timeout") or 0), term=term)
                     relay.log("Jupyter 실행 {}: {}".format(rid, body["command"].strip().split("\n")[0][:100]))
                     return {"id": rid}
                 return self.jupyter(go)
