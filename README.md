@@ -109,7 +109,7 @@ python ~/tools/pi/copilot/diag.py --report
 | `--report` | **한 화면 상태 요약**: 판 번호, Node, 중계 서버, 전용 창, 현재 모델, 설정, 최근 요청 통계(평균 시간, 새 대화, 조각 나눔), 최근 로그 (읽기만 함) |
 
 - `--report` 는 요약만 보여 줍니다. 나머지 진단은 마지막 줄에 `결과: 정상` 이 나오면 됩니다.
-- **문제가 생기면 `--report` 화면을 찍어 보내 주세요.** 상황 대부분이 한 장에 담깁니다.
+- **문제가 생기면 `--report` 화면을 찍어 보내 주세요.** 상황 대부분이 한 장에 담깁니다. pi 를 쓰는 중이면 `/doctor` 로 같은 내용을 볼 수 있습니다.
 
 ## 3. 기본 사용법
 
@@ -139,6 +139,8 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 | 지침·스킬을 고친 뒤 다시 읽기 | `/reload` |
 | 자주 하는 일 | 기본 명령 `/init` `/handoff` `/review` `/test` `/commit` `/explain` ([6장](#6-지침-스킬-메모리)) |
 | 명령 목록 | `/` 를 치면 나옴 |
+| 빠른 도움말 | `/kit` (키, 세션, 명령·스킬 목록, 설정 파일 위치를 편집기 위에 보여 줌. 다시 입력하면 닫힘) |
+| 상태 요약 | `/doctor` (아래 `--report` 와 같은 내용을 pi 화면에. 문제가 생기면 이 화면을 찍어 보내 주세요) |
 
 ### 3-3. 세션 (대화 기록)
 pi 는 대화를 자동으로 저장합니다 (`~/.pi/agent/sessions/`, 작업 폴더별).
@@ -471,7 +473,7 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 - 중계 서버를 다른 에이전트에서 OpenAI 호환 API 로 쓰기: [copilot/README-copilot.md 5장](copilot/README-copilot.md#5-다른-에이전트에서-쓰기-중계-서버-api)
 
 ## 11. 문제 해결
-먼저 `python ~/tools/pi/copilot/diag.py --report` 를 실행해 보세요. 해결이 안 되면 그 화면을 찍어 보내 주세요.
+먼저 `python ~/tools/pi/copilot/diag.py --report` 를 실행해 보세요 (pi 안에서는 `/doctor`). 해결이 안 되면 그 화면을 찍어 보내 주세요.
 
 | 증상 | 해결 |
 |---|---|
@@ -511,7 +513,7 @@ bash ~/tools/pi/install.sh jupyter
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
-| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 끝 알림) |
+| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 끝 알림, `/kit`·`/doctor`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 6개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_merge_config.mjs`) |

@@ -101,6 +101,8 @@ pi_relay_autostart() {
 pi_relay_autostart "$@"
 # /upload·/download 로 폴더를 옮길 때 묶고 푸는 데 쓰는 Python (jupyter.ts: python -m tarfile)
 [ -z "$PI_PYTHON_EXE" ] && _py="$(pi_find_python 2>/dev/null)" && export PI_PYTHON_EXE="$(pi_native_path "$_py")"
+# pi 확장(kit.ts: /kit, /doctor)이 판 번호·문서·진단 도구를 찾을 pi 폴더
+export PI_KIT_HOME="$(pi_native_path "$PI_HOME")"
 CLI="$PI_HOME/runtime/dist/bundle/cli.js"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
   CLI="$(cygpath -w "$CLI")"; URL_BASE="file:///$(cygpath -m "$PI_HOME")" ;;
