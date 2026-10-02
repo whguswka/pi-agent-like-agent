@@ -2,9 +2,11 @@
 //  - 사용자가 고친 값은 그대로 둔다 (없는 항목만 추가)
 //  - 사용자가 지운 항목은 다시 넣지 않는다: 지난번에 설치한 템플릿(.pi-agent-kit-template.json)과 비교해 새로 생긴 것만 추가
 //  - 바꾸기 전 파일은 <이름>.bak 으로 남긴다
-//  - 저장소의 기본 명령·스킬 폴더(<저장소>/prompts, <저장소>/skills)를 settings.json 의 prompts·skills 목록에 등록한다
-//    (저장소 폴더를 그대로 쓰므로 업데이트하면 함께 바뀐다. 사용자가 목록에서 지우면 다시 넣지 않는다)
+//  - 기본 명령·스킬(<저장소>/prompts/*.md, <저장소>/skills/<이름>/)을 사용자 설정 폴더의 prompts·skills 에 복사한다
+//    처음이면 복사, 고치지 않았으면 새 판으로 바꿈, 고쳤으면 그대로 둠(알림), 지웠으면 다시 넣지 않음
+//    (고쳤는지는 지난번에 설치한 내용의 해시와 비교. 상태 파일의 kitFiles)
 // 사용법: node merge-config.mjs <템플릿 폴더> <사용자 설정 폴더> [저장소 폴더]
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -68,22 +70,79 @@ const prev = prevState.ok && isObj(prevState.value) ? prevState.value : {};
 const state = {};
 const norm = (x) => String(x).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
-/** settings.json 에 저장소의 기본 명령·스킬 폴더 등록 (지난번에 넣었는데 지금 없으면 사용자가 지운 것 -> 그대로) */
-function addKitPaths(u, changes) {
-	if (!kitHome) return;
-	state.kitPaths = {};
-	for (const key of ["prompts", "skills"]) {
-		const dir = `${kitHome.replace(/\\/g, "/").replace(/\/+$/, "")}/${key}`;
-		if (!fs.existsSync(dir)) continue;
-		state.kitPaths[key] = dir;
-		const has = Array.isArray(u[key]);
-		const list = has ? u[key] : [];
-		if (list.some((x) => norm(x) === norm(dir))) continue;
-		const old = prev.kitPaths?.[key];
-		if (has && old && norm(old) === norm(dir)) continue; // 목록은 있는데 이 폴더만 없음 -> 사용자가 지움 (파일을 새로 만든 경우는 다시 넣음)
-		u[key] = list.filter((x) => !old || norm(x) !== norm(old)).concat([dir]); // 다른 곳으로 옮겨 설치했으면 예전 위치는 뺌
-		changes.push(`${key} 에 ${dir} 등록`);
+/** 예전 판(설정에 저장소 폴더를 등록하던 방식)에서 넣은 prompts·skills 경로를 뺀다 (지금은 복사하므로 이름이 겹치지 않게) */
+function dropOldKitPaths(u, changes) {
+	for (const [key, dir] of Object.entries(prev.kitPaths || {})) {
+		if (!Array.isArray(u[key])) continue;
+		const rest = u[key].filter((x) => norm(x) !== norm(dir));
+		if (rest.length === u[key].length) continue;
+		if (rest.length) u[key] = rest;
+		else delete u[key];
+		changes.push(`${key} 에서 ${dir} 뺌 (기본 ${key === "skills" ? "스킬" : "명령"}은 이제 복사해서 씀)`);
 	}
+}
+
+/** 파일 또는 폴더 내용의 해시 (폴더는 안의 파일 이름과 내용 전부) */
+function hashOf(p) {
+	const h = crypto.createHash("sha256");
+	const walk = (q, rel) => {
+		if (fs.statSync(q).isDirectory()) {
+			for (const n of fs.readdirSync(q).sort()) walk(path.join(q, n), rel ? `${rel}/${n}` : n);
+		} else {
+			h.update(`${rel}\0`);
+			h.update(fs.readFileSync(q));
+			h.update("\0");
+		}
+	};
+	walk(p, "");
+	return h.digest("hex");
+}
+
+/** 기본 명령·스킬을 사용자 설정 폴더에 복사 (고친 것·지운 것은 그대로) */
+function syncKitFiles() {
+	if (!kitHome) return;
+	const prevFiles = isObj(prev.kitFiles) ? prev.kitFiles : {};
+	state.kitFiles = {};
+	const items = [];
+	const pdir = path.join(kitHome, "prompts");
+	if (fs.existsSync(pdir)) for (const n of fs.readdirSync(pdir).sort()) if (n.endsWith(".md")) items.push([`prompts/${n}`, path.join(pdir, n), "명령", `/${n.slice(0, -3)}`]);
+	const sdir = path.join(kitHome, "skills");
+	if (fs.existsSync(sdir))
+		for (const n of fs.readdirSync(sdir).sort()) if (fs.existsSync(path.join(sdir, n, "SKILL.md"))) items.push([`skills/${n}`, path.join(sdir, n), "스킬", n]);
+	const added = [];
+	const updated = [];
+	const kept = [];
+	for (const [rel, src, kind, label] of items) {
+		const dst = path.join(agentDir, rel);
+		const want = hashOf(src);
+		const old = prevFiles[rel];
+		if (!fs.existsSync(dst)) {
+			if (old) {
+				state.kitFiles[rel] = old; // 사용자가 지움 -> 다시 넣지 않음
+				continue;
+			}
+			fs.mkdirSync(path.dirname(dst), { recursive: true });
+			fs.cpSync(src, dst, { recursive: true });
+			state.kitFiles[rel] = want;
+			added.push(label);
+			continue;
+		}
+		const cur = hashOf(dst);
+		if (cur === want) {
+			state.kitFiles[rel] = want;
+		} else if (old && cur === old) {
+			fs.rmSync(dst, { recursive: true, force: true });
+			fs.cpSync(src, dst, { recursive: true });
+			state.kitFiles[rel] = want;
+			updated.push(label);
+		} else {
+			if (old) state.kitFiles[rel] = old; // 사용자가 고친 기본 명령·스킬 (원래 사용자 것이면 기록하지 않음)
+			kept.push(`${kind} ${label}`);
+		}
+	}
+	if (added.length) console.log(`기본 명령·스킬 추가: ${added.join(", ")}`);
+	if (updated.length) console.log(`기본 명령·스킬 새 판으로: ${updated.join(", ")}`);
+	if (kept.length) console.log(`직접 고친 것은 그대로 둠: ${kept.join(", ")} (새 판은 ${kitHome} 의 prompts·skills 에 있음)`);
 }
 let failed = false;
 for (const name of FILES) {
@@ -104,11 +163,12 @@ for (const name of FILES) {
 		name === "models.json"
 			? mergeModels(u.value, t.value, prev[name], changes)
 			: mergeObj(u.value, t.value, prev[name], changes, "");
-	if (name === "settings.json") addKitPaths(merged, changes);
+	if (name === "settings.json") dropOldKitPaths(merged, changes);
 	if (!changes.length) continue;
 	fs.copyFileSync(file, `${file}.bak`);
 	fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`);
 	console.log(`갱신: ${file} (${changes.join(", ")}) - 이전 파일: ${name}.bak`);
 }
+syncKitFiles();
 fs.writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
 process.exit(failed ? 2 : 0);

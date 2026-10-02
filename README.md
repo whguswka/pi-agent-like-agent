@@ -294,6 +294,19 @@ description: 주간 업무 보고서를 쓸 때 사용. 이번 주 git 기록을
 - 확실히 쓰게 하려면 `/skill:weekly-report` (뒤에 요청을 붙여도 됨: `/skill:weekly-report 이번 주는 배포 위주로`).
 - 만들거나 고친 뒤에는 `/reload`.
 
+**기본 스킬:** 설치할 때 `~/.pi/agent/skills/` 에 복사됩니다. 작업이 설명과 맞으면 LLM 이 알아서 읽고, `/skill:이름` 으로 직접 부를 수도 있습니다.
+
+| 스킬 | 쓰는 때 |
+|---|---|
+| `skill-creator` | "○○ 스킬 만들어줘" 하면 형식에 맞게 만들어 줌. 팀 노하우를 스킬로 쌓기 쉬움 |
+| `office-files` | 엑셀·워드·PDF·한글(hwp, hwpx) 파일 읽기·만들기 (pandas, openpyxl, python-docx, pypdf 등. 없으면 사내 미러로 `--user` 설치) |
+| `data-analysis` | CSV·엑셀 탐색, 요약 통계, 집계. 그래프는 파일로 저장 (한글 글꼴 요령 포함) |
+| `kubeflow-notebook` | 노트북 요령: GPU·메모리·디스크 확인, `pip --user`, 긴 작업은 nohup + 로그, 홈(PVC) 보존 |
+| `korean-report` | 주간보고·작업 결과 보고서·회의록 (개조식, 양식 파일 포함) |
+| `debugging` | 재현 → 오류 읽기 → 원인 좁히기 → 고치기 → 확인 순서 |
+
+**기본 명령·스킬과 업데이트:** 고치지 않은 것은 새 판으로 바꾸고, 직접 고친 것은 그대로 둡니다 (설치할 때 "직접 고친 것은 그대로 둠" 으로 알려 줌). 지운 것은 다시 넣지 않습니다.
+
 스킬을 두는 곳:
 
 | 위치 | 범위 |
@@ -318,8 +331,8 @@ description: 주간 업무 보고서를 쓸 때 사용. 이번 주 git 기록을
 | `/commit [내용]` | 바뀐 내용으로 한국어 커밋 메시지를 써서 커밋 (push 는 하지 않음) |
 | `/explain <파일·함수>` | 코드를 읽고 하는 일·구조·흐름·주의할 점을 설명 |
 
-- 명령 파일은 저장소의 `prompts/` 에 있고, 설치할 때 `~/.pi/agent/settings.json` 의 `prompts` 목록에 등록됩니다. 업데이트하면 함께 바뀝니다.
-- 내 명령은 `~/.pi/agent/prompts/<이름>.md` 로 만듭니다 (형식은 `prompts/` 의 파일을 참고). 기본 명령을 쓰지 않으려면 `prompts` 목록에서 그 경로를 지우세요 (다시 설치해도 다시 넣지 않음).
+- 기본 명령은 설치할 때 `~/.pi/agent/prompts/` 에 복사됩니다 (예: `review.md`). 고쳐 써도 됩니다.
+- 내 명령은 같은 곳에 `<이름>.md` 로 만듭니다 (형식은 기본 명령 파일을 참고).
 
 ### 메모리
 - **pi 에는 자동 메모리 기능이 없습니다.** 대화에서 무엇을 기억할지 스스로 골라 저장하지 않습니다.
@@ -393,6 +406,7 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 - `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 판에 추가된 항목(새 모델 등)만** 넣습니다. 바뀐 파일은 `갱신:` 으로 알려 주고, 이전 파일은 `.bak` 으로 남깁니다.
 - 직접 고친 값과 직접 지운 항목, 내 설정 파일(`~/.pi/agent/bridge.json`), 지침(AGENTS.md), 스킬, 세션 기록은 그대로입니다.
 - 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다.
+- 기본 명령·스킬(`~/.pi/agent/prompts`, `skills`)은 고치지 않은 것만 새 판으로 바뀝니다. 직접 고친 것과 지운 것은 그대로입니다.
 - 예전 판에서 `copilot/bridge.json` 을 직접 고쳤다면 `update.sh` 가 그 항목을 알려 줍니다. 그 항목을 내 설정 파일([10장](#10-설정))로 옮기세요.
 - 잘 동작하면 `~/tools/pi.old` 는 지워도 됩니다.
 
@@ -498,7 +512,7 @@ bash ~/tools/pi/install.sh jupyter
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
 | `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 끝 알림) |
-| `prompts/` | 기본 명령 (`/init`, `/handoff`, `/review`, `/test`, `/commit`, `/explain`) |
+| `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 6개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_merge_config.mjs`) |
 | `docs/` | [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
