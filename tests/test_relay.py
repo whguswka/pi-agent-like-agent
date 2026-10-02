@@ -294,6 +294,19 @@ link8 = FakeLink(["최근에는 그래프를 추가했고, 다음 단계는 READ
 r8 = relay.Relay(A(), link8)
 r8.handle({"messages": [sys_msg, {"role": "user", "content": "도구는 쓰지 말고 기억으로만 답해줘: 최근 작업은?"}], "tools": tools})
 check("도구 없이 답하라는 질문에는 이어서 하라고 하지 않음", len(link8.sent_log) == 1, link8.sent_log)
+# 계획 모드(pi 의 /plan: 요청 앞에 "[계획 모드] ...")에서는 계획 글에 흔한 말이 있어도 도구를 쓰라고 다시 부탁하지 않음
+plan_req = {"role": "user", "content": "[계획 모드] 지금은 계획만 세웁니다. 승인하면 그때 진행합니다.\n\nlogin.py 에 로그 기능을 추가해줘"}
+for reply, name in [
+    ("계획:\n1. login.py 수정\n```python\nimport logging\n```\n2. 확인", "코드 예시가 있어도 write 를 부탁하지 않음"),
+    ("계획 모드라서 지금은 실행할 수 없습니다. 계획:\n1. a\n2. b", "'실행할 수 없' 이 있어도 거절로 보지 않음"),
+    ("1. a 확인\n2. 다음 단계는 b 수정입니다.", "'다음 단계는' 이 있어도 이어서 하라고 하지 않음"),
+]:
+    lk = FakeLink([reply, "다시 부탁한 뒤의 답"])
+    out = relay.Relay(A(), lk).handle({"messages": [sys_msg, plan_req], "tools": tools})
+    check("계획 모드: " + name, len(lk.sent_log) == 1 and out.get("content") == reply, (lk.sent_log, out))
+lk = FakeLink(["```python\nimport logging\n```", "다시 부탁한 뒤의 답"])
+relay.Relay(A(), lk).handle({"messages": [sys_msg, {"role": "user", "content": "login.py 에 로그 기능을 추가해줘"}], "tools": tools})
+check("(비교) 계획 모드가 아니면 코드만 보여 줄 때 write 블록을 부탁함", len(lk.sent_log) == 2, lk.sent_log)
 
 # 모델 선택: pi 모델 id -> Copilot 화면의 모델 이름 (Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 고름)
 cfgm = {"copilot_model": "GPT 6.0 Sol", "copilot_models": {"gpt-5.6-sol-think": "GPT 5.6 Sol 깊이 생각하기", "screen": ""}}

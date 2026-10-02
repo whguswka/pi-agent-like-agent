@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.14"
+RELAY_VERSION = "2026-10-02.15"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -184,7 +184,9 @@ CONTINUE_NUDGE = ("아직 끝나지 않았다면 기다리지 마시고 다음 �
                   "모두 끝났다면 결과를 최종 답으로 정리해 주세요.")
 UNFINISHED_RE = re.compile(r"다음 (블록|단계|작업)을? ?(을 )?(드리|진행|하겠|주시)|다음 (단계|작업)는 |결과를 (보|확인)[^\n]{0,12}(다음|뒤|후)|실행해 ?(주시면|보시고|주세요)|"
                            r"완료되지 않|아직 (끝나지|완료되지)|❌|(next|following) (step|block)|once you (run|share)", re.I)
-NO_TOOLS_RE = re.compile(r"도구는? (쓰지|사용하지) ?말|도구 없이")
+# 사용자가 도구 없이 답하라고 했거나 계획 모드(pi 의 /plan, 요청 앞에 "[계획 모드]")면 도구를 쓰라고 다시 부탁하지 않는다
+#  (계획을 적은 답에는 "다음 단계는", 코드 예시, "실행할 수 없" 같은 말이 자연스럽게 들어감)
+NO_TOOLS_RE = re.compile(r"도구는? (쓰지|사용하지) ?말|도구 없이|\[계획 모드\]")
 
 
 def last_user_text(messages):
@@ -858,20 +860,20 @@ class Relay:
             raise
         body_text, call, err = parse_reply(reply, tool_names)
         retries, nudged, code_nudged, cont_nudged = 0, False, False, False
+        no_tools = bool(NO_TOOLS_RE.search(last_user_text(messages)))
         while call is None and retries < 2:
             if err:  # 형식이 틀리면 다시 요청
                 self.log("도구 블록 오류 -> 다시 요청: {}".format(err))
                 fix = ("방금 블록은 사용할 수 없었습니다: {}\n올바른 형식의 코드 블록 하나로 다시 적어 주세요 "
                        "(요청이 끝났다면 블록 없이 최종 답).").format(err)
-            elif not nudged and REFUSAL_RE.search(body_text or "") and tool_names:
+            elif not nudged and not no_tools and REFUSAL_RE.search(body_text or "") and tool_names:
                 self.log("Copilot 이 실행을 거절 -> 설명 후 다시 요청")
                 fix, nudged = REFUSAL_NUDGE, True
-            elif (not code_nudged and "write" in tool_names and PROGRAM_FENCE_RE.search(body_text or "")
+            elif (not code_nudged and not no_tools and "write" in tool_names and PROGRAM_FENCE_RE.search(body_text or "")
                   and wants_files_but_none_written(messages)):
                 self.log("Copilot 이 파일을 만들지 않고 코드만 보여 줌 -> write 블록으로 다시 요청")
                 fix, code_nudged = CODE_NUDGE, True
-            elif (not cont_nudged and tool_names and UNFINISHED_RE.search(body_text or "")
-                  and not NO_TOOLS_RE.search(last_user_text(messages))):
+            elif not cont_nudged and not no_tools and tool_names and UNFINISHED_RE.search(body_text or ""):
                 self.log("Copilot 이 일을 마치지 않고 멈춤 -> 이어서 하도록 다시 요청")
                 fix, cont_nudged = CONTINUE_NUDGE, True
             else:

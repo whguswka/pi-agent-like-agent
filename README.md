@@ -134,7 +134,9 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 | 명령을 직접 실행하고 결과를 대화에 넣기 | `!git status` (`!!git status` 는 결과를 LLM 에 보내지 않음) |
 | 일하는 중에 방향 바꾸기 | 입력하고 `Enter` (지금 단계가 끝나면 반영) |
 | 멈추기 | `Esc` |
-| pi 가 고친 파일 되돌리기 | `/undo` (마지막 요청), `/undo 2` (마지막 두 요청) — 아래 3-4 |
+| 계획부터 세우고 승인받아 진행 | `/plan` 을 치고 요청 (또는 `/plan <요청>`). 다시 `/plan` 이면 끔 — 아래 3-4 |
+| 바꿀 때마다 확인받기 / 다시 자동으로 | `/mode ask` / `/mode auto` (`/mode` 만 치면 고르기) |
+| pi 가 고친 파일 되돌리기 | `/undo` (마지막 요청), `/undo 2` (마지막 두 요청) — 아래 3-5 |
 | 도구 출력 펼치기·접기 | `Ctrl+O` |
 | 모델 고르기 / 다음 모델로 | `/model` 또는 `Ctrl+L` / `Ctrl+P` |
 | 지침·스킬을 고친 뒤 다시 읽기 | `/reload` |
@@ -154,7 +156,34 @@ pi 는 대화를 자동으로 저장합니다 (`~/.pi/agent/sessions/`, 작업 �
 | `/name 이름` | 세션에 이름 붙이기 (목록에서 찾기 쉬움) |
 | `/session` | 지금 세션 정보 |
 
-### 3-4. 되돌리기 (/undo)
+### 3-4. 작업 모드 (/plan, /mode)
+pi 는 기본으로 묻지 않고 바로 고치고 실행합니다 (자동 모드). 큰 작업이나 처음 보는 코드라면 계획부터 보고 진행하는 편이 안전합니다.
+
+| 모드 | 하는 일 | 바꾸기 |
+|---|---|---|
+| 계획 | 파일을 읽고 살펴보기만 하고(읽기 전용 명령만 실행) 번호 붙인 단계로 계획을 적습니다. 계획이 오면 "이 계획대로 진행할까요?" 를 묻습니다 | `/plan`, `/plan <요청>` |
+| 확인 | 파일을 쓰거나 고치기 전, 읽기 전용이 아닌 명령을 실행하기 전에 바뀌는 줄(`-` 지움, `+` 넣음)이나 명령을 보여 주고 묻습니다. 거절하면 그 작업은 하지 않고 멈춥니다 | `/mode ask` |
+| 자동 | 묻지 않고 실행합니다. 위험한 명령(폴더 지우기, `git push` 등)만 묻습니다 ([8장](#8-주의할-점)) | `/mode auto` (기본) |
+
+지금 모드는 화면 아래 상태 줄에 보입니다 (`계획 모드 · 읽기만`, `확인 모드`. 자동이면 표시 없음).
+
+**계획 모드로 일하기**
+1. `/plan` 을 치고 할 일을 적습니다. 한 번에 하려면 `/plan 로그인할 때 로그를 남기도록 바꾸고 싶어`.
+2. pi 가 필요한 파일을 읽고 계획을 적습니다. 이 동안 파일을 바꾸는 작업(write·edit, `>` 로 파일에 쓰기, `rm`, `git commit`, 스크립트 실행 등)은 막혀 있고,
+   LLM 에게는 "계획의 단계로 적어 달라"고 돌려보냅니다.
+3. 계획이 오면 고릅니다.
+   - **진행 (자동)**: 묻지 않고 진행
+   - **진행 (확인)**: 파일을 바꾸거나 명령을 실행할 때마다 확인하면서 진행
+   - **계획 더 다듬기** (또는 `Esc`): 계획 모드 그대로. 고칠 점을 적어 보내면 계획을 다시 받습니다
+4. 진행하면 입력창 위에 단계 목록(`[ ] 1. ...`)이 보이고, 단계를 마칠 때마다 체크됩니다. 모두 끝나면 다음 요청을 보낼 때 닫힙니다.
+
+- 계획 모드에서 실행하는 명령: `ls`, `cat`, `head`, `grep`, `find`(`-delete`·`-exec rm` 등은 제외), `wc`, `sed -n`, `git status`·`diff`·`log`·`show`,
+  `pip list`, `kubectl get`·`describe`·`logs`, `nvidia-smi` 처럼 읽기만 하는 것입니다. 파이썬 실행이나 테스트도 계획 모드에서는 하지 않습니다.
+- 단계 체크는 LLM 이 답에 `[1단계 완료]` 처럼 적어 줄 때 됩니다. 적지 않으면 목록만 그대로 남고 작업에는 영향이 없습니다.
+- pi 를 시작할 때의 모드는 [10장](#10-설정)의 `default_mode` 로 정합니다 (예: 늘 확인 모드로 시작하려면 `"default_mode": "ask"`).
+  `pi -p` 처럼 물을 수 없는 실행은 늘 자동 모드로 시작합니다.
+
+### 3-5. 되돌리기 (/undo)
 pi 가 파일을 고치기 직전과 직후 내용을 요청마다 기록해 두고, `/undo` 로 원래대로 돌립니다.
 - 되돌리기 전에 파일 목록(복원 / 지움: 새로 만든 파일)을 보여 주고 확인을 받습니다.
 - 그 뒤에 다른 곳에서 다시 바뀐 파일은 덮어쓰지 않고 알려 줍니다.
@@ -163,7 +192,7 @@ pi 가 파일을 고치기 직전과 직후 내용을 요청마다 기록해 두
 - **셸 명령(bash)으로 바뀐 파일은 되돌리지 못합니다** (예: `sed -i`, `rm`, 스크립트 실행 결과). 5MB 넘는 파일도 기록하지 않습니다.
 - 기록은 pi 를 끄면 사라집니다. 오래 남길 변경은 git 으로 관리하세요.
 
-### 3-5. 이 구성에서 피할 명령
+### 3-6. 이 구성에서 피할 명령
 | 명령 | 이유 |
 |---|---|
 | `/compact`, `/fork`, `/clone`, `/tree`(다른 지점으로 이동) | 대화 기록이 바뀌어 Copilot 새 대화가 열리고, 지침과 기록을 다시 넣느라 1~2분 걸립니다. 꼭 필요할 때만 |
@@ -384,7 +413,7 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 
 ## 7. Copilot 대화 관리
 - **같은 대화에 이어서:** 중계 서버는 pi 세션 하나를 Copilot 대화 하나로 이어 갑니다. 처음에는 지침·도구 설명·요청을 함께 보내고, 그 뒤로는 새로 추가된 부분만 보냅니다.
-- **새 대화가 열리는 때:** 새 세션(`/new`, pi 다시 시작. `-c` 로 이어 시작해도 해당), 지침을 바꾸고 `/reload`, [3-5](#3-5-이-구성에서-피할-명령)의 기록을 바꾸는 명령,
+- **새 대화가 열리는 때:** 새 세션(`/new`, pi 다시 시작. `-c` 로 이어 시작해도 해당), 지침을 바꾸고 `/reload`, [3-6](#3-6-이-구성에서-피할-명령)의 기록을 바꾸는 명령,
   `Esc` 로 멈춘 다음 질문, 대화당 질문 수(`max_questions_per_chat`, 기본 100)에 닿았을 때.
   새 대화에는 지침과 최근 기록(오래된 것은 한 줄 요약)을 다시 넣으므로 1~2분 걸립니다.
 - **끝난 대화 자동 삭제:** pi 세션이 끝나면(종료, `/new` 등) 그 세션이 쓰던 Copilot 대화를 왼쪽 목록에서 지웁니다. 맥락은 pi 세션에 남아 있으므로 Copilot 쪽 대화는 남길 필요가 없습니다.
@@ -414,6 +443,7 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
   - 명령 자리의 낱말만 봅니다. `echo "rm -rf ..."` 같은 따옴표 안의 글, 주석, `cat <<'EOF' > 파일` 로 쓰는 본문은 묻지 않습니다.
     대신 실제로 실행되는 글(`bash -c "..."`, `eval`, `ssh 호스트 '...'`, `$(...)`, `xargs rm`, `python -c` 코드 등)은 안까지 봅니다.
   - 묻지 않을 명령, 더 물어볼 명령은 [10장](#10-설정)의 `guard_allow`, `guard_patterns` 로 정합니다.
+  - 계획 모드에서는 이런 작업을 묻지 않고 막고, 확인 모드에서는 바뀌는 내용과 함께 한 번에 묻습니다 ([3-4](#3-4-작업-모드-plan-mode)).
 - 그래도 모든 위험을 막지는 못합니다. 중요한 폴더는 git 으로 관리하고 바뀐 내용을 확인하세요. 시킨 범위를 벗어나는 작업이 보이면 `Esc` 로 멈춥니다.
 
 ## 9. 새 버전으로 바꾸기
@@ -485,12 +515,13 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 | `guard_patterns` | `[]` | 더 물어볼 명령 (정규식 목록, 예: `["make deploy"]`) |
 | `guard_outside_writes` | `true` | 작업 폴더 밖 파일 쓰기도 묻기 |
 | `notify_after_seconds` | `30` | 요청이 이 초보다 오래 걸리면 끝날 때 터미널 벨과 알림 (0 이면 끔) |
+| `default_mode` | `auto` | pi 를 시작할 때의 작업 모드: `plan`(계획) · `ask`(확인) · `auto`(자동) ([3-4](#3-4-작업-모드-plan-mode)) |
 
 - **설정을 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다.** 아래 명령으로 끄면 다음 `pi` 실행 때 새 설정으로 켜집니다.
   ```bash
   curl -s -X POST http://127.0.0.1:8765/shutdown
   ```
-  (`browser`, `auto_start_browser`, `jupyter_url` 은 `pi` 를 실행할 때마다 읽고, `guard` 로 시작하는 항목과 `notify_after_seconds` 는 고치면 바로 적용됩니다.)
+  (`browser`, `auto_start_browser`, `jupyter_url`, `default_mode` 는 `pi` 를 실행할 때마다 읽고, `guard` 로 시작하는 항목과 `notify_after_seconds` 는 고치면 바로 적용됩니다.)
 - JSON 파일에 Windows 경로를 쓸 때는 `/` 로 씁니다 (`"C:/Users/..."`). `\` 를 하나만 쓰면 JSON 오류가 납니다.
 - 전체 항목: [copilot/README-copilot.md 3장](copilot/README-copilot.md#3-설정-copilotbridgejson-중계-서버-옵션)
 - 중계 서버를 다른 에이전트에서 OpenAI 호환 API 로 쓰기: [copilot/README-copilot.md 5장](copilot/README-copilot.md#5-다른-에이전트에서-쓰기-중계-서버-api)
@@ -536,10 +567,10 @@ bash ~/tools/pi/install.sh jupyter
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
-| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 끝 알림, `/kit`·`/doctor`) |
+| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 작업 끝 알림, `/kit`·`/doctor`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 6개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
-| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_merge_config.mjs`) |
+| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_merge_config.mjs`) |
 | `docs/` | [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**

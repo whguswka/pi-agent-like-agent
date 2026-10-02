@@ -51,6 +51,7 @@ function helpLines(): string[] {
 		" 입력  Enter 보내기 · Shift+Enter 줄바꿈 · Esc 멈추기 · Ctrl+O 도구 출력 펼치기 · !명령 직접 실행",
 		" 모델  /model 또는 Ctrl+L 고르기 · Ctrl+P 다음 모델",
 		" 세션  pi -c 이어서 · /resume 고르기 · /new 새로 · /name 이름 붙이기 · 끝내기 /quit 또는 Ctrl+C 두 번",
+		" 작업  /plan 계획부터 (승인하면 진행) · /mode 계획·확인·자동 · /undo pi 가 고친 파일 되돌리기",
 		` 명령  ${prompts.join(" ") || "(없음)"}`,
 		`       내 명령: ${A}/prompts/<이름>.md`,
 		` 스킬  /skill:이름 → ${skills.join(", ") || "(없음)"}`,

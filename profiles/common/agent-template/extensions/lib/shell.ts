@@ -164,6 +164,7 @@ export function parseShell(src: string): Parsed {
 			continue;
 		}
 		if (c === ">") {
+			if (has && /^\d+$/.test(cur)) [cur, has] = ["", false]; // 2>파일 의 2 는 출력 번호 (낱말 아님)
 			endWord();
 			if (src[i + 1] === "&") {
 				i += 2; // >&2 : 다른 출력으로 보내기 (파일 아님)

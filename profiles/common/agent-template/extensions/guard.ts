@@ -7,6 +7,7 @@
  *  - write/edit: 작업 폴더 밖의 파일 (임시 폴더는 제외). jupyter 모드에서는 노트북의 작업 폴더 기준
  *  - 사용자가 직접 치는 !명령은 묻지 않는다 (이 확인은 LLM 이 요청한 도구 실행에만 걸림)
  *  - 거부하면 실행하지 않고 작업을 멈춘다. 물을 수 없는 실행 방식(pi -p)이면 막고 LLM 에게 이유를 알린다
+ *  - 계획·확인 모드(modes.ts 의 /plan, /mode)에서는 직접 묻지 않고 이유만 넘긴다: 계획 모드는 막고, 확인 모드는 한 번에 묻는다
  *
  * 설정 (내 설정 파일 ~/.pi/agent/bridge.json, 고치면 바로 적용):
  *   "guard": false                          이 확인을 끔
@@ -281,6 +282,12 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 		if (!why) return;
+		// 계획·확인 모드(modes.ts)에서는 여기서 묻지 않고 이유만 넘김: 계획 모드는 막고, 확인 모드는 바뀌는 내용과 함께 한 번에 묻는다
+		const mode = (globalThis as any).__piMode;
+		if (mode === "plan" || mode === "ask") {
+			event.guardReason = why;
+			return;
+		}
 		if (!ctx.hasUI) {
 			return {
 				block: true,
