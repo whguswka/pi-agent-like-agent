@@ -1,11 +1,13 @@
 /**
- * Copilot 대화 정리 (브리지 pi 용)
+ * Copilot 대화 정리 + 진행 상태 표시 (브리지 pi 용)
  *
- * pi 세션이 끝나면(종료, /new 로 새 세션 등) PC 의 중계 서버(copilot/relay.py)에 알린다.
- * 중계 서버는 그 세션에서 쓴 Copilot 대화를 지운다 (bridge.json 의 delete_finished_chats).
- * 맥락은 pi 가 따로 저장하므로 Copilot 쪽 대화는 남길 필요가 없다.
- * 설정을 다시 읽는 reload 는 같은 대화를 이어 가므로 알리지 않는다.
- * 중계 서버가 꺼져 있거나 창을 닫아 알림이 못 가면, 중계 서버가 다음 새 대화를 열 때 정리한다.
+ * 1) pi 세션이 끝나면(종료, /new 로 새 세션 등) PC 의 중계 서버(copilot/relay.py)에 알린다.
+ *    중계 서버는 그 세션에서 쓴 Copilot 대화를 지운다 (bridge.json 의 delete_finished_chats).
+ *    맥락은 pi 가 따로 저장하므로 Copilot 쪽 대화는 남길 필요가 없다.
+ *    설정을 다시 읽는 reload 는 같은 대화를 이어 가므로 알리지 않는다.
+ *    중계 서버가 꺼져 있거나 창을 닫아 알림이 못 가면, 중계 서버가 다음 새 대화를 열 때 정리한다.
+ * 2) 요청을 처리하는 동안 1초마다 중계 서버의 /status 를 물어, Copilot 쪽에서 지금 하는 일을 상태 줄에 보여 준다
+ *    (예: "Copilot: 새 대화 여는 중 12초", "Copilot: 답 기다리는 중 (2/3) 5초"). /status 는 잠금 없이 바로 답한다.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -13,7 +15,43 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_shutdown", async (event: { reason?: string }) => {
+	let timer: ReturnType<typeof setInterval> | null = null;
+	let shown = false;
+	const stop = (ctx?: any) => {
+		if (timer) clearInterval(timer);
+		timer = null;
+		if (shown && ctx?.hasUI) ctx.ui.setStatus("copilot", undefined);
+		shown = false;
+	};
+
+	pi.on("agent_start", async (_event: unknown, ctx: any) => {
+		stop(ctx);
+		if (!ctx.hasUI) return;
+		const fg = (t: string) => (ctx.ui.theme?.fg ? ctx.ui.theme.fg("muted", t) : t);
+		let asking = false;
+		timer = setInterval(async () => {
+			if (asking) return;
+			asking = true;
+			try {
+				const st: any = await (await fetch(SERVER + "/status", { signal: AbortSignal.timeout(800) })).json();
+				if (timer && st.busy && st.phase) {
+					ctx.ui.setStatus("copilot", fg(`Copilot: ${st.phase} ${Math.floor(st.seconds)}초`));
+					shown = true;
+				} else if (shown) {
+					ctx.ui.setStatus("copilot", undefined);
+					shown = false;
+				}
+			} catch {
+				// 중계 서버가 꺼져 있거나 /status 가 없는 예전 판: 표시하지 않음
+			} finally {
+				asking = false;
+			}
+		}, 1000);
+	});
+	pi.on("agent_end", async (_event: unknown, ctx: any) => stop(ctx));
+
+	pi.on("session_shutdown", async (event: { reason?: string }, ctx: any) => {
+		stop(ctx);
 		if (event?.reason === "reload") return;
 		try {
 			await fetch(SERVER + "/v1/session/end", {

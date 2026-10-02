@@ -119,6 +119,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
   - 대화 기록은 앞부분이 그대로면 새로 추가된 부분만 같은 Copilot 채팅에 보냅니다. 오래된 도구 결과를 비우거나 줄여도(같은 `tool_call_id`) 그대로 이어 갑니다.
     사용자·어시스턴트 메시지를 지우거나 바꾸면 새 채팅을 열고 지침과 최근 기록을 다시 넣습니다 (질문 7개 안팎, 1~2분).
 - `GET /health`, `POST /reset` (다음 요청을 새 채팅으로)
+- `GET /status` → `busy`, `phase`(지금 하는 일: 새 대화 여는 중, 모델 고르는 중, 보내는 중 (i/n), 답 기다리는 중 등), `seconds`(그 일을 한 시간), `total_seconds`(이번 요청 전체). 잠금·브라우저 조작 없이 바로 답함. 참고 구현: `~/.pi/agent/extensions/copilot-session.ts` (상태 줄 표시)
 - `POST /v1/session/end` `{"reason": "quit"}` → 작업(세션)이 끝났음을 알림. 바로 `{"ok": true}` 로 답하고, 쓰던 Copilot 대화를 뒤에서 지웁니다
   (`reason` 이 `reload` 면 무시). 알리지 않아도 다음에 새 채팅을 열 때 지웁니다. 참고 구현: `~/.pi/agent/extensions/copilot-session.ts`
 

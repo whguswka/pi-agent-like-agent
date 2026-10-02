@@ -426,5 +426,28 @@ with _cl.redirect_stdout(_io.StringIO()):
 check("multi_read 끔(기본): 첫 블록 하나만, 안내 없음",
       len(_ao["tool_calls"]) == 1 and relay.MULTI_READ_RULE.strip() not in _off.sent_log[0]["parts"][0], _ao)
 
+# GET /status: 요청을 처리하는 중(잠금이 잡혀 있어도) 바로 지금 하는 일을 돌려줌
+_r17 = relay.Relay(A(), FakeLink([]))
+_srv3 = _Srv(("127.0.0.1", 0), relay.make_handler(_r17, None, {"cdp_port": 1}))
+_th.Thread(target=_srv3.serve_forever, daemon=True).start()
+_base3 = "http://127.0.0.1:{}".format(_srv3.server_address[1])
+_idle = _json.loads(_ur.urlopen(_base3 + "/status", timeout=5).read())
+_r17.lock.acquire()
+relay.STATUS.update(busy=True, started=_time.time() - 3)
+relay.set_phase("답 기다리는 중 (2/3)")
+_t0 = _time.time()
+_busy = _json.loads(_ur.urlopen(_base3 + "/status", timeout=5).read())
+_waited = _time.time() - _t0
+_r17.lock.release()
+relay.STATUS["busy"] = False
+_srv3.shutdown()
+check("/status: 쉴 때", _idle["busy"] is False and _idle["phase"] == "" and _idle["version"] == relay.RELAY_VERSION, _idle)
+check("/status: 일하는 중 (잠금이 잡혀 있어도 바로)", _busy["busy"] and _busy["phase"] == "답 기다리는 중 (2/3)"
+      and _busy["total_seconds"] >= 3 and _waited < 1.0, (_busy, _waited))
+with _cl.redirect_stdout(_io.StringIO()):
+    _r18 = relay.Relay(A(), FakeLink(["끝"]))
+    _r18.handle({"messages": [{"role": "user", "content": "x"}], "tools": tools})
+check("/status: 요청이 끝나면 다시 쉼", relay.status()["busy"] is False)
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

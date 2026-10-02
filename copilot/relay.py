@@ -36,7 +36,23 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.9"
+RELAY_VERSION = "2026-10-02.10"
+
+# 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
+STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
+
+
+def set_phase(phase):
+    if phase != STATUS["phase"]:
+        STATUS["phase"], STATUS["since"] = phase, time.time()
+
+
+def status():
+    now = time.time()
+    return {"busy": STATUS["busy"], "phase": STATUS["phase"] if STATUS["busy"] else "",
+            "seconds": round(now - STATUS["since"], 1) if STATUS["busy"] else 0,
+            "total_seconds": round(now - STATUS["started"], 1) if STATUS["busy"] else 0, "version": RELAY_VERSION}
+
 
 # ---------------------------------------------------------------------------
 # 대화 내용 -> 비교용 지문
@@ -595,6 +611,7 @@ class CopilotLink:
         if self.tokens < 1:
             wait = (1 - self.tokens) * 60 / rate
             bridge.log("  (속도 조절: 분당 {:g}개 -> {:.0f}초 기다림)".format(rate, wait))
+            set_phase("속도 조절로 {:.0f}초 기다리는 중".format(wait))
             time.sleep(wait)
             self.tokens, self.token_time = 1.0, time.time()
         self.tokens -= 1
@@ -604,6 +621,7 @@ class CopilotLink:
         if not self.registry or not self.cfg.get("delete_finished_chats", True):
             return
         for c in self.registry.pending():
+            set_phase("지난 대화 정리 중")
             try:
                 ok, info = self.cop.delete_chat(c["id"])
             except (bridge.BridgeError, TimeoutError) as e:
@@ -622,6 +640,7 @@ class CopilotLink:
                 if self.registry:
                     self.registry.finish_all()
                     self.cleanup()
+                set_phase("새 대화 여는 중")
                 self.cop.new_chat()
                 self.asked = 0
                 self.model_now = self.model_failed = None  # 새 채팅은 '자동' 으로 돌아감
@@ -634,6 +653,7 @@ class CopilotLink:
                 if limit and self.asked + len(parts) > limit:
                     raise ThreadReset("설정한 대화당 질문 수 한도({}개)에 닿았습니다".format(limit))
             if model and model not in (self.model_now, self.model_failed):
+                set_phase("모델 고르는 중 ({})".format(model))
                 ok, info = self.cop.select_model(model)
                 bridge.log("  Copilot 모델 {}: {}".format("선택" if ok else "선택 실패 (지금 모델로 계속)", info))
                 if ok:
@@ -647,8 +667,10 @@ class CopilotLink:
                     raise RelayError(500, "요청에 marker 가 없습니다")
                 self.pace()
                 bridge.log("  -> Copilot 에 보냄 ({}/{}, {}자)".format(i, len(parts), len(part)))
+                set_phase("보내는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
                 self.cop.send(part)
                 self.asked += 1
+                set_phase("답 기다리는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
                 reply = self.cop.wait_reply(m.group(0).strip())
                 bridge.log("  <- 답 받음 ({}자, 코드 블록 {}개)".format(len(reply.get("text", "")), len(reply.get("code_blocks") or [])))
                 if new_thread and i == 1 and self.registry:  # 첫 답에서 대화 주소가 생김 -> 삭제 대상 목록에 기록
@@ -736,11 +758,16 @@ class Relay:
     def handle(self, body):
         with self.lock:
             self.stat = {"t0": time.time(), "parts": 0, "asks": 0, "new": False}
+            STATUS.update(busy=True, started=time.time())
+            set_phase("준비 중")
             try:
                 return self._handle(body, False)
             except ThreadReset as e:
                 self.log("Copilot 대화를 새로 시작해서 다시 보냅니다:", e)
+                set_phase("새 대화로 다시 보내는 중")
                 return self._handle(body, True)
+            finally:
+                STATUS["busy"] = False
 
     def _handle(self, body, force_new):
         self.model_label = copilot_model_for(body.get("model"), getattr(self.link, "cfg", None) or {})
@@ -797,6 +824,7 @@ class Relay:
             else:
                 break
             retries += 1
+            set_phase("다시 부탁하는 중")
             reply = self.ask(build_parts(fix, self.args.max_chars, "[pi-{}]".format(uuid.uuid4().hex[:6])), False)
             body_text, call, err = parse_reply(reply, tool_names)
         if call and repeated_calls(messages, call) >= LOOP_LIMIT:
@@ -952,6 +980,8 @@ def make_handler(relay, jup, cfg):
                                                                         "max_model_len": 1000000} for i in ids]})
             if u.path.startswith("/health"):
                 return self.send_json(200, self.health())
+            if u.path == "/status":  # 잠금·브라우저 조작 없이 바로 (pi 확장이 1초마다 물음)
+                return self.send_json(200, status())
             if u.path == "/jupyter/info":
                 return self.jupyter(jup.info)
             m = re.match(r"^/jupyter/exec/([0-9a-f]+)$", u.path)
