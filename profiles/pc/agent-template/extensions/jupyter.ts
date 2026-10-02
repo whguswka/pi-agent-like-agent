@@ -14,7 +14,7 @@
 
 import { existsSync, promises as fsp, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
@@ -117,6 +117,26 @@ function pcDir(arg: string, base: string): string {
 	if (s === "~") s = homedir();
 	else if (s.startsWith("~/")) s = join(homedir(), s.slice(2));
 	return isAbsolute(s) ? resolve(s) : resolve(base, s);
+}
+
+// PC <-> 노트북 파일 옮기기 (/upload, /download). 파일은 중계 서버와 브라우저의 JupyterLab 탭을 거쳐 가므로 크기를 제한하고,
+// 큰 파일은 JupyterLab 업로드처럼 나눠 올린다
+const MB = 1024 * 1024;
+const MAX_TRANSFER = 50 * MB;
+const CHUNK = 4 * MB;
+const sizeText = (n: number) => (n >= MB ? `${(n / MB).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
+/** 명령 인자 나누기 (따옴표로 감싼 경로는 공백 포함) */
+function splitArgs(s: string | undefined): string[] {
+	const out: string[] = [];
+	for (const m of (s || "").matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)) out.push(m[1] ?? m[2] ?? m[3]);
+	return out;
+}
+/** 노트북 경로 (상대 경로는 base 기준, ~ 는 노트북 홈) */
+function nbPath(arg: string, base: string, home: string): string {
+	let s = arg.trim().replace(/\\/g, "/");
+	if (s === "~" || s.startsWith("~/")) s = home + s.slice(1);
+	if (!s.startsWith("/")) s = posix.join(base, s);
+	return posix.normalize(s);
 }
 
 function readOps(map: (p: string) => string, pc?: PcResolver): ReadOperations {
@@ -358,6 +378,95 @@ export default function (pi: ExtensionAPI) {
 			delete process.env.MSYS2_ARG_CONV_EXCL;
 			ctx.ui.setStatus("jupyter", undefined);
 			ctx.ui.notify(`PC 에서 실행합니다: ${dir}`, "info");
+		},
+	});
+
+	// PC <-> 노트북 파일 옮기기. 노트북 쪽 상대 경로는 jupyter 모드면 노트북 작업 폴더, 아니면 노트북 홈 기준
+	const notebook = async (): Promise<{ home: string; cwd: string }> => {
+		if (remote) {
+			const r = await ready();
+			return { home: r.home, cwd: r.cwd };
+		}
+		const info = await call("/jupyter/info");
+		return { home: info.home, cwd: info.home };
+	};
+	const remoteKind = async (p: string): Promise<string | null> => {
+		try {
+			return (await fsOp("stat", p)).kind || "file";
+		} catch (e) {
+			if ((e as RemoteError).code === "ENOENT") return null;
+			throw e;
+		}
+	};
+	pi.registerCommand("upload", {
+		description: "PC 파일을 노트북으로 올리기: /upload <PC 파일> [노트북 경로]  (노트북 경로를 생략하면 지금 노트북 작업 폴더, 50MB 까지)",
+		handler: async (args, ctx) => {
+			const [src, dst] = splitArgs(args);
+			if (!src) return ctx.ui.notify("사용법: /upload <PC 파일> [노트북 경로]", "warning");
+			const file = pcDir(src, localDir);
+			let size = 0;
+			try {
+				const st = statSync(file);
+				if (!st.isFile()) return ctx.ui.notify(`파일만 옮길 수 있습니다 (폴더는 zip·tar 로 묶어서): ${file}`, "error");
+				size = st.size;
+			} catch {
+				return ctx.ui.notify(`PC 에 그 파일이 없습니다: ${file}`, "error");
+			}
+			if (size > MAX_TRANSFER) return ctx.ui.notify(`50MB 까지만 옮길 수 있습니다 (${sizeText(size)}). 더 큰 파일은 JupyterLab 화면에서 올리세요`, "error");
+			try {
+				const nb = await notebook();
+				let target = dst ? nbPath(dst, nb.cwd, nb.home) : posix.join(nb.cwd, basename(file));
+				let kind = await remoteKind(target);
+				if (kind === "directory" || (dst && /[\\/]$/.test(dst))) {
+					target = posix.join(target, basename(file));
+					kind = await remoteKind(target);
+				}
+				if (kind === "directory") return ctx.ui.notify(`노트북에 같은 이름의 폴더가 있습니다: ${target}`, "error");
+				if (kind && !(await ctx.ui.confirm("덮어쓸까요?", `노트북에 이미 있는 파일입니다: ${target}`))) return;
+				ctx.ui.notify(`올리는 중: ${file} -> 노트북 ${target} (${sizeText(size)})`, "info");
+				const data = await fsp.readFile(file);
+				if (data.length <= CHUNK) await fsOp("write", target, data.toString("base64"));
+				else {
+					for (let i = 0, n = 1; i < data.length; i += CHUNK, n++) {
+						const last = i + CHUNK >= data.length;
+						await call("/jupyter/fs", { op: "write_chunk", path: target, data: data.subarray(i, i + CHUNK).toString("base64"), chunk: last ? -1 : n });
+					}
+				}
+				ctx.ui.notify(`올렸습니다: 노트북 ${target} (${sizeText(size)})`, "info");
+			} catch (e) {
+				ctx.ui.notify(`올리지 못했습니다: ${(e as Error).message}`, "error");
+			}
+		},
+	});
+	pi.registerCommand("download", {
+		description: "노트북 파일을 PC 로 받기: /download <노트북 파일> [PC 경로]  (PC 경로를 생략하면 지금 PC 작업 폴더, 50MB 까지)",
+		handler: async (args, ctx) => {
+			const [src, dst] = splitArgs(args);
+			if (!src) return ctx.ui.notify("사용법: /download <노트북 파일> [PC 경로]", "warning");
+			try {
+				const nb = await notebook();
+				const from = nbPath(src, nb.cwd, nb.home);
+				const st = await fsOp("stat", from).catch((e: RemoteError) => {
+					throw e.code === "ENOENT" ? new Error(`노트북에 그 파일이 없습니다: ${from}`) : e;
+				});
+				if (st.kind === "directory") return ctx.ui.notify(`파일만 받을 수 있습니다 (폴더는 노트북에서 zip·tar 로 묶어서): ${from}`, "error");
+				if (typeof st.size === "number" && st.size > MAX_TRANSFER)
+					return ctx.ui.notify(`50MB 까지만 받을 수 있습니다 (${sizeText(st.size)}). 더 큰 파일은 JupyterLab 화면에서 내려받으세요`, "error");
+				let target = dst ? pcDir(dst, localDir) : join(localDir, posix.basename(from));
+				let isDir = false;
+				try {
+					isDir = statSync(target).isDirectory();
+				} catch {}
+				if (isDir || (dst && /[\\/]$/.test(dst))) target = join(target, posix.basename(from));
+				if (existsSync(target) && !(await ctx.ui.confirm("덮어쓸까요?", `PC 에 이미 있는 파일입니다: ${target}`))) return;
+				ctx.ui.notify(`받는 중: 노트북 ${from} -> ${target}`, "info");
+				const data = Buffer.from((await fsOp("read", from)).data || "", "base64");
+				await fsp.mkdir(dirname(target), { recursive: true });
+				await fsp.writeFile(target, data);
+				ctx.ui.notify(`받았습니다: ${target} (${sizeText(data.length)})`, "info");
+			} catch (e) {
+				ctx.ui.notify(`받지 못했습니다: ${(e as Error).message}`, "error");
+			}
 		},
 	});
 

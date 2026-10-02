@@ -21,7 +21,7 @@ RUN_DIR = "pi-bridge/run"  # Jupyter 루트 기준 (숨김 폴더는 파일 API 
 
 PAGE_JS = r"""
 (() => {
-  const V = 1;
+  const V = 2;
   if (window.__piJ && window.__piJ.v === V) return true;
   const el = document.getElementById('jupyter-config-data');
   if (!el) return false;
@@ -52,8 +52,10 @@ PAGE_JS = r"""
     const m = JSON.parse(r.text);
     return {status: 200, kind: m.type, writable: m.writable, size: m.size};
   };
-  J.writeFile = async (p, b64) => {
-    const r = await J.fetch('PUT', J.cpath(p), {type: 'file', format: 'base64', content: b64});
+  J.writeFile = async (p, b64, chunk) => {  // chunk: 큰 파일을 나눠 올릴 때 1, 2, ... 마지막은 -1 (JupyterLab 업로드와 같은 방식)
+    const body = {type: 'file', format: 'base64', content: b64};
+    if (chunk) body.chunk = chunk;
+    const r = await J.fetch('PUT', J.cpath(p), body);
     return {status: r.status, type: r.type, text: r.text.slice(0, 500)};
   };
   J.list = async (p) => {
@@ -398,6 +400,18 @@ class Jupyter:
         data = self.read_rel(bin_rel) or b""
         self.stale.append(posixpath.basename(bin_rel)[:-4])
         return data
+
+    def write_chunk(self, path, data, chunk):
+        """큰 파일 나눠 올리기 (Jupyter 파일 API 의 chunk: 1 이면 새로 쓰고, 2 이상은 이어 붙이고, -1 은 마지막 조각)"""
+        rel = self.rel_of(path)
+        if rel is None:
+            raise FsError("EINVAL", "노트북 홈 밖이나 숨김 경로에는 큰 파일을 나눠 올릴 수 없습니다: " + path)
+        r = self.call("writeFile", rel, base64.b64encode(data).decode(), chunk, timeout=120)
+        if r["status"] not in (200, 201) and chunk == 1 and not self.stat(posixpath.dirname(path)):
+            self.mkdir(posixpath.dirname(path))
+            r = self.call("writeFile", rel, base64.b64encode(data).decode(), chunk, timeout=120)
+        if r["status"] not in (200, 201):
+            raise FsError("EIO", "파일 쓰기 실패 {} (조각 {}, {}): {}".format(path, chunk, r["status"], r.get("text", "")[:200]))
 
     def mkdir(self, path):
         st = self.stat(path)

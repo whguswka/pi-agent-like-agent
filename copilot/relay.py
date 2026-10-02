@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.10"
+RELAY_VERSION = "2026-10-02.11"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -907,6 +907,9 @@ def fs_op(jup, body):
         return {"data": base64.b64encode(jup.read_file(path)).decode()}
     if op == "write":
         jup.write_file(path, base64.b64decode(body.get("data") or ""))
+        return {}
+    if op == "write_chunk":  # 큰 파일 나눠 올리기 (/upload)
+        jup.write_chunk(path, base64.b64decode(body.get("data") or ""), int(body.get("chunk") or 1))
         return {}
     if op == "mkdir":
         jup.mkdir(path)
