@@ -6,6 +6,8 @@ Copilot 웹 채팅과 이어 주는 중계기를 더했습니다. pi 원본 코�
 
 pi 는 터미널에서 동작합니다. 할 일을 말로 지시하면 LLM 과 주고받으면서 파일을 읽고 고치고, 명령을 실행해 결과를 확인합니다.
 
+> **처음이면 [한 장 요약 (빠른 시작)](docs/빠른시작.md)** 부터 보세요. 설치, 매일 쓰는 법, 자주 쓰는 명령(`/plan`, `@파일`, `/undo`, `/remember` 등)이 한 장에 있습니다.
+
 ```
 [업무 PC]
   Git Bash ── pi
@@ -585,7 +587,7 @@ bash ~/tools/pi/install.sh jupyter
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 6개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`) |
-| `docs/` | [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
+| `docs/` | [한 장 요약](docs/빠른시작.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**
 - 저장소 밖에서 받아야 하는 것은 **PyPI 패키지뿐**입니다 ([requirements.txt](requirements.txt)).
