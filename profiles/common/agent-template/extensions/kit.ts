@@ -56,7 +56,7 @@ function helpLines(): string[] {
 		`       내 명령: ${A}/prompts/<이름>.md`,
 		` 스킬  /skill:이름 → ${skills.join(", ") || "(없음)"}`,
 		`       내 스킬: ${A}/skills/<이름>/SKILL.md (skill-creator 에게 "○○ 스킬 만들어줘")`,
-		` 지침  ${A}/AGENTS.md (공통), 프로젝트 폴더의 AGENTS.md (/init 으로 초안)`,
+		` 지침  ${A}/AGENTS.md (공통), 프로젝트 폴더의 AGENTS.md (/init 으로 초안) · /remember <내용> 한 줄 더하기`,
 	];
 	if (bridge) {
 		lines.push(

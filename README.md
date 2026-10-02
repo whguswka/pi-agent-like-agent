@@ -137,6 +137,7 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 | 계획부터 세우고 승인받아 진행 | `/plan` 을 치고 요청 (또는 `/plan <요청>`). 다시 `/plan` 이면 끔 — 아래 3-4 |
 | 바꿀 때마다 확인받기 / 다시 자동으로 | `/mode ask` / `/mode auto` (`/mode` 만 치면 고르기) |
 | pi 가 고친 파일 되돌리기 | `/undo` (마지막 요청), `/undo 2` (마지막 두 요청) — 아래 3-5 |
+| 앞으로도 지킬 것 기억시키기 | `/remember 커밋 메시지는 한국어로` (지침 파일 AGENTS.md 에 적음, [6장 메모리](#메모리)) |
 | 도구 출력 펼치기·접기 | `Ctrl+O` |
 | 모델 고르기 / 다음 모델로 | `/model` 또는 `Ctrl+L` / `Ctrl+P` |
 | 지침·스킬을 고친 뒤 다시 읽기 | `/reload` |
@@ -305,6 +306,7 @@ pi 는 세션을 시작할 때 아래 파일을 찾아 **지침으로 함께 읽
 ```
 - pi 시작 화면 위쪽에 읽어 들인 지침 파일 목록이 나옵니다.
 - 실행 중에 고쳤으면 `/reload` 로 다시 읽습니다. 지침이 바뀌면 다음 질문은 Copilot 새 대화에서 새 지침으로 시작합니다.
+- 한 줄짜리 규칙은 `/remember <내용>` 으로 바로 적을 수 있습니다 (아래 [메모리](#메모리)).
 - pi 에게 "이 규칙을 AGENTS.md 에 추가해줘" 라고 시켜도 됩니다. 공통 지침(`~/.pi/agent/AGENTS.md`)은 작업 폴더 밖이라 확인 창이 뜨니 실행을 허용하세요 ([8장](#8-주의할-점)).
 - 그 밖에 `~/.pi/agent/APPEND_SYSTEM.md` 는 pi 의 기본 지시문 뒤에 덧붙고, `SYSTEM.md` 는 기본 지시문을 통째로 바꿉니다. 보통은 AGENTS.md 로 충분합니다.
 
@@ -390,7 +392,13 @@ description: 주간 업무 보고서를 쓸 때 사용. 이번 주 git 기록을
 
 ### 메모리
 - **pi 에는 자동 메모리 기능이 없습니다.** 대화에서 무엇을 기억할지 스스로 골라 저장하지 않습니다.
-- 오래 기억시킬 것은 **AGENTS.md 에 적습니다.** 공통이면 `~/.pi/agent/AGENTS.md`, 프로젝트별이면 프로젝트 폴더에 둡니다. 직접 적거나, pi 에게 "방금 정한 규칙을 AGENTS.md 에 추가해줘" 라고 시킵니다.
+- 오래 기억시킬 것은 **AGENTS.md 에 적습니다.** 공통이면 `~/.pi/agent/AGENTS.md`, 프로젝트별이면 프로젝트 폴더에 둡니다.
+- **`/remember <내용>`** 이 가장 빠릅니다. 예: `/remember 테스트는 pytest -q 로 돌린다`
+  - 어디에 적을지 고릅니다: **이 프로젝트만**(작업 폴더의 `AGENTS.md`, jupyter 모드면 노트북 작업 폴더) 또는 **모든 프로젝트**(`~/.pi/agent/AGENTS.md`).
+  - 그 파일의 `## 기억할 것` 아래에 한 줄로 더합니다 (없으면 만듦). 같은 내용이 있으면 더하지 않습니다.
+  - 지침 파일은 pi 를 시작할 때 읽지만, 지금 대화에도 다음 요청과 함께 바로 알려 줍니다 (`/reload` 처럼 Copilot 새 대화를 열지 않음).
+  - 지우거나 고칠 때는 그 파일을 직접 고칩니다. 너무 많이 쌓이면 새 대화를 열 때 보내는 글이 길어지니 가끔 정리하세요.
+- 긴 규칙이나 여러 줄은 직접 적거나, pi 에게 "방금 정한 규칙을 AGENTS.md 에 추가해줘" 라고 시킵니다.
 - 하던 작업의 맥락은 **세션**으로 이어 갑니다 (`pi -c`, `/resume`). 세션 기록은 PC 에 남으므로 Copilot 대화가 지워져도 사라지지 않습니다.
 - 긴 작업은 진행 메모를 파일로 남기게 하면 좋습니다. AGENTS.md 에 "작업을 마치면 진행 상황과 다음 할 일을 NOTES.md 에 정리할 것" 처럼 적어 두면, 다음 세션에서 그 파일을 읽고 이어 갑니다.
 - **Copilot 자체 메모리:** Copilot 은 계정 설정에 따라 대화 내용을 따로 기억할 수 있고, 이 기억은 대화를 지워도 남습니다.
@@ -567,10 +575,10 @@ bash ~/tools/pi/install.sh jupyter
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
-| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 작업 끝 알림, `/kit`·`/doctor`) |
+| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`, 작업 끝 알림, `/kit`·`/doctor`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 6개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
-| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_merge_config.mjs`) |
+| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_merge_config.mjs`) |
 | `docs/` | [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**
