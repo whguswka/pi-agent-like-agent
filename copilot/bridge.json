@@ -19,7 +19,9 @@
   "copilot_models": {
     "gpt-6.0-sol": "GPT 6.0 Sol",
     "gpt-5.6-sol-think": "GPT 5.6 Sol 깊이 생각하기",
-    "gpt-5.6-sol-fast": "GPT 5.6 Sol 빠른 응답"
+    "gpt-5.6-sol-fast": "GPT 5.6 Sol 빠른 응답",
+    "claude-sonnet-4.5": "Sonnet 4.5",
+    "claude-opus": "Opus"
   },
   "model_button_selector": "",
   "_대화삭제": "pi 세션이 끝나면 중계 서버가 만든 Copilot 대화만 삭제 (기록: ~/.pi/agent/copilot-chats.json). 끄려면 false",

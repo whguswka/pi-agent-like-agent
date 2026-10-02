@@ -390,7 +390,7 @@ PAGE_LIB = r"""
 # 모델 메뉴·채팅 목록 메뉴·확인 창 찾기 (PAGE_LIB 다음에 불러옴). 클릭은 파이썬에서 실제 마우스 동작(CDP Input)으로 한다
 UI_LIB = r"""
 (() => {
-  const V = 1;
+  const V = 2;
   if (window.__piUI && window.__piUI.v === V) return true;
   const B = window.__piBridge;
   const sq = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');  // 글자·숫자만 (파이썬 sq 와 같게)
@@ -462,7 +462,48 @@ UI_LIB = r"""
     const b = [...document.querySelectorAll('button, [role="button"]')].find(b => B.visible(b) && re.test(B.label(b)));
     return b ? {rect: box(b), label: B.label(b)} : null;
   }
-  window.__piUI = {v: V, markMenus, menus: () => fresh().length, menuItems, modelState, dialogState, chatItem, chatList, sidebarToggle};
+  // 메뉴·확인 창에 role 표시가 없는 화면 대비: 누르기 전에 보이던 요소를 기억해 두고(DOM 은 건드리지 않음),
+  // 누른 뒤 새로 나타난 요소 중에서 이름으로 찾는다
+  function markSeen() { window.__piSeen = new WeakSet([...document.querySelectorAll('body *')].filter(B.visible)); return true; }
+  const newOnes = () => { const s = window.__piSeen || new WeakSet();
+    return [...document.querySelectorAll('body *')].filter(e => !s.has(e) && B.visible(e)); };
+  function newHits(pattern) {
+    const re = new RegExp(pattern, 'i');
+    const own = (e) => [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.nodeValue).join('').trim();
+    const hits = newOnes().filter(e => re.test(own(e)) || re.test(title(e)) || re.test((e.getAttribute('aria-label') || '').trim()));
+    return hits.filter(e => !hits.some(o => o !== e && e.contains(o)));  // 가장 안쪽 요소
+  }
+  function newMatch(pattern) {
+    const e = newHits(pattern)[0];
+    return e ? {title: title(e), rect: box(e), html: snip(e)} : null;
+  }
+  // 확인 버튼 + 둘레의 글: 버튼에서 위로 올라가며 hint(대화 제목, 비교용 글자)를 품은 곳의 글을 함께 돌려줌.
+  // 확인 창은 글이 짧으므로, 글이 긴 영역(왼쪽 대화 목록까지 품은 화면 전체 등)이나 대화창 경계에 닿으면 멈춘다
+  function newConfirm(pattern, hint) {
+    const b = newHits(pattern)[0];
+    if (!b) return null;
+    let text = '';
+    for (let el = b.parentElement, i = 0; el && el !== document.body && i < 10; el = el.parentElement, i++) {
+      const t = el.innerText || '';
+      if (t.length > 800) break;
+      if (hint && sq(t).includes(hint)) { text = t; break; }
+      if (el.matches('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')) break;
+    }
+    return {title: title(b), rect: box(b), text: text.replace(/\s+/g, ' ').slice(0, 400), html: snip(b)};
+  }
+  function newSummary(limit) {
+    const seen = new Set(), out = [];
+    for (const e of newOnes()) {
+      const t = title(e).slice(0, 30);
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      out.push((e.getAttribute('role') || e.tagName.toLowerCase()) + ':' + t);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+  window.__piUI = {v: V, markMenus, menus: () => fresh().length, menuItems, modelState, dialogState, chatItem, chatList, sidebarToggle,
+                   markSeen, newMatch, newConfirm, newSummary};
   return true;
 })()
 """
@@ -916,30 +957,49 @@ class Copilot:
             self.mouse(it["rect"], "move")  # 마우스를 올려야 '…' 버튼이 나타나는 목록
             time.sleep(0.4)
             it = found() or it
-            self.ui("window.__piUI.markMenus()")
+            # 메뉴·확인 창에 role 표시가 없는 화면도 있으므로, 누르기 전에 보이던 요소를 기억해 두고 새로 나타난 것에서도 찾는다
+            self.ui("window.__piUI.markMenus() && window.__piUI.markSeen()")
             how = "'…' 버튼({})".format(it["more"]["label"]) if it.get("more") else "오른쪽 클릭"
             self.mouse(it["more"]["rect"] if it.get("more") else it["rect"], "click" if it.get("more") else "right")
-            items = self.poll(lambda: self.ui("window.__piUI.menuItems(0)"), 3)
-            if not items:
-                return False, "대화 메뉴가 열리지 않았습니다 ({})".format(how)
-            pat = re.compile(self.cfg["delete_menu_pattern"], re.I)
-            hit = next((i for i in items if pat.search(i["title"])), None)
-            if not hit:
+            del_pat, ok_pat = self.cfg["delete_menu_pattern"], self.cfg["delete_confirm_pattern"]
+
+            def find_delete():
+                items = self.ui("window.__piUI.menuItems(0)")
+                if items:  # 일반 메뉴 (role=menu)
+                    hit = next((i for i in items if re.search(del_pat, i["title"], re.I)), None)
+                    return dict(hit, path="메뉴") if hit else {"missing": [i["title"] for i in items]}
+                m = self.ui("window.__piUI.newMatch(%s)" % self.q(del_pat))  # role 없는 메뉴: 새로 나타난 '삭제'
+                return dict(m, path="새 요소") if m else None
+
+            hit = self.poll(find_delete, 4)
+            if not hit or "missing" in hit:
+                listed = hit["missing"] if hit else self.ui("window.__piUI.newSummary(12)")
                 self.close_menus()
-                return False, "메뉴에 삭제가 없습니다 (있는 항목: {})".format(", ".join(i["title"] for i in items))
+                self.escape()
+                return False, "대화 메뉴에서 삭제를 찾지 못했습니다 ({}). 새로 나타난 항목: {}".format(how, ", ".join(listed) or "없음")
+            hint = sq(title)[:12]  # 확인 창에 이 대화의 제목이 있어야만 지운다
+            self.ui("window.__piUI.markSeen()")
             self.mouse(hit["rect"])
-            dlg = self.poll(lambda: self.ui("window.__piUI.dialogState(%s)" % self.q(self.cfg["delete_confirm_pattern"])), 3)
+
+            def find_confirm():
+                d = self.ui("window.__piUI.dialogState(%s)" % self.q(ok_pat))
+                if d and d.get("confirm") and hint in sq(d["text"]):
+                    return {"rect": d["confirm"], "text": d["text"], "path": "확인 창"}
+                c = self.ui("window.__piUI.newConfirm(%s, %s)" % (self.q(ok_pat), self.q(hint)))
+                return dict(c, path="새 요소") if c else None
+
+            dlg = self.poll(find_confirm, 4)
             if not dlg:
-                return False, "삭제 확인 창이 뜨지 않았습니다"
-            if sq(title)[:12] not in sq(dlg["text"]):
+                listed = self.ui("window.__piUI.newSummary(12)")
                 self.escape()
-                return False, "확인 창의 대화 제목이 달라서 취소했습니다 (목록: {} / 확인 창: {})".format(title, dlg["text"][:80])
-            if not dlg.get("confirm"):
+                return False, "삭제 확인 창의 삭제 버튼을 찾지 못했습니다. 새로 나타난 항목: {}".format(", ".join(listed) or "없음")
+            if hint not in sq(dlg.get("text")):
                 self.escape()
-                return False, "확인 창에서 삭제 버튼을 찾지 못했습니다 (버튼: {})".format(", ".join(dlg.get("buttons") or []))
-            self.mouse(dlg["confirm"])
+                return False, "확인 창에서 이 대화의 제목을 확인하지 못해 취소했습니다 (목록: {} / 확인 창: {})".format(
+                    title, (dlg.get("text") or "")[:80])
+            self.mouse(dlg["rect"])
             if self.poll(lambda: not self.find_chat(conv_id).get("found"), 6):
-                return True, "'{}' 삭제 ({})".format(title, how)
+                return True, "'{}' 삭제 ({} > 삭제[{}] > 확인[{}])".format(title, how, hit["path"], dlg["path"])
             return False, "삭제를 눌렀지만 목록에 남아 있습니다: {}".format(title)
         finally:
             if widened:

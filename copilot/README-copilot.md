@@ -110,6 +110,8 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 | `gpt-6.0-sol` (기본) | GPT › GPT 6.0 Sol |
 | `gpt-5.6-sol-think` | GPT › GPT 5.6 Sol 깊이 생각하기 |
 | `gpt-5.6-sol-fast` | GPT › GPT 5.6 Sol 빠른 응답 |
+| `claude-sonnet-4.5` | Claude › Sonnet 4.5 |
+| `claude-opus` | Claude › Opus |
 | `copilot` | `bridge.json` 의 `copilot_model` (비우면 화면에 선택된 모델 그대로) |
 
 - 깊이 생각하기는 답마다 생각하는 시간이 붙어 느립니다. pi 는 작업 하나에 Copilot 과 여러 번 주고받으므로 평소에는 GPT 6.0 Sol 을 권합니다.

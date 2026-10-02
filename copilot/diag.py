@@ -200,8 +200,8 @@ def main():
         cid = bridge.conversation_id(copilot.thread_url)
         show("시험 대화", cid or "X 대화 주소를 얻지 못함 ({})".format(copilot.thread_url))
         if cid:
-            time.sleep(2)  # 왼쪽 목록에 새 대화가 나타날 시간
-            it = copilot.find_chat(cid)
+            # 왼쪽 목록에 새 대화가 나타날 때까지 (몇 초 걸릴 수 있음)
+            it = copilot.poll(lambda: (lambda r: r if r.get("found") else None)(copilot.find_chat(cid)), 10) or {}
             show("목록에서 찾기", "OK '{}'".format(it.get("title")) if it.get("found") else "X 못 찾음")
             if it.get("found"):
                 show("  '…' 버튼", it["more"]["label"] if it.get("more") else "(안 보임: 마우스를 올리거나 오른쪽 클릭으로 시도)")
