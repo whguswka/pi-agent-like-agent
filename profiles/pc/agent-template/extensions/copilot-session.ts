@@ -8,13 +8,20 @@
  *    중계 서버가 꺼져 있거나 창을 닫아 알림이 못 가면, 중계 서버가 다음 새 대화를 열 때 정리한다.
  * 2) 요청을 처리하는 동안 1초마다 중계 서버의 /status 를 물어, Copilot 쪽에서 지금 하는 일을 상태 줄에 보여 준다
  *    (예: "Copilot: 새 대화 여는 중 12초", "Copilot: 답 기다리는 중 (2/3) 5초"). /status 는 잠금 없이 바로 답한다.
+ * 3) 요청마다 이 pi 의 세션 값(X-Pi-Session)을 실어 보낸다. 중계 서버에서 max_tabs 를 2 이상으로 두면
+ *    pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 쓴다 (1 이면 무시).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
+const SESSION = process.env.PI_COPILOT_SESSION || `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
 export default function (pi: ExtensionAPI) {
+	pi.on("before_provider_headers", async (event: any) => {
+		if (event?.headers) event.headers["X-Pi-Session"] = SESSION;
+	});
+
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let shown = false;
 	const stop = (ctx?: any) => {
@@ -33,7 +40,7 @@ export default function (pi: ExtensionAPI) {
 			if (asking) return;
 			asking = true;
 			try {
-				const st: any = await (await fetch(SERVER + "/status", { signal: AbortSignal.timeout(800) })).json();
+				const st: any = await (await fetch(`${SERVER}/status?session=${encodeURIComponent(SESSION)}`, { signal: AbortSignal.timeout(800) })).json();
 				if (timer && st.busy && st.phase) {
 					ctx.ui.setStatus("copilot", fg(`Copilot: ${st.phase} ${Math.floor(st.seconds)}초`));
 					shown = true;
@@ -57,7 +64,7 @@ export default function (pi: ExtensionAPI) {
 			await fetch(SERVER + "/v1/session/end", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ reason: event?.reason || "" }),
+				body: JSON.stringify({ reason: event?.reason || "", session: SESSION }),
 				signal: AbortSignal.timeout(1500),
 			});
 		} catch {

@@ -36,22 +36,25 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.11"
+RELAY_VERSION = "2026-10-02.12"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
+_tls = threading.local()  # 지금 스레드가 일하는 창의 상태 (max_tabs 가 2 이상이면 창마다 따로)
 
 
 def set_phase(phase):
-    if phase != STATUS["phase"]:
-        STATUS["phase"], STATUS["since"] = phase, time.time()
+    st = getattr(_tls, "status", None) or STATUS
+    if phase != st["phase"]:
+        st["phase"], st["since"] = phase, time.time()
 
 
-def status():
+def status(st=None):
+    st = st or STATUS
     now = time.time()
-    return {"busy": STATUS["busy"], "phase": STATUS["phase"] if STATUS["busy"] else "",
-            "seconds": round(now - STATUS["since"], 1) if STATUS["busy"] else 0,
-            "total_seconds": round(now - STATUS["started"], 1) if STATUS["busy"] else 0, "version": RELAY_VERSION}
+    return {"busy": st["busy"], "phase": st["phase"] if st["busy"] else "",
+            "seconds": round(now - st["since"], 1) if st["busy"] else 0,
+            "total_seconds": round(now - st["started"], 1) if st["busy"] else 0, "version": RELAY_VERSION}
 
 
 # ---------------------------------------------------------------------------
@@ -520,16 +523,21 @@ class ChatRegistry:
     def __init__(self, path):
         self.path = path
         self.chats = []
+        self.lock = threading.RLock()  # 창 여러 개(max_tabs)가 함께 씀
         try:
             with open(path, encoding="utf-8") as f:
                 self.chats = json.load(f).get("chats") or []
         except (OSError, ValueError):
             pass
         for c in self.chats:  # 지난번에 쓰던 대화는 이어 쓰지 않으므로 삭제 대상
-            if c.get("state") == "active":
+            if c.get("state") in ("active", "deleting"):
                 c["state"] = "finished"
 
     def save(self):
+        with self.lock:
+            self._save()
+
+    def _save(self):
         try:
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
             tmp = self.path + ".tmp"
@@ -539,43 +547,65 @@ class ChatRegistry:
         except OSError as e:
             bridge.log("대화 목록 저장 실패 ({}): {}".format(self.path, e))
 
-    def add(self, cid, url):
-        if cid and not any(c["id"] == cid for c in self.chats):
-            self.chats.append({"id": cid, "url": url, "created": time.strftime("%Y-%m-%d %H:%M:%S"), "state": "active",
-                               "tries": 0})
-            self.save()
+    def add(self, cid, url, owner=None):
+        with self.lock:
+            if cid and not any(c["id"] == cid for c in self.chats):
+                c = {"id": cid, "url": url, "created": time.strftime("%Y-%m-%d %H:%M:%S"), "state": "active", "tries": 0}
+                if owner:
+                    c["owner"] = owner
+                self.chats.append(c)
+                self.save()
 
-    def finish_all(self):
-        """한 번에 한 대화만 쓰므로, 새 대화를 열거나 세션이 끝나면 쓰던 대화는 모두 끝난 것"""
-        changed = False
-        for c in self.chats:
-            if c["state"] == "active":
-                c["state"], changed = "finished", True
-        if changed:
-            self.save()
+    def finish_all(self, owner=None):
+        """한 창은 한 번에 한 대화만 쓰므로, 새 대화를 열거나 세션이 끝나면 그 창이 쓰던 대화는 끝난 것
+        (owner: 창 번호. None 이면 모든 대화 - 창이 하나일 때)"""
+        with self.lock:
+            changed = False
+            for c in self.chats:
+                if c["state"] == "active" and (owner is None or c.get("owner") == owner):
+                    c["state"], changed = "finished", True
+            if changed:
+                self.save()
 
     def pending(self):
-        return [c for c in self.chats if c["state"] == "finished" and c.get("tries", 0) < self.MAX_TRIES]
+        with self.lock:
+            return [c for c in self.chats if c["state"] == "finished" and c.get("tries", 0) < self.MAX_TRIES]
+
+    def claim_pending(self):
+        """창이 여러 개일 때: 지울 대화를 가져가며 '지우는 중' 으로 표시 (다른 창이 같은 대화를 지우지 않게)"""
+        with self.lock:
+            out = self.pending()
+            for c in out:
+                c["state"] = "deleting"
+            return out
 
     def deleted(self, cid):
-        self.chats = [c for c in self.chats if c["id"] != cid]
-        self.save()
+        with self.lock:
+            self.chats = [c for c in self.chats if c["id"] != cid]
+            self.save()
 
     def failed(self, cid):
-        for c in self.chats:
-            if c["id"] == cid:
-                c["tries"] = c.get("tries", 0) + 1
-        self.save()
+        with self.lock:
+            for c in self.chats:
+                if c["id"] == cid:
+                    c["tries"] = c.get("tries", 0) + 1
+                    if c["state"] == "deleting":
+                        c["state"] = "finished"
+            self.save()
 
 
 class CopilotLink:
-    def __init__(self, cfg, registry=None):
+    def __init__(self, cfg, registry=None, owner=None, claims=None, bucket=None):
         self.cfg = cfg
         self.cop = None
         self.asked = 0  # 지금 Copilot 대화에서 보낸 질문 수 (max_questions_per_chat 용)
         self.registry = registry
         self.model_now = None  # 지금 대화에서 고른 Copilot 모델 (화면 이름)
         self.model_failed = None  # 고르지 못한 모델 (같은 대화에서는 다시 시도하지 않음)
+        # 창이 여러 개일 때(max_tabs): owner = 창 번호 ("1" 은 처음부터 열려 있던 Copilot 탭),
+        # claims = {탭 id: 창 번호} (창끼리 탭을 나눠 가짐), bucket = 모든 창이 함께 쓰는 속도 조절
+        self.owner, self.claims = owner, claims
+        self.bucket = bucket if bucket is not None else {"lock": threading.Lock()}
 
     def connect(self):
         try:
@@ -583,11 +613,31 @@ class CopilotLink:
         except bridge.BridgeError as e:
             raise RelayError(503, str(e))
         cop = [t for t in tabs if self.cfg["copilot_url_contains"] in t.get("url", "")]
+        if self.claims is not None:
+            cop = self.pick_tab(tabs, cop)
         if not cop:
             raise RelayError(503, "Copilot 탭을 찾지 못했습니다. start-chrome.cmd(또는 start-edge.cmd)로 연 전용 창에서 {} 에 로그인해 열어 두세요.".format(
                 self.cfg["copilot_url_contains"]))
         self.cop = bridge.Copilot(bridge.Tab(cop[0]), self.cfg)
         bridge.log("Copilot 탭 연결: {}".format(cop[0].get("url", "")[:90]))
+
+    def pick_tab(self, tabs, cop):
+        """창이 여러 개일 때: 이 창이 쓰던 탭 > 아무 창도 안 쓰는 Copilot 탭 > (첫 창이 아니면) 새 창을 열어서"""
+        live = {t.get("id") for t in tabs}
+        for tid in [k for k in self.claims if k not in live]:  # 닫힌 탭
+            del self.claims[tid]
+        mine = [t for t in cop if self.claims.get(t.get("id")) == self.owner]
+        if not mine:
+            mine = [t for t in cop if t.get("id") not in self.claims]
+            if not mine and self.owner != "1":
+                try:
+                    mine = [bridge.open_window(self.cfg["cdp_port"], self.cfg["copilot_new_chat_url"])]
+                    bridge.log("Copilot 창 {} 을 새로 열었습니다".format(self.owner))
+                except bridge.BridgeError as e:
+                    raise RelayError(503, "Copilot 창을 새로 열지 못했습니다: {}".format(e))
+            if mine:
+                self.claims[mine[0]["id"]] = self.owner
+        return mine[:1]
 
     def drop(self):
         if self.cop:
@@ -604,23 +654,23 @@ class CopilotLink:
         rate = float(self.cfg.get("max_questions_per_minute") or 0)
         if rate <= 0:
             return
-        cap, now = max(1.0, rate), time.time()
-        last = getattr(self, "token_time", None)
-        self.tokens = cap if last is None else min(cap, self.tokens + (now - last) * rate / 60)
-        self.token_time = now
-        if self.tokens < 1:
-            wait = (1 - self.tokens) * 60 / rate
+        cap, b = max(1.0, rate), self.bucket
+        with b["lock"]:  # 창이 여러 개면 모든 창의 질문을 합쳐서 셈 (기다릴 몫을 미리 빼 둠)
+            now = time.time()
+            last = b.get("time")
+            tokens = cap if last is None else min(cap, b["tokens"] + (now - last) * rate / 60)
+            wait = 0.0 if tokens >= 1 else (1 - tokens) * 60 / rate
+            b["tokens"], b["time"] = tokens - 1, now
+        if wait > 0:
             bridge.log("  (속도 조절: 분당 {:g}개 -> {:.0f}초 기다림)".format(rate, wait))
             set_phase("속도 조절로 {:.0f}초 기다리는 중".format(wait))
             time.sleep(wait)
-            self.tokens, self.token_time = 1.0, time.time()
-        self.tokens -= 1
 
     def cleanup(self):
         """끝난 대화(registry 의 finished) 삭제. 실패해도 요청은 계속한다 (3번까지 다시 시도)"""
         if not self.registry or not self.cfg.get("delete_finished_chats", True):
             return
-        for c in self.registry.pending():
+        for c in (self.registry.claim_pending() if getattr(self, "owner", None) else self.registry.pending()):
             set_phase("지난 대화 정리 중")
             try:
                 ok, info = self.cop.delete_chat(c["id"])
@@ -638,7 +688,7 @@ class CopilotLink:
             limit = int(self.cfg.get("max_questions_per_chat") or 0)
             if new_thread:
                 if self.registry:
-                    self.registry.finish_all()
+                    self.registry.finish_all(self.owner)
                     self.cleanup()
                 set_phase("새 대화 여는 중")
                 self.cop.new_chat()
@@ -674,7 +724,7 @@ class CopilotLink:
                 reply = self.cop.wait_reply(m.group(0).strip())
                 bridge.log("  <- 답 받음 ({}자, 코드 블록 {}개)".format(len(reply.get("text", "")), len(reply.get("code_blocks") or [])))
                 if new_thread and i == 1 and self.registry:  # 첫 답에서 대화 주소가 생김 -> 삭제 대상 목록에 기록
-                    self.registry.add(bridge.conversation_id(self.cop.thread_url), self.cop.thread_url)
+                    self.registry.add(bridge.conversation_id(self.cop.thread_url), self.cop.thread_url, self.owner)
             return reply
         except bridge.Throttled as e:
             # 계정 단위 사용량 제한: 새 대화를 열어도 같은 답이 오므로 열지 않고, 지금 대화는 나중에 그대로 이어 쓴다
@@ -708,6 +758,7 @@ class Relay:
         self.reminded_at = 0  # 마지막으로 진행 규칙 요약을 붙였을 때의 질문 수
         self.model_label = ""  # 이번 요청에 쓸 Copilot 모델 (화면 이름)
         self.stat = None  # 이번 요청의 통계 (걸린 시간, 보낸 조각 수, 새 대화, Copilot 에 보낸 횟수) -> '답:' 로그 줄 끝에
+        self.status = STATUS  # 진행 상태 (GET /status). 창이 여러 개면 Lanes 가 창마다 따로 줌
 
     def log(self, *a):
         print(time.strftime("%H:%M:%S"), *a, flush=True)
@@ -741,7 +792,7 @@ class Relay:
             registry = getattr(link, "registry", None)
             if registry is None:
                 return
-            registry.finish_all()
+            registry.finish_all(getattr(link, "owner", None))
             if not link.cfg.get("delete_finished_chats", True) or not registry.pending():
                 return
             self.log("pi 세션 끝 ({}) -> 지난 Copilot 대화 정리".format(reason or "?"))
@@ -758,7 +809,8 @@ class Relay:
     def handle(self, body):
         with self.lock:
             self.stat = {"t0": time.time(), "parts": 0, "asks": 0, "new": False}
-            STATUS.update(busy=True, started=time.time())
+            _tls.status = self.status
+            self.status.update(busy=True, started=time.time())
             set_phase("준비 중")
             try:
                 return self._handle(body, False)
@@ -767,7 +819,8 @@ class Relay:
                 set_phase("새 대화로 다시 보내는 중")
                 return self._handle(body, True)
             finally:
-                STATUS["busy"] = False
+                self.status["busy"] = False
+                _tls.status = None
 
     def _handle(self, body, force_new):
         self.model_label = copilot_model_for(body.get("model"), getattr(self.link, "cfg", None) or {})
@@ -893,6 +946,70 @@ class Relay:
             self.sent, self.fresh = [], True
 
 
+class Lanes:
+    """max_tabs 가 2 이상일 때: pi 프로세스마다(요청 머리글 X-Pi-Session) Copilot 창을 하나씩 따로 써서 pi 여러 개를 동시에 쓴다.
+    창 1 은 처음부터 열려 있던 Copilot 탭, 나머지는 필요할 때 새 창으로 연다. 세션이 끝나면 그 창은 다음 세션이 이어 쓴다.
+    창이 모두 쓰이는 중이면 가장 오래 쉰 창을 넘겨받는다 (넘겨준 세션은 다음 요청 때 새 대화로 이어 감)."""
+
+    def __init__(self, args, cfg, registry, max_tabs):
+        self.lock = threading.Lock()
+        self.max = max_tabs
+        self.args, self.cfg, self.registry = args, cfg, registry
+        self.claims, self.bucket = {}, {"lock": threading.Lock()}
+        self.lanes = []
+        self.add()
+
+    def add(self):
+        owner = str(len(self.lanes) + 1)
+        relay = Relay(self.args, CopilotLink(self.cfg, self.registry, owner=owner, claims=self.claims, bucket=self.bucket))
+        relay.status = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
+        lane = {"relay": relay, "session": None, "used": 0.0, "owner": owner}
+        self.lanes.append(lane)
+        return lane
+
+    def pick(self, session):
+        session = session or ""
+        with self.lock:
+            now = time.time()
+            for lane in self.lanes:
+                if lane["session"] == session:
+                    lane["used"] = now
+                    return lane["relay"]
+            free = [ln for ln in self.lanes if ln["session"] is None]
+            if free:
+                lane = free[0]
+            elif len(self.lanes) < self.max:
+                lane = self.add()
+            else:
+                idle = [ln for ln in self.lanes if not ln["relay"].lock.locked()] or self.lanes
+                lane = min(idle, key=lambda ln: ln["used"])
+                lane["relay"].log("창 {} 을 다른 pi 세션이 넘겨받습니다 (창 {}개 모두 쓰는 중)".format(lane["owner"], self.max))
+            lane["session"], lane["used"] = session, now
+            return lane["relay"]
+
+    def find(self, session):
+        with self.lock:
+            for lane in self.lanes:
+                if lane["session"] == (session or ""):
+                    return lane
+        return None
+
+    def end(self, session, reason):
+        lane = self.find(session)
+        if lane:
+            with self.lock:
+                lane["session"] = None
+            threading.Thread(target=lane["relay"].end_session, args=(reason,), daemon=True).start()
+
+    def status(self, session):
+        lane = self.find(session)
+        return status(lane["relay"].status) if lane else status({"busy": False, "phase": "", "since": 0, "started": 0})
+
+    def summary(self):
+        with self.lock:
+            return [{"window": ln["owner"], "session": ln["session"], "busy": ln["relay"].status["busy"]} for ln in self.lanes]
+
+
 # ---------------------------------------------------------------------------
 # HTTP (OpenAI 호환)
 # ---------------------------------------------------------------------------
@@ -922,7 +1039,7 @@ def fs_op(jup, body):
     raise FsError("EINVAL", "알 수 없는 파일 작업: {}".format(op))
 
 
-def make_handler(relay, jup, cfg):
+def make_handler(relay, jup, cfg, lanes=None):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -963,6 +1080,8 @@ def make_handler(relay, jup, cfg):
                    "copilot_turns_left": relay.link.turns_left,
                    "copilot_throttled_at": time.strftime("%H:%M:%S", time.localtime(thr)) if thr else None,
                    "jupyter": {"root": jup.root, "home": jup.home, "terminal": jup.term}}
+            if lanes:
+                out["windows"] = lanes.summary()
             try:
                 tabs = bridge.list_tabs(cfg["cdp_port"])
                 out["copilot_tab"] = any(cfg["copilot_url_contains"] in t.get("url", "") for t in tabs)
@@ -984,7 +1103,7 @@ def make_handler(relay, jup, cfg):
             if u.path.startswith("/health"):
                 return self.send_json(200, self.health())
             if u.path == "/status":  # 잠금·브라우저 조작 없이 바로 (pi 확장이 1초마다 물음)
-                return self.send_json(200, status())
+                return self.send_json(200, lanes.status(q.get("session", [""])[0]) if lanes else status())
             if u.path == "/jupyter/info":
                 return self.jupyter(jup.info)
             m = re.match(r"^/jupyter/exec/([0-9a-f]+)$", u.path)
@@ -1013,7 +1132,10 @@ def make_handler(relay, jup, cfg):
                 # pi 가 끝나는 중이므로 바로 답하고, 대화 정리는 뒤에서 (설정 다시 읽기 reload 는 같은 대화를 이어 감)
                 reason = str(body.get("reason") or "")
                 if reason != "reload":
-                    threading.Thread(target=relay.end_session, args=(reason,), daemon=True).start()
+                    if lanes:
+                        lanes.end(str(body.get("session") or self.headers.get("X-Pi-Session") or ""), reason)
+                    else:
+                        threading.Thread(target=relay.end_session, args=(reason,), daemon=True).start()
                 return self.send_json(200, {"ok": True})
             if u.path == "/jupyter/exec":
                 def go():
@@ -1028,6 +1150,9 @@ def make_handler(relay, jup, cfg):
                 return self.jupyter(lambda: fs_op(jup, body))
             if not u.path.rstrip("/").endswith("/chat/completions"):
                 return self.send_json(404, {"error": {"message": "not found"}})
+            return self.chat(lanes.pick(self.headers.get("X-Pi-Session")) if lanes else relay, body)
+
+        def chat(self, relay, body):
             try:
                 msg = relay.handle(body)
             except RelayError as e:
@@ -1113,15 +1238,19 @@ def main():
     args.resend_recent_chars = int(cfg.get("resend_recent_chars") or 20000)
     args.resend_summary_chars = int(cfg.get("resend_summary_chars") or 40000)
     registry = ChatRegistry(args.chats or default_registry_path())
-    relay = Relay(args, CopilotLink(cfg, registry))
+    max_tabs = max(1, int(cfg.get("max_tabs") or 1))
+    lanes = Lanes(args, cfg, registry, max_tabs) if max_tabs > 1 else None
+    relay = lanes.lanes[0]["relay"] if lanes else Relay(args, CopilotLink(cfg, registry))
     jup = Jupyter(cfg)
     try:
-        server = ThreadingHTTPServer((args.host, args.port), make_handler(relay, jup, cfg))
+        server = ThreadingHTTPServer((args.host, args.port), make_handler(relay, jup, cfg, lanes))
     except OSError as e:
         relay.log("포트 {} 를 열 수 없습니다 (이미 실행 중일 수 있음): {}".format(args.port, e))
         sys.exit(1)
     server.daemon_threads = True
     relay.server = server
+    if lanes:
+        relay.log("pi 여러 개 동시 실행: 세션마다 Copilot 창을 따로 씀 (최대 {}개, max_tabs)".format(max_tabs))
     user = cfg["_user"]
     relay.log("중계 서버 시작: http://{}:{}/v1  (버전 {}, 브라우저 원격 디버깅 포트 {}, 메시지 최대 {}자, 설정 {}{})".format(
         args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.max_chars, args.config if os.path.exists(args.config) else "기본값",

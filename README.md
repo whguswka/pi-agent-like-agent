@@ -328,7 +328,10 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
   - 끄려면 `bridge.json` 의 `"delete_finished_chats": false`.
 
 ## 8. 주의할 점
-- **pi 는 한 번에 하나만** 실행하세요. Copilot 탭 하나를 같이 쓰므로, 두 개를 같이 쓰면 질문이 번갈아 들어갈 때마다 새 대화가 열립니다.
+- **pi 는 기본적으로 한 번에 하나만** 실행하세요. Copilot 탭 하나를 같이 쓰므로, 두 개를 같이 쓰면 질문이 번갈아 들어갈 때마다 새 대화가 열립니다.
+  여러 개를 동시에 쓰려면 내 설정 파일에 `"max_tabs": 2` (또는 3)를 넣으세요. pi 마다 Copilot 창을 따로 열어 동시에 처리합니다.
+  창은 필요할 때 전용 브라우저에 새로 열리고(지금 보는 창을 가리지 않음), 세션이 끝나면 다음 pi 가 이어 씁니다.
+  질문이 그만큼 많이 나가므로 사용량 제한이 있는 계정이면 주의하세요. jupyter 모드에서는 노트북 쪽 명령이 하나씩 차례로 실행됩니다.
 - **전용 창의 Copilot 탭에서 직접 대화하지 마세요.** 대화 흐름이 섞입니다. 창은 최소화해도 되지만 닫으면 안 됩니다.
 - **속도:** 질문 한 번 왕복에 보통 7~20초 걸립니다. pi 는 도구를 쓸 때마다 Copilot 에 한 번씩 묻기 때문에, 파일 여러 개를 다루는 작업은 몇 분 걸립니다.
   실제로 얼마나 걸리는지는 `diag.py --report` 의 '최근 요청' 줄(평균 시간, 새 대화 횟수와 시간, 긴 메시지를 나눠 보낸 횟수)에서 볼 수 있습니다.
@@ -403,6 +406,7 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 | `max_questions_per_minute` | `0` | 분당 질문 수 제한 (0 이면 끔) |
 | `max_questions_per_chat` | `100` | 이만큼 질문하면 새 대화로 넘어감 |
 | `max_chars` | `10000` | Copilot 메시지 하나의 최대 글자 수. 넘으면 나눠 보내고 조각마다 왕복이 한 번 더 듭니다 (`diag.py --input-limit` 로 확인) |
+| `max_tabs` | `1` | 2 이상이면 pi 를 여러 개 동시에 쓸 때 pi 마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶, [8장](#8-주의할-점)) |
 | `multi_read` | `false` | `true` 면 Copilot 이 파일 읽기(read)를 여러 개 한 번에 요청할 수 있음 (왕복 줄이기, 시험 기능). 고치기·명령 실행은 그대로 하나씩 |
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 |
 | `copilot_models` | 4장의 표 | pi 모델 id → Copilot 화면의 모델 이름 |

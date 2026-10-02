@@ -54,6 +54,7 @@ DEFAULT_CONFIG = {
     "resend_recent_chars": 20000,
     "resend_summary_chars": 40000,
     "multi_read": False,  # True 면 Copilot 이 파일 읽기(read) 블록을 여러 개 한 번에 줄 수 있음 (왕복 횟수 줄이기)
+    "max_tabs": 1,  # 2 이상이면 pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶)
     # 모델 선택: Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 화면의 모델 메뉴에서 고른다
     "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT 6.0 Sol"). 비우면 화면 그대로
     "copilot_models": {},  # pi 모델 id -> 화면 이름. 표에 없는 id 는 id 자체를 화면 이름으로 씀
@@ -273,6 +274,41 @@ class Tab:
 
     def close(self):
         self.ws.close()
+
+
+def open_window(port, url, timeout=20):
+    """전용 브라우저에 새 창(탭 하나)을 열고 그 탭 정보를 돌려준다 (pi 여러 개 동시 실행: 세션마다 Copilot 창 하나)
+    새 창은 뒤에서 열려 지금 보는 창을 가리지 않는다"""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:{}/json/version".format(port), timeout=5) as r:
+            ws_url = json.load(r)["webSocketDebuggerUrl"]
+    except (OSError, ValueError, KeyError) as e:
+        raise BridgeError("브라우저에 연결할 수 없습니다: {}".format(e))
+    deadline = time.time() + timeout
+    ws = WebSocket(ws_url)
+    try:
+        ws.send(json.dumps({"id": 1, "method": "Target.createTarget",
+                            "params": {"url": url, "newWindow": True, "background": True}}))
+        tid = None
+        while tid is None:
+            if time.time() > deadline:
+                raise BridgeError("새 창을 여는 데 응답이 없습니다")
+            try:
+                msg = json.loads(ws.recv(deadline - time.time()))
+            except socket.timeout:
+                continue
+            if msg.get("id") == 1:
+                if "error" in msg:
+                    raise BridgeError("새 창 열기 실패: {}".format(msg["error"].get("message")))
+                tid = msg["result"]["targetId"]
+    finally:
+        ws.close()
+    while time.time() < deadline:
+        for t in list_tabs(port):
+            if t.get("id") == tid:
+                return t
+        time.sleep(0.5)
+    raise BridgeError("새 창의 탭을 찾지 못했습니다")
 
 
 def list_tabs(port):

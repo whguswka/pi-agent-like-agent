@@ -449,5 +449,62 @@ with _cl.redirect_stdout(_io.StringIO()):
     _r18.handle({"messages": [{"role": "user", "content": "x"}], "tools": tools})
 check("/status: 요청이 끝나면 다시 쉼", relay.status()["busy"] is False)
 
+# max_tabs (pi 여러 개 동시 실행): 세션(X-Pi-Session)마다 Copilot 창 하나씩
+_reg19 = relay.ChatRegistry(os.path.join(_tmp, "c19.json"))
+_reg19.add("a1", "u", "1")
+_reg19.add("b1", "u", "2")
+_reg19.finish_all("1")
+check("기록: 창 번호(owner)별로 끝냄 (다른 창의 대화는 그대로)",
+      [(c["id"], c["state"]) for c in _reg19.chats] == [("a1", "finished"), ("b1", "active")], _reg19.chats)
+_cl19 = _reg19.claim_pending()
+check("기록: 지울 대화를 가져가면 '지우는 중' (다른 창은 못 가져감)", [c["id"] for c in _cl19] == ["a1"] and _reg19.claim_pending() == []
+      and _reg19.chats[0]["state"] == "deleting")
+_reg19.failed("a1")
+check("기록: 지우기 실패하면 다시 지울 대상", _reg19.chats[0]["state"] == "finished" and _reg19.chats[0]["tries"] == 1)
+check("기록: 다시 켜면 '지우는 중' 도 지울 대상", relay.ChatRegistry(os.path.join(_tmp, "c19.json")).chats[0]["state"] == "finished")
+
+
+class _LaneLink:
+    made = []
+
+    def __init__(self, cfg, registry=None, owner=None, claims=None, bucket=None):
+        self.cfg, self.registry, self.owner, self.turns_left = cfg, registry, owner, None
+        self.sent_log = []
+        _LaneLink.made.append(self)
+
+    def request(self, parts, new_thread, model=""):
+        self.sent_log.append(new_thread)
+        _time.sleep(0.6)
+        return {"text": "창 {} 의 답".format(self.owner)}
+
+
+_real_link = relay.CopilotLink
+relay.CopilotLink = _LaneLink
+try:
+    _lanes = relay.Lanes(A(), {}, None, 2)
+    _ra, _rb2 = _lanes.pick("A"), _lanes.pick("B")
+    check("창 나누기: 세션 A 는 창 1, B 는 새 창 2", _ra.link.owner == "1" and _rb2.link.owner == "2" and len(_lanes.lanes) == 2)
+    check("창 나누기: 같은 세션은 같은 창", _lanes.pick("A") is _ra)
+    _out = {}
+
+    def _go(name, rl):  # (redirect_stdout 는 스레드끼리 섞이므로 로그만 끔)
+        _out[name] = rl.handle({"messages": [{"role": "user", "content": name}], "tools": tools})["content"]
+
+    _ra.log = _rb2.log = lambda *a: None
+    _t0 = _time.time()
+    _ths = [_th.Thread(target=_go, args=(n, rl)) for n, rl in (("A", _ra), ("B", _rb2))]
+    [t.start() for t in _ths]
+    [t.join() for t in _ths]
+    _el = _time.time() - _t0
+    check("창 나누기: 두 세션을 동시에 처리 (0.6초씩 -> 합쳐 1초 안)", _out == {"A": "창 1 의 답", "B": "창 2 의 답"} and _el < 1.0, (_out, _el))
+    _rc = _lanes.pick("C")
+    check("창 나누기: 창이 모두 쓰이면 가장 오래 쉰 창을 넘겨받음", _rc is _ra and len(_lanes.lanes) == 2, [ln["session"] for ln in _lanes.lanes])
+    _lanes.end("B", "quit")
+    _time.sleep(0.2)
+    check("창 나누기: 세션이 끝나면 그 창은 비어 다음 세션이 씀", _lanes.pick("D") is _rb2)
+    check("창 나누기: 진행 상태는 창마다 따로", _ra.status is not _rb2.status and _lanes.status("zzz")["busy"] is False)
+finally:
+    relay.CopilotLink = _real_link
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)
