@@ -22,15 +22,19 @@ const keyOf = (t: Target) => (t.remote ? "nb:" : "pc:") + t.abs.toLowerCase();
 const same = (a: Buffer | null | undefined, b: Buffer | null | undefined) => (a === null || b === null ? a === b : !!a && !!b && a.equals(b));
 
 export default function (pi: ExtensionAPI) {
-	let history: Checkpoint[] = [];
+	// 기록은 확장을 다시 불러와도(/kit share, /reload) 이어 간다. 새 세션(/new, /resume)이면 새로 시작 (pi 를 끄면 사라짐)
+	// note: 다음 요청에 붙일 알림 (되돌린 파일)
+	const S: { history: Checkpoint[]; seq: number; note: string } = ((globalThis as any).__piUndo ||= { history: [], seq: 0, note: "" });
 	let current: Checkpoint | null = null;
-	let seq = 0;
-	let note = ""; // 다음 요청에 붙일 알림 (되돌린 파일)
+
+	pi.on("session_start", async (event: any) => {
+		if (event?.reason !== "reload") Object.assign(S, { history: [], note: "" });
+	});
 
 	pi.on("agent_start", async () => {
-		current = { id: ++seq, files: new Map() };
-		history.push(current);
-		if (history.length > 30) history.shift();
+		current = { id: ++S.seq, files: new Map() };
+		S.history.push(current);
+		if (S.history.length > 30) S.history.shift();
 	});
 
 	// 고치기 직전 내용 (요청마다 파일당 한 번)
@@ -60,12 +64,14 @@ export default function (pi: ExtensionAPI) {
 		} catch {
 			snap.after = undefined;
 		}
+		// 바뀐 것이 없으면(실패한 고치기 등) 기록하지 않음: /undo 가 빈 요청을 되돌리느라 한 번을 쓰지 않게
+		if (same(snap.after, snap.before)) current.files.delete(keyOf(snap));
 	});
 
 	pi.on("input", async (event: any) => {
-		if (!note || !event.text || event.text.startsWith("/")) return;
-		const text = `${note}\n\n${event.text}`;
-		note = "";
+		if (!S.note || !event.text || event.text.startsWith("/")) return;
+		const text = `${S.note}\n\n${event.text}`;
+		S.note = "";
 		return { action: "transform", text };
 	});
 
@@ -73,7 +79,7 @@ export default function (pi: ExtensionAPI) {
 		description: "pi 가 고친 파일을 원래대로 (/undo: 마지막 요청, /undo 2: 마지막 두 요청). 셸 명령으로 바뀐 파일은 제외",
 		handler: async (args, ctx) => {
 			const n = Math.max(1, Number.parseInt(String(args || "1"), 10) || 1);
-			const cps = history.filter((c) => c.files.size > 0).slice(-n).reverse(); // 최근 것부터
+			const cps = S.history.filter((c) => c.files.size > 0).slice(-n).reverse(); // 최근 것부터
 			if (!cps.length) return ctx.ui.notify("되돌릴 변경이 없습니다 (pi 가 이번 실행에서 write·edit 로 고친 파일만 기록합니다)", "info");
 			const plan: string[] = [];
 			for (const cp of cps)
@@ -107,8 +113,8 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 			}
-			history = history.filter((c) => !cps.includes(c));
-			if (done.length) note = `(사용자가 /undo 로 앞 요청에서 바꾼 파일을 원래대로 돌렸습니다: ${done.join(", ")}. 지금 파일 내용을 기준으로 이어 가세요.)`;
+			S.history = S.history.filter((c) => !cps.includes(c));
+			if (done.length) S.note = `(사용자가 /undo 로 앞 요청에서 바꾼 파일을 원래대로 돌렸습니다: ${done.join(", ")}. 지금 파일 내용을 기준으로 이어 가세요.)`;
 			const msg = [done.length ? `되돌렸습니다: ${done.join(", ")}` : "되돌린 파일이 없습니다", ...(skipped.length ? [`그대로 둠: ${skipped.join(", ")}`] : [])];
 			ctx.ui.notify(msg.join(" / "), skipped.length ? "warning" : "info");
 		},

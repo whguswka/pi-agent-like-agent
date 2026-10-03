@@ -140,7 +140,8 @@ const shared = (v: any) => [...(v.skills || []), ...(v.prompts || [])] as string
 export default function (pi: ExtensionAPI) {
 	let shown: string | null = null; // 지금 띄운 것 ("kit" | "doctor")
 	const show = (ctx: any, what: string, lines: string[] | undefined) => {
-		ctx.ui.setWidget("pi-kit", lines);
+		// 한 덩어리로 넘김: pi 화면은 줄 목록을 10줄까지만 보여 줌 (/doctor 요약이 잘림)
+		ctx.ui.setWidget("pi-kit", lines && [lines.join("\n")]);
 		shown = lines ? what : null;
 	};
 	pi.registerCommand("kit", {

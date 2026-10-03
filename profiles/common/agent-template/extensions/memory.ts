@@ -46,12 +46,16 @@ const label = (t: Target) => (t.remote ? `노트북 ${t.abs}` : t.abs.toLowerCas
 const cut = (s: string, n = 60) => (s.length > n ? s.slice(0, n) + "…" : s);
 
 export default function (pi: ExtensionAPI) {
-	let notes: string[] = []; // 다음 요청에 붙여 알릴 것
+	// 다음 요청에 붙여 알릴 것 (확장을 다시 불러와도(/kit share, /reload) 남김)
+	const S: { notes: string[] } = ((globalThis as any).__piRemember ||= { notes: [] });
+	pi.on("session_start", async (event: any) => {
+		if (event?.reason !== "reload") S.notes = []; // 새 세션은 지침 파일을 새로 읽으므로 알릴 필요 없음
+	});
 
 	pi.on("input", async (event: any) => {
-		if (!notes.length || !event.text || event.text.startsWith("/")) return;
-		const text = `(사용자가 /remember 로 지침에 더한 내용입니다. 지금부터 지켜 주세요: ${notes.join(" / ")})\n\n${event.text}`;
-		notes = [];
+		if (!S.notes.length || !event.text || event.text.startsWith("/")) return;
+		const text = `(사용자가 /remember 로 지침에 더한 내용입니다. 지금부터 지켜 주세요: ${S.notes.join(" / ")})\n\n${event.text}`;
+		S.notes = [];
 		return { action: "transform", text };
 	});
 
@@ -77,13 +81,17 @@ export default function (pi: ExtensionAPI) {
 			}
 			try {
 				const old = await readTarget(t);
-				const next = addMemory(old ? old.toString("utf8") : "", item);
+				const text = old ? old.toString("utf8") : "";
+				// UTF-8 이 아닌 파일(메모장의 ANSI·UTF-16 저장 등)은 다시 쓰면 한글이 깨지므로 고치지 않음
+				if (old && (old.includes(0) || !Buffer.from(text, "utf8").equals(old)))
+					return ctx.ui.notify(`${label(t)} 이 UTF-8 이 아니라 고치지 않았습니다. 편집기에서 UTF-8 로 저장한 뒤 다시 해 주세요`, "error");
+				const next = addMemory(text, item);
 				if (next === null) return ctx.ui.notify(`이미 적혀 있습니다 (${label(t)})`, "info");
 				await writeTarget(t, Buffer.from(next, "utf8"));
 			} catch (e) {
 				return ctx.ui.notify(`적지 못했습니다 (${label(t)}): ${(e as Error).message}`, "error");
 			}
-			notes.push(item);
+			S.notes.push(item);
 			ctx.ui.notify(`기억했습니다 → ${label(t)} 의 "${HEAD.slice(3)}". 지금 대화에는 다음 요청과 함께 알려 줍니다 (지우려면 그 파일에서 줄을 지우세요)`, "info");
 		},
 	});

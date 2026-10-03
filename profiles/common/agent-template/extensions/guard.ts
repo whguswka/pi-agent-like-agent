@@ -12,14 +12,15 @@
  * 설정 (내 설정 파일 ~/.pi/agent/bridge.json, 고치면 바로 적용):
  *   "guard": false                          이 확인을 끔
  *   "guard_patterns": ["정규식", ...]        더 물어볼 명령
- *   "guard_allow": ["정규식", ...]           묻지 않을 명령 (예: "^git push origin feature/")
+ *   "guard_allow": ["정규식", ...]           묻지 않을 명령 (&&·;·| 로 이은 명령은 하나씩 맞춰 봄. 예: "^git push origin feature/")
  *   "guard_outside_writes": false           작업 폴더 밖 파일 쓰기는 묻지 않음
  */
 
 import { readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, posix, resolve } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { cleanPath, isPcAbsolute, windowsDrivePath } from "./lib/paths.ts";
 import { base, INTERP, parseShell, SHELLS, strip } from "./lib/shell.ts";
 
 type Rule = { label: string; re: RegExp };
@@ -100,7 +101,10 @@ const legacy = (code: string): string | null => {
 	return null;
 };
 
-function checkSimple(words: string[], depth: number): string | null {
+/** guard_allow 에 맞는 단순 명령 (낱말을 빈칸으로 이은 글에 맞춰 봄): 그 명령만 묻지 않는다 */
+const allowed = (words: string[], allow: RegExp[]) => allow.length > 0 && allow.some((re) => re.test(words.join(" ")));
+
+function checkSimple(words: string[], depth: number, allow: RegExp[]): string | null {
 	const { rest, sudo } = strip(words);
 	if (!rest.length) return sudo ? LABEL.sudo : null;
 	const name = base(rest[0]).replace(/[0-9.]+$/, (m) => (/^(python|pip)/.test(base(rest[0])) ? "" : m));
@@ -142,26 +146,26 @@ function checkSimple(words: string[], depth: number): string | null {
 	// 안에서 실행되는 글
 	if (SHELLS.has(name)) {
 		const c = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
-		if (c >= 0 && c + 1 < args.length) return analyze(args[c + 1], depth + 1) || (sudo ? LABEL.sudo : null);
+		if (c >= 0 && c + 1 < args.length) return analyze(args[c + 1], depth + 1, allow) || (sudo ? LABEL.sudo : null);
 	}
-	if (name === "eval") return analyze(args.join(" "), depth + 1) || (sudo ? LABEL.sudo : null);
+	if (name === "eval") return analyze(args.join(" "), depth + 1, allow) || (sudo ? LABEL.sudo : null);
 	if (name === "su") {
 		const c = args.findIndex((a) => a === "-c" || a === "--command");
-		if (c >= 0 && c + 1 < args.length) return analyze(args[c + 1], depth + 1) || LABEL.sudo;
+		if (c >= 0 && c + 1 < args.length) return analyze(args[c + 1], depth + 1, allow) || LABEL.sudo;
 	}
 	if (name === "ssh") {
 		let k = 0;
 		while (k < args.length && args[k].startsWith("-")) k += /^-[bcDEeFIiJLlmOopQRSWw]$/.test(args[k]) ? 2 : 1;
 		const remote = args.slice(k + 1).join(" ");
 		if (remote) {
-			const r = analyze(remote, depth + 1);
+			const r = analyze(remote, depth + 1, allow);
 			if (r) return r;
 		}
 	}
 	if (name === "cmd") {
 		const c = args.findIndex((a) => /^\/[ckCK]$/.test(a));
 		if (c >= 0) {
-			const r = analyze(args.slice(c + 1).join(" "), depth + 1) || legacy(args.slice(c + 1).join(" "));
+			const r = analyze(args.slice(c + 1).join(" "), depth + 1, allow) || legacy(args.slice(c + 1).join(" "));
 			if (r) return r;
 		}
 	}
@@ -180,22 +184,23 @@ function checkSimple(words: string[], depth: number): string | null {
 	return sudo ? LABEL.sudo : null;
 }
 
-function analyze(src: string, depth = 0): string | null {
+function analyze(src: string, depth = 0, allow: RegExp[] = []): string | null {
 	if (depth > 5) return legacy(src);
 	const p = parseShell(src);
 	for (const s of p.nested) {
-		const r = analyze(s, depth + 1);
+		const r = analyze(s, depth + 1, allow);
 		if (r) return r;
 	}
 	for (const pl of p.pipelines) {
 		for (const cmd of pl) {
-			const r = checkSimple(cmd.words, depth);
+			if (allowed(cmd.words, allow)) continue;
+			const r = checkSimple(cmd.words, depth, allow);
 			if (r) return r;
 		}
-		// 받은 것을 바로 셸로: curl ... | sh
+		// 받은 것을 바로 셸로: curl ... | sh (guard_allow 에 맞는 명령은 빼고)
 		const names = pl.map((cmd) => {
 			const s = strip(cmd.words).rest;
-			return s.length ? base(s[0]) : "";
+			return s.length && !allowed(cmd.words, allow) ? base(s[0]) : "";
 		});
 		const f = names.findIndex((n) => n === "curl" || n === "wget");
 		if (f >= 0 && names.slice(f + 1).some((n) => SHELLS.has(n))) return LABEL.pipe;
@@ -210,7 +215,7 @@ function analyze(src: string, depth = 0): string | null {
 			if (r.length) names.push(base(r[0]));
 		}
 		if (names.some((n) => SHELLS.has(n) || n === "ssh")) {
-			const r = analyze(h.body, depth + 1);
+			const r = analyze(h.body, depth + 1, allow);
 			if (r) return r;
 		} else if (names.some((n) => INTERP[n.replace(/[0-9.]+$/, "")] || ["psql", "mysql", "sqlite3"].includes(n))) {
 			const r = legacy(h.body);
@@ -220,12 +225,19 @@ function analyze(src: string, depth = 0): string | null {
 	return null;
 }
 
-/** 확인이 필요한 bash 명령이면 그 이유, 아니면 null */
+/** 확인이 필요한 bash 명령이면 그 이유, 아니면 null.
+ *  guard_allow 는 단순 명령마다 맞춰 본다: "git push origin feature/x && rm -rf ~/p" 에서 git push 만 빼고 rm 은 묻는다 */
 export function checkCommand(command: string, cfg: any = {}): string | null {
-	if (regexps(cfg.guard_allow).some((re) => re.test(command))) return null;
+	const allow = regexps(cfg.guard_allow);
 	let why: string | null;
 	try {
-		why = analyze(command);
+		if (allow.length) {
+			// 모든 명령이 guard_allow 에 맞으면(안에서 실행되는 글·heredoc 없이) 아래의 글자 패턴(guard_patterns 등)도 보지 않음
+			const p = parseShell(command);
+			const all = p.pipelines.flat();
+			if (all.length && !p.nested.length && !p.heredocs.length && all.every((s) => allowed(s.words, allow))) return null;
+		}
+		why = analyze(command, 0, allow);
 	} catch {
 		why = legacy(command); // 분석 실패: 전체 글을 글자 패턴으로
 	}
@@ -244,21 +256,26 @@ const inside = (p: string, base: string) => {
 
 type WorkDir = { remote: boolean; cwd: string; home?: string };
 
-/** 작업 폴더 밖의 파일이면 그 절대 경로, 아니면 null. jupyter 모드는 jupyter.ts 가 알려 주는 노트북 작업 폴더 기준 */
+/** 작업 폴더 밖의 파일이면 그 절대 경로, 아니면 null. jupyter 모드는 jupyter.ts 가 알려 주는 노트북 작업 폴더 기준.
+ *  경로는 pi 의 도구처럼 정리해서 본다 (lib/paths.ts: 맨 앞 @, 특수 공백, file://, /c/... /mnt/c/... /cygdrive/c/...) */
 export function outsidePath(path: string, wd: WorkDir): string | null {
-	let s = String(path || "").trim().replace(/\\/g, "/");
+	let s = cleanPath(path).trim().replace(/\\/g, "/");
 	if (!s) return null;
-	if (wd.remote) {
+	const temps = [tmpdir(), "/tmp", process.env.TEMP || "", process.env.TMP || ""].filter(Boolean);
+	if (wd.remote && !isPcAbsolute(s)) {
 		const home = wd.home || "/home/jovyan";
 		if (s === "~" || s.startsWith("~/")) s = home + s.slice(1);
 		const abs = posix.resolve(wd.cwd, s);
 		return inside(abs, wd.cwd) || inside(abs, "/tmp") ? null : abs;
 	}
+	// jupyter 모드라도 C:/... 나 //서버/... 는 PC 의 파일 (도구도 PC 에 씀): 노트북 작업 폴더 밖이므로 PC 임시 폴더만 괜찮음
+	if (wd.remote) {
+		const abs = slash(win32.resolve(s));
+		return temps.some((t) => inside(abs, t)) ? null : abs;
+	}
+	s = windowsDrivePath(s);
 	if (s === "~" || s.startsWith("~/")) s = slash(homedir()) + s.slice(1);
-	const m = s.match(/^\/([a-zA-Z])(\/.*)?$/); // Git Bash 형식 /c/...
-	if (m && process.platform === "win32") s = `${m[1].toUpperCase()}:${m[2] || "/"}`;
 	const abs = slash(resolve(wd.cwd, s));
-	const temps = [tmpdir(), "/tmp", process.env.TEMP || "", process.env.TMP || ""].filter(Boolean);
 	return inside(abs, wd.cwd) || temps.some((t) => inside(abs, t)) ? null : abs;
 }
 

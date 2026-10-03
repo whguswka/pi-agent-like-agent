@@ -2,7 +2,7 @@
  * 작업 방식 (/plan, /mode): 계획부터 세우고 승인받아 진행 / 바꿀 때마다 확인 / 자동
  *
  *  /plan            계획 모드 켜기·끄기. 켜면 파일을 바꾸거나 명령을 실행하지 않고 계획부터 세운다
- *  /plan <요청>     계획 모드로 바꾸고 바로 요청
+ *  /plan <요청>     계획 모드로 바꾸고 바로 요청 (다른 작업 중이면 그 작업이 끝난 뒤)
  *  /mode            모드 고르기 (계획 / 확인 / 자동). /mode ask 처럼 바로 바꿀 수도 있음
  *
  *  - 계획: read 와 읽기 전용 명령(ls, cat, grep, git status·diff·log 등)만 실행한다. write·edit 와 그 밖의 명령은 막고
@@ -40,23 +40,23 @@ const READ = new Set(
 		"strings findstr printenv locale tasklist systeminfo ver set shopt read exit for in case esac fi done sed awk gawk find fd uniq xxd hostname " +
 		"tar unzip zipinfo").split(" "),
 );
-/** 이름은 읽기용이지만 쓰거나 다른 명령을 실행하는 옵션이 있는 것: 그 옵션이 있으면 읽기 전용이 아님 */
+/** 이름은 읽기용이지만 쓰거나 다른 명령을 실행하는 옵션이 있는 것: 그 옵션이 있으면 읽기 전용이 아님.
+ *  짧은 옵션은 붙여 쓸 수 있으므로(sort -uo 파일, fd -Hx rm) 값을 받지 않는 옵션 글자 뒤에 와도 찾는다. 긴 이름은 앞부분만 써도 됨(--o) */
 const WRITE_FLAG: Record<string, RegExp> = {
-	sort: /^(-o|--output)/,
-	date: /^(-s|--set)/,
-	sed: /^(-[a-zA-Z]*i|--in-place)/,
-	yq: /^(-i|--inplace)/,
-	tree: /^-o$/,
+	sort: /^-[bcCdfghiMmnRrsuVz]*o|^--(o|co)/, // -o 파일, --output, --compress-program(다른 프로그램 실행)
+	date: /^-[uR]*s|^--s/,
+	yq: /^-[CMNPenr0vVhyYcjaS]*[is]|^--(inplace|in-place|split-exp)/, // -i 파일 고치기, -s(--split-exp) 파일로 나눠 쓰기
+	tree: /^-[a-zA-Z]*o/, // tree 는 값을 다음 낱말에서 받으므로 -ao 파일 도 -o
 	rg: /^--pre/,
-	fd: /^(-x|--exec|-X|--exec-batch)/,
-	awk: /^(-i|--include)/,
-	gawk: /^(-i|--include)/,
+	fd: /^-[HIusigFalLp01qhV]*[xX]|^--exec/,
 };
 /** 버전만 볼 때 (--version 등) 읽기 전용인 명령 */
 const VERSION_ONLY = new Set(
 	"python python3 py node java javac go gcc g++ cc make cmake rustc cargo deno bun perl ruby php dotnet mvn gradle tsc uv poetry kubectl helm docker conda pip pip3 npm git".split(" "),
 );
-const isVersion = (args: string[]) => args.length === 1 && /^(--?version|-V|-VV|version)$/.test(args[0]);
+/** 낱말 version 은 진짜 하위 명령일 때만 (make version·python version 은 그 이름의 대상·파일을 실행. kubectl·helm·docker·git 은 SPECIAL 에서) */
+const isVersion = (name: string, args: string[]) =>
+	args.length === 1 && (/^(--?version|-V|-VV)$/.test(args[0]) || (args[0] === "version" && (name === "go" || name === "cargo")));
 const GIT_READ = new Set(
 	("status log diff show blame annotate grep ls-files ls-tree ls-remote rev-parse rev-list describe shortlog cat-file name-rev merge-base " +
 		"cherry count-objects whatchanged show-ref for-each-ref diff-tree diff-index diff-files help version check-ignore check-attr var").split(" "),
@@ -73,7 +73,10 @@ function sub(args: string[], withValue: Set<string>): { name: string; rest: stri
 }
 
 function gitRead(args: string[]): boolean {
-	const { name, rest } = sub(args, new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]));
+	const { name, rest } = sub(args, new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"]));
+	// 하위 명령 앞의 -c 설정·--config-env 는 diff.external·core.pager 처럼 다른 프로그램을 실행하게 할 수 있음 (보기만 바꾸는 설정만 허용)
+	const globals = name ? args.slice(0, args.length - rest.length - 1) : args;
+	if (globals.some((a, k) => a.startsWith("--config-env") || (a === "-c" && !/^(core\.quotepath|color\.[\w.-]+)(=|$)/i.test(globals[k + 1] || "")))) return false;
 	if (!name) return args.some((a) => a === "--version" || a === "--help");
 	if (rest.some((a) => /^--output(=|$)|^--ext-diff$|^-O|^--open-files-in-pager/.test(a))) return false; // 파일로 쓰기, 다른 프로그램 실행
 	if (GIT_READ.has(name)) return true;
@@ -116,6 +119,7 @@ const subIn = (list: string, withValue: string[] = []) => {
 		return !!name && (ok.has(name) || ok.has(`${name} ${rest[0] || ""}`) || ok.has(`${name} ${sub(rest, wv).name}`));
 	};
 };
+const helmRead = subIn("list|ls|status|get|history|show|search|version|env|template|lint", ["-n", "--namespace", "--kube-context", "--kubeconfig"]);
 const SPECIAL: Record<string, (args: string[]) => boolean> = {
 	git: gitRead,
 	pip: subIn("list|show|freeze|check|index|inspect"),
@@ -127,7 +131,8 @@ const SPECIAL: Record<string, (args: string[]) => boolean> = {
 			"config view|config get-contexts|config current-context|config get-clusters|config get-users",
 		["-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-s", "--server", "-l", "--selector", "-o", "--output", "-c", "--container"],
 	),
-	helm: subIn("list|ls|status|get|history|show|search|version|env|template|lint", ["-n", "--namespace", "--kube-context", "--kubeconfig"]),
+	// helm template --output-dir 는 파일로 쓰고, --post-renderer 는 다른 프로그램 실행, --dependency-update 는 차트 폴더에 받아 씀
+	helm: (a) => helmRead(a) && !a.some((x) => /^--(output-dir|post-renderer|dependency-update)(=|$)/.test(x)),
 	docker: subIn(
 		"ps|images|logs|inspect|version|info|top|port|history|diff|image ls|image list|image inspect|container ls|container list|" +
 			"container inspect|container logs|network ls|volume ls|system df|compose ps|compose logs|compose config",
@@ -138,6 +143,162 @@ const SPECIAL: Record<string, (args: string[]) => boolean> = {
 		!a.some((x) => /^-(pm|e|p|c|r|ac|rac|acp|pl|am|caa|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci)$|^--(persistence-mode|ecc-config|reset-ecc|compute-mode|gpu-reset|applications-clocks|reset-applications-clocks|power-limit|lock-|reset-)/.test(x)),
 };
 const PY = new Set(["python", "python3", "py"]);
+/** tar 의 긴 옵션 중 다른 프로그램을 실행하거나 파일로 쓰는 것 */
+const TAR_RUN = ["use-compress-program", "checkpoint-action", "info-script", "new-volume-script", "to-command", "rsh-command", "rmt-command", "index-file", "volno-file"];
+
+/** sed 스크립트가 보기만 하는지 (GNU sed 4.9 와 같은 방식으로 읽음). 명령마다 [주소[,주소]][!] 다음에
+ *  p P l = d D q Q n N g G h H x z F, s/../../(플래그는 g p i I m M 숫자만), y/../../, { }, 이름표(: b t T), # 주석만.
+ *  w·W(파일로 쓰기), e·s///e(명령 실행), s///w, 그 밖의 명령(r a i c 등)이나 sed 와 다르게 읽을 수 있는 글은 아님
+ *  (sed 는 문법 오류가 나도 그 앞의 w 파일은 이미 만들므로, 끝까지 sed 와 같게 읽은 것만 허용) */
+export function sedScriptReadOnly(src: string): boolean {
+	let i = 0;
+	let depth = 0;
+	const at = (re: RegExp) => i < src.length && re.test(src[i]);
+	const blank = () => {
+		while (at(/[ \t]/)) i++;
+	};
+	const num = () => {
+		const s = i;
+		while (at(/[0-9]/)) i++;
+		return i > s;
+	};
+	/** 구분자 d 까지 (\ 는 다음 글자와 함께 건너뜀. 줄바꿈이 그대로 나오면 sed 도 오류) */
+	const upTo = (d: string) => {
+		for (; i < src.length && src[i] !== "\n"; i++) {
+			if (src[i] === "\\") i++;
+			else if (src[i] === d) {
+				i++;
+				return true;
+			}
+		}
+		return false;
+	};
+	/** 주소: 줄 번호(1~2 포함), $, /정규식/ 또는 \c정규식c (뒤에 I·M). 둘째 주소는 +N·~N 도. 주소가 없으면 null, 틀리면 false */
+	const addr = (second: boolean): boolean | null => {
+		const c = src[i];
+		if (c === "$") {
+			i++;
+			return true;
+		}
+		if (at(/[0-9]/)) {
+			num();
+			blank();
+			if (src[i] !== "~") return true;
+			i++;
+			blank();
+			return num();
+		}
+		if (second && (c === "+" || c === "~")) {
+			i++;
+			blank();
+			return num();
+		}
+		if (c === "/" || c === "\\") {
+			i++;
+			const d = c === "/" ? "/" : src[i++];
+			if (!d || d === "\n" || d === "\\" || !upTo(d)) return false;
+			for (blank(); src[i] === "I" || src[i] === "M"; blank()) i++;
+			return true;
+		}
+		return null;
+	};
+	while (i < src.length) {
+		if (at(/[ \t\n\r\f\v;]/)) {
+			i++;
+			continue;
+		}
+		if (src[i] === "#") {
+			while (i < src.length && src[i] !== "\n") i++;
+			continue;
+		}
+		const a = addr(false);
+		if (a === false) return false;
+		if (a) {
+			blank();
+			if (src[i] === ",") {
+				i++;
+				blank();
+				if (!addr(true)) return false;
+			}
+			blank();
+		}
+		if (src[i] === "!") {
+			i++;
+			blank();
+		}
+		const c = i < src.length ? src[i++] : "";
+		if (!c) return false;
+		if (c === "{") {
+			depth++;
+			continue;
+		}
+		if (c === "}") {
+			if (a || !depth) return false;
+			depth--;
+		} else if (c === "s" || c === "y") {
+			const d = i < src.length ? src[i++] : "\n";
+			if (d === "\n" || d === "\\" || !upTo(d) || !upTo(d)) return false;
+			if (c === "s") while (at(/[gpiImM0-9 \t]/)) i++; // e(명령 실행)·w(파일로 쓰기) 플래그는 안 됨
+		} else if (":btT".includes(c)) {
+			// 이름표: sed 는 빈칸·; (4.9 는 } 에서도) 에서 끊음. 그 사이에 다르게 읽을 수 있는 글자가 있으면 아님
+			blank();
+			const s = i;
+			while (i < src.length && !/[\s;]/.test(src[i])) i++;
+			if (!/^[\w.-]*$/.test(src.slice(s, i)) || (c === ":" && (a || i === s))) return false;
+		} else if ("qQl".includes(c)) {
+			blank();
+			num(); // q5 (끝내는 코드), l 40 (줄 길이)
+		} else if (!"=dDFgGhHnNpPxz".includes(c)) return false;
+		blank();
+		if (i < src.length && !";\n}#".includes(src[i])) return false; // 명령 끝
+	}
+	return depth === 0;
+}
+
+const SED_LONG = new Set(["--quiet", "--silent", "--regexp-extended", "--separate", "--unbuffered", "--null-data", "--zero-terminated", "--posix", "--debug", "--sandbox", "--follow-symlinks", "--binary", "--help", "--version"]);
+/** sed: 아는 옵션만 (-i·--in-place 파일 고치기, -f 스크립트 파일, 줄인 이름 --i 등은 아님. 스크립트 뒤에 온 옵션도 봄)
+ *  스크립트는 -e·--expression 들, 없으면 첫 낱말 (-e 마다 따로 읽지만 이어 붙여 봐도 같은 결과) */
+function sedReadOnly(args: string[]): boolean {
+	const scripts: string[] = [];
+	const rest: string[] = [];
+	let e = false;
+	for (let k = 0; k < args.length; k++) {
+		const a = args[k];
+		if (a === "--") {
+			rest.push(...args.slice(k + 1));
+			break;
+		}
+		if (a.startsWith("--")) {
+			const eq = a.indexOf("=");
+			const name = eq < 0 ? a : a.slice(0, eq);
+			if (name === "--expression" || name === "--line-length") {
+				const v = eq < 0 ? (args[++k] ?? "") : a.slice(eq + 1);
+				if (name === "--expression") {
+					scripts.push(v);
+					e = true;
+				}
+			} else if (eq >= 0 || !SED_LONG.has(name)) return false;
+			continue;
+		}
+		if (a.length > 1 && a.startsWith("-")) {
+			for (let j = 1; j < a.length; j++) {
+				if (a[j] === "e" || a[j] === "l") {
+					const v = j + 1 < a.length ? a.slice(j + 1) : (args[++k] ?? "");
+					if (a[j] === "e") {
+						scripts.push(v);
+						e = true;
+					}
+					break;
+				}
+				if (!"nrEsuzb".includes(a[j])) return false; // -i 파일 고치기, -f 스크립트 파일, 모르는 옵션
+			}
+			continue;
+		}
+		rest.push(a);
+	}
+	if (!e && rest.length) scripts.push(rest[0]);
+	return sedScriptReadOnly(scripts.join("\n"));
+}
 
 /** 셸 명령이 읽기만 하는지. 읽기만 하면 null, 아니면 문제가 된 부분 (계획 모드·확인 모드에서 씀) */
 export function readOnlyProblem(command: string): string | null {
@@ -166,20 +327,27 @@ function wordsProblem(words: string[]): string | null {
 	const args = rest.slice(1);
 	const pos = args.filter((a) => !a.startsWith("-") && !a.startsWith("/dev/")); // 2>/dev/null 의 대상도 낱말로 들어옴
 	const what = rest.join(" ").slice(0, 80);
-	if (isVersion(args) && (VERSION_ONLY.has(name) || PY.has(name))) return null;
+	if (isVersion(name, args) && (VERSION_ONLY.has(name) || PY.has(name))) return null;
 	if (PY.has(name) && args[0] === "-m" && /^pip3?$/.test(args[1] || "")) return SPECIAL.pip(args.slice(2)) ? null : what;
 	const special = SPECIAL[name];
 	if (special) return special(args) ? null : what;
 	if (!READ.has(name)) return what;
 	if (WRITE_FLAG[name] && args.some((a) => WRITE_FLAG[name].test(a))) return what;
 	switch (name) {
-		case "sed": // w 파일, e 명령, s///w 파일 은 씀·실행
-			if (pos.some((a) => /(^|[;{}\s])[wWe]\s+\S|\/[gpiImM0-9]*w\s+\S/.test(a))) return what;
+		case "sed":
+			if (!sedReadOnly(args)) return what;
 			break;
 		case "awk":
-		case "gawk": // system(), print > 파일, "명령" | getline, print | "명령"
-			if (args.some((a) => /system\s*\(|(?<!\|)\|(?!\|)\s*["\w$]|\|&|(print|printf)\b[^;}]*>/.test(a))) return what;
+		case "gawk": {
+			// 옵션은 -F 구분자·-v 변수만 (-f 프로그램 파일, -i·-l 불러오기, -o·-p·-d 파일로 쓰기 등은 아님)
+			for (let k = 0; k < args.length && args[k].startsWith("-") && args[k] !== "-" && args[k] !== "--"; k++) {
+				if (!/^(-[Fv]|--version$)/.test(args[k])) return what;
+				if (args[k].length === 2) k++; // 값을 다음 낱말로 받음
+			}
+			// 프로그램: system(), print > 파일, "명령" | getline, print | "명령", @include·@load (gawk 의 inplace 등)
+			if (args.some((a) => /system\s*\(|(?<!\|)\|(?!\|)\s*["\w$]|\|&|(print|printf)\b[^;}]*>|@(include|load)\b/.test(a))) return what;
 			break;
+		}
 		case "find": {
 			for (let k = 0; k < args.length; k++) {
 				const a = args[k];
@@ -203,6 +371,9 @@ function wordsProblem(words: string[]): string | null {
 		case "tar": {
 			const mode = args.find((a) => /^-?[a-zA-Z]+$/.test(a)) || "";
 			if (!(/t/.test(mode) || args.includes("--list")) || /[xcruA]/.test(mode.replace(/^-/, "")) || args.some((a) => /^--(extract|get|create|append|update|delete)/.test(a))) return what;
+			// 다른 프로그램 실행·파일 쓰기: -I(압축 프로그램)·-F(스크립트) 와 TAR_RUN (긴 이름은 앞부분만 써도 됨: --use=x)
+			if (args.some((a, k) => (/^-[a-zA-Z]/.test(a) || (k === 0 && /^[a-zA-Z]+$/.test(a))) && /[IF]/.test(a))) return what;
+			if (args.some((a) => a.startsWith("--") && a.length > 2 && TAR_RUN.some((o) => o.startsWith(a.slice(2).split("=")[0])))) return what;
 			break;
 		}
 		case "unzip":
@@ -324,7 +495,8 @@ export default function (pi: ExtensionAPI) {
 		const all = done === steps.length;
 		const head = `── 계획 진행 ${done}/${steps.length}${all ? " · 모두 완료 (다음 요청 때 닫힘)" : ""} ──`;
 		const shownSteps = steps.slice(0, 12).map((s, i) => ` [${s.done ? "x" : " "}] ${i + 1}. ${s.text}`);
-		ctx.ui.setWidget("pi-kit-plan", [head, ...shownSteps, ...(steps.length > 12 ? [`     … 외 ${steps.length - 12}단계`] : [])]);
+		// 한 글로 넘김: pi 화면은 목록의 항목을 10개까지만 보여 주고 나머지는 "... (widget truncated)" 로 자름 (줄바꿈은 그대로 보임)
+		ctx.ui.setWidget("pi-kit-plan", [[head, ...shownSteps, ...(steps.length > 12 ? [`     … 외 ${steps.length - 12}단계`] : [])].join("\n")]);
 	};
 	const clearSteps = (ctx: any) => {
 		if (!steps.length) return;
@@ -434,7 +606,12 @@ export default function (pi: ExtensionAPI) {
 				setMode(ctx, "plan");
 				if (!req) ctx.ui.notify("계획 모드: 파일을 바꾸지 않고 계획부터 세웁니다. 요청을 적어 보내세요 (/plan 으로 끄기)", "info");
 			}
-			if (req) setTimeout(() => pi.sendUserMessage(req), 0);
+			if (!req) return;
+			// / 로 시작하는 명령·템플릿은 대신 보내면 펼쳐지지 않고 계획 안내도 붙지 않음: 사용자가 직접 입력하게
+			if (req.startsWith("/")) return ctx.ui.notify(`계획 모드입니다. / 로 시작하는 명령은 대신 보낼 수 없으니 지금 직접 입력해 주세요: ${req}`, "info");
+			// 다른 작업 중이면 그 작업이 끝난 뒤 보내지도록 줄 세움 (그냥 보내면 "이미 처리 중" 오류로 요청이 사라짐. 쉬고 있으면 바로 보냄)
+			if (!ctx.isIdle()) ctx.ui.notify("지금 작업이 끝나면 이 요청을 계획 모드로 이어서 보냅니다", "info");
+			setTimeout(() => pi.sendUserMessage(req, { deliverAs: "followUp" }), 0);
 		},
 	});
 

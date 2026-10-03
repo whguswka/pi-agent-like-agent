@@ -6,7 +6,10 @@
  * 중계 서버가 브라우저의 JupyterLab 탭을 통해 Jupyter 터미널('pibridge')과 파일 기능을 쓴다.
  * 플래그가 없으면 아무것도 바꾸지 않는다 (로컬 Git Bash 에서 실행).
  * 실행 중에도 바꿀 수 있다: /jupyter <노트북 폴더> (또는 /web), /local [PC 폴더]. 같은 세션에서 실행 위치만 바뀐다.
- * jupyter 모드에서도 pi 설정·스킬 파일(PC 의 ~/.pi/agent 와 스킬 폴더)은 PC 에서 읽는다.
+ * 바꾼 위치는 /new, /resume, /reload, /kit share 뒤에도 이어진다 (/resume 으로 다른 폴더의 세션을 고르면 PC 쪽은 그 폴더).
+ * jupyter 모드의 경로: 상대 경로는 노트북 작업 폴더, ~ 는 노트북 홈 기준. C:/... 나 //서버/... 같은 PC 경로는 PC 파일이고,
+ * pi 설정·스킬 파일(PC 의 ~/.pi/agent 와 스킬 폴더)도 PC 에서 읽고 쓴다 (노트북 형식 ~/.pi/agent/... 로 써도 PC).
+ * pi --jupyter 로 시작하면 /upload·/download 의 PC 쪽 기준과 /local 의 기본 폴더는 pi 를 실행한 폴더(실행기가 PI_START_DIR 로 알려 줌).
  *
  * 예) pi --jupyter work/myproject      (노트북 홈 기준 상대 경로)
  *     pi --jupyter '~/work/myproject'
@@ -27,6 +30,7 @@ import {
 	type ReadOperations,
 	type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
+import { cleanPath, isPcAbsolute } from "./lib/paths.ts";
 
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
 // 이 pi 의 세션 값 (copilot-session.ts 와 같은 값). 중계 서버에서 max_tabs 가 2 이상이면 창마다 노트북 터미널도 따로 씀
@@ -232,26 +236,49 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	const startDir = process.cwd(); // pi 를 시작한 PC 폴더 (세션 기록 기준, 노트북 경로 바꾸기의 기준)
+	// 사용자가 있던 PC 폴더: pi --jupyter 로 시작하면 실행기가 세션용 폴더(~/.pi/jupyter-work/...)로 옮기므로 실행기가 알려 준 곳
+	//  (/upload·/download 의 PC 쪽 기준, /local 로 돌아갈 곳)
+	const userDir = (() => {
+		const d = process.env.PI_START_DIR;
+		try {
+			return d && statSync(d).isDirectory() ? resolve(d) : startDir;
+		} catch {
+			return startDir;
+		}
+	})();
 	const makeLocal = (dir: string) => ({
 		read: createReadTool(dir),
 		write: createWriteTool(dir),
 		edit: createEditTool(dir),
 		bash: createBashTool(dir),
 	});
-	let localDir = startDir; // PC 에서 실행할 때의 작업 폴더 (/local <폴더> 로 바꿈)
+	// 지금 위치는 확장을 다시 불러와도(/new, /resume, /reload, /kit share) 이어 간다
+	const G = globalThis as any;
+	const saved: { arg: string | null; dir: string; last: string } | undefined = G.__piJupyterLoc;
+	let localDir = saved?.dir || userDir; // PC 에서 실행할 때의 작업 폴더 (/local <폴더> 로 바꿈)
 	let local = makeLocal(localDir);
 	let localAgents = ""; // /local 로 고른 다른 PC 폴더의 AGENTS.md
 
 	let remote: Remote | null = null; // --jupyter 로 시작했으면 연결 실패여도 null 이 아님 (PC 에서 대신 실행하지 않도록)
 	let remoteAgents = ""; // 노트북 작업 폴더의 AGENTS.md
-	let lastArg = ""; // 마지막으로 쓴 노트북 폴더 (/jupyter 만 치면 다시 그곳)
-	// 지금 작업 폴더를 다른 확장(guard.ts: 작업 폴더 밖 파일 쓰기 확인)에 알린다
+	let lastArg = saved?.last || ""; // 마지막으로 쓴 노트북 폴더 (/jupyter 만 치면 다시 그곳)
+	let uiCtx: any = null; // 상태 줄을 고칠 때 쓰는 화면 (session_start·명령에서 받음)
+	// 지금 작업 폴더를 다른 확장(guard.ts, @파일, /undo 등)에 알리고, 다시 불러올 때를 위해 기억한다
 	const publish = () => {
 		(globalThis as any).__piWorkDir = remote
 			? { remote: true, cwd: remote.cwd || "/", home: remote.home }
 			: { remote: false, cwd: localDir };
+		G.__piJupyterLoc = { arg: remote ? remote.arg : null, dir: localDir, last: lastArg };
 	};
-	publish();
+	const loadLocalAgents = () => {
+		localAgents = "";
+		if (slash(localDir) === slash(startDir)) return; // 시작 폴더의 AGENTS.md 는 pi 가 직접 읽음
+		try {
+			localAgents = readFileSync(join(localDir, "AGENTS.md"), "utf8");
+		} catch {}
+	};
+	loadLocalAgents();
+	if (!saved) publish(); // 다시 불러온 경우는 기억해 둔 위치를 session_start 에서 이어 감 (여기서 덮어쓰지 않음)
 
 	// jupyter 모드에서도 PC 에서 읽는 곳: pi 설정 폴더와 스킬 폴더 (스킬 내용은 모델이 읽기 도구로 읽으므로)
 	const agentDir = slash(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"));
@@ -277,9 +304,30 @@ export default function (pi: ExtensionAPI) {
 			remote.home = info.home;
 			remote.root = info.root;
 			remote.cwd = remoteDir(remote.arg, info.home);
+			// 처음 연결에 실패했다가 도구를 쓸 때 붙은 경우에도 다른 확장(@파일, /undo, guard)과 상태 줄이 이 폴더를 보도록
+			publish();
+			if (uiCtx?.hasUI) uiCtx.ui.setStatus("jupyter", uiCtx.ui.theme.fg("accent", `Jupyter: ${remote.cwd}`));
+			const r = remote;
+			fsOp("read", `${r.cwd}/AGENTS.md`)
+				.then((d) => {
+					if (remote === r) remoteAgents = Buffer.from(d.data || "", "base64").toString("utf8");
+				})
+				.catch(() => {});
 		}
 		return remote;
 	}
+
+	// jupyter 모드에서 모델이 준 경로: 노트북 절대 경로로 바꿔 넘긴다 (pi 가 PC 기준으로 풀면 ../ 나 ~ 가 엉뚱한 곳이 됨).
+	//  PC 경로(C:/..., //서버/...)는 PC 파일. 쓰기·고치기는 노트북 형식의 pi 설정 폴더(~/.pi/agent/...)도 PC 로 (스킬 만들기 등)
+	const where = (params: any, r: Remote, writing: boolean): { pc: boolean; params: any } => {
+		const p = cleanPath(params?.path).trim();
+		if (!p) return { pc: false, params };
+		if (isPcAbsolute(p.replace(/\\/g, "/"))) return { pc: true, params };
+		const abs = nbPath(p, r.cwd, r.home);
+		const ra = `${r.home}/.pi/agent`;
+		if (writing && under(abs, ra)) return { pc: true, params: { ...params, path: agentDir + abs.slice(ra.length) } };
+		return { pc: false, params: { ...params, path: abs } };
+	};
 
 	const mapper = async () => makeMapper(startDir, await ready());
 
@@ -287,8 +335,11 @@ export default function (pi: ExtensionAPI) {
 		...local.read,
 		async execute(id, params, signal, onUpdate, _ctx) {
 			if (!remote) return local.read.execute(id, params, signal, onUpdate);
-			const tool = createReadTool(startDir, { operations: readOps(await mapper(), pcResolver) });
-			return tool.execute(id, params, signal, onUpdate);
+			const r = await ready();
+			const w = where(params, r, false);
+			if (w.pc) return local.read.execute(id, w.params, signal, onUpdate);
+			const tool = createReadTool(startDir, { operations: readOps(makeMapper(startDir, r), pcResolver) });
+			return tool.execute(id, w.params, signal, onUpdate);
 		},
 	});
 
@@ -296,8 +347,11 @@ export default function (pi: ExtensionAPI) {
 		...local.write,
 		async execute(id, params, signal, onUpdate, _ctx) {
 			if (!remote) return local.write.execute(id, params, signal, onUpdate);
-			const tool = createWriteTool(startDir, { operations: writeOps(await mapper()) });
-			return tool.execute(id, params, signal, onUpdate);
+			const r = await ready();
+			const w = where(params, r, true);
+			if (w.pc) return local.write.execute(id, w.params, signal, onUpdate);
+			const tool = createWriteTool(startDir, { operations: writeOps(makeMapper(startDir, r)) });
+			return tool.execute(id, w.params, signal, onUpdate);
 		},
 	});
 
@@ -305,8 +359,11 @@ export default function (pi: ExtensionAPI) {
 		...local.edit,
 		async execute(id, params, signal, onUpdate, _ctx) {
 			if (!remote) return local.edit.execute(id, params, signal, onUpdate);
-			const tool = createEditTool(startDir, { operations: editOps(await mapper()) });
-			return tool.execute(id, params, signal, onUpdate);
+			const r = await ready();
+			const w = where(params, r, true);
+			if (w.pc) return local.edit.execute(id, w.params, signal, onUpdate);
+			const tool = createEditTool(startDir, { operations: editOps(makeMapper(startDir, r)) });
+			return tool.execute(id, w.params, signal, onUpdate);
 		},
 	});
 
@@ -319,8 +376,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	/** 노트북 폴더로 연결 (없으면 만듦). 실패하면 false */
-	async function connect(arg: string, ctx: any): Promise<boolean> {
+	/** 노트북 폴더로 연결 (없으면 만듦). 실패하면 false. quiet: 다시 불러올 때처럼 알림 없이 */
+	async function connect(arg: string, ctx: any, quiet = false): Promise<boolean> {
 		remote = { arg, cwd: "", home: "", root: "" };
 		try {
 			const r = await ready();
@@ -338,23 +395,47 @@ export default function (pi: ExtensionAPI) {
 			lastArg = arg;
 			ctx.ui.setStatus("jupyter", ctx.ui.theme.fg("accent", `Jupyter: ${r.cwd}`));
 			publish();
-			ctx.ui.notify(`jupyter 모드: 명령과 파일 작업을 노트북의 ${r.cwd} 에서 실행합니다 (/local 로 PC 로 돌아감)`, "info");
+			if (!quiet) ctx.ui.notify(`jupyter 모드: 명령과 파일 작업을 노트북의 ${r.cwd} 에서 실행합니다 (/local 로 PC 로 돌아감)`, "info");
 			return true;
 		} catch (e) {
 			ctx.ui.notify(`jupyter 모드 연결 실패: ${(e as Error).message}`, "error");
 			return false;
 		}
 	}
+	/** 연결에 실패해도 jupyter 모드는 유지 (PC 에서 대신 실행하지 않음. /local 로 직접 바꿀 수 있음) */
+	const keepRemote = (arg: string, ctx: any) => {
+		remote = { arg, cwd: "", home: "", root: "" };
+		publish();
+		ctx.ui.setStatus("jupyter", ctx.ui.theme.fg("error", "Jupyter: 연결 안 됨"));
+	};
+	/** PC 에서 실행 (dir 폴더) */
+	const setLocal = (dir: string) => {
+		remote = null;
+		remoteAgents = "";
+		localDir = dir;
+		local = makeLocal(dir);
+		loadLocalAgents();
+		publish();
+	};
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event: any, ctx) => {
+		uiCtx = ctx;
+		const reason = event?.reason || "startup";
+		const prev = G.__piJupyterLoc as { arg: string | null; dir: string } | undefined;
+		if (reason !== "startup" && prev) {
+			// 확장을 다시 불러온 경우(/new, /resume, /reload, /kit share): 지금 위치를 그대로 이어 간다
+			if (prev.arg) {
+				if (!(await connect(prev.arg, ctx, true))) keepRemote(prev.arg, ctx);
+				return;
+			}
+			// /resume 으로 다른 폴더의 세션을 고르면 PC 작업 폴더도 그 세션의 폴더로
+			const sessionDir = ctx.cwd && slash(ctx.cwd) !== slash(startDir) ? ctx.cwd : "";
+			setLocal(reason === "resume" && sessionDir ? sessionDir : prev.dir);
+			return;
+		}
 		const arg = (pi.getFlag("jupyter") as string | undefined) || process.env.PI_JUPYTER_DIR;
 		if (!arg) return;
-		if (!(await connect(arg, ctx))) {
-			// --jupyter 로 시작했으면 연결에 실패해도 PC 에서 대신 실행하지 않는다 (/local 로 직접 바꿀 수 있음)
-			remote = { arg, cwd: "", home: "", root: "" };
-			publish();
-			ctx.ui.setStatus("jupyter", ctx.ui.theme.fg("error", "Jupyter: 연결 안 됨"));
-		}
+		if (!(await connect(arg, ctx))) keepRemote(arg, ctx);
 	});
 
 	// 실행 중 전환: /jupyter <노트북 폴더> (= /web), /local [PC 폴더]
@@ -374,9 +455,9 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("jupyter", { description: jupyterHelp, handler: toJupyter });
 	pi.registerCommand("web", { description: `/jupyter 와 같음: ${jupyterHelp}`, handler: toJupyter });
 	pi.registerCommand("local", {
-		description: "명령·파일 작업을 다시 이 PC(Git Bash)에서 실행 (값: PC 폴더, 생략하면 pi 를 시작한 폴더)",
+		description: "명령·파일 작업을 다시 이 PC(Git Bash)에서 실행 (값: PC 폴더, 생략하면 pi 를 실행한 폴더)",
 		handler: async (args, ctx) => {
-			const dir = (args || "").trim() ? pcDir(args as string, startDir) : startDir;
+			const dir = (args || "").trim() ? pcDir(args as string, userDir) : userDir;
 			let ok = false;
 			try {
 				ok = statSync(dir).isDirectory();
@@ -385,17 +466,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`PC 에 그 폴더가 없습니다: ${dir}`, "error");
 				return;
 			}
-			remote = null;
-			remoteAgents = "";
-			localDir = dir;
-			local = makeLocal(dir);
-			localAgents = "";
-			publish();
-			if (slash(dir) !== slash(startDir)) {
-				try {
-					localAgents = readFileSync(join(dir, "AGENTS.md"), "utf8");
-				} catch {}
-			}
+			setLocal(dir);
 			// --jupyter 로 시작할 때 실행기가 넣은 설정(노트북 경로를 Windows 경로로 바꾸지 않게)은 PC 명령에는 맞지 않음
 			delete process.env.MSYS_NO_PATHCONV;
 			delete process.env.MSYS2_ARG_CONV_EXCL;
@@ -608,7 +679,13 @@ export default function (pi: ExtensionAPI) {
 					}
 					return;
 				}
-				const size = typeof st.size === "number" ? st.size : 0;
+				// 노트북 홈 밖·숨김 경로는 크기를 알려 주지 않음 -> 노트북에서 직접 확인 (모르는 채로 받으면 크기 제한이 안 걸림)
+				let size = typeof st.size === "number" ? st.size : Number.NaN;
+				if (!Number.isFinite(size)) {
+					const x = await nbRun(`stat -c %s -- ${shq(from)}`, nb.home);
+					size = x.code === 0 ? Number.parseInt(x.out.trim(), 10) : Number.NaN;
+					if (!Number.isFinite(size)) throw new Error(`노트북에서 파일 크기를 확인하지 못했습니다: ${from}`);
+				}
 				if (size > MAX_TRANSFER) return ctx.ui.notify(`${sizeText(MAX_TRANSFER)} 까지만 받을 수 있습니다 (${sizeText(size)}). 더 큰 파일은 JupyterLab 화면에서 내려받으세요`, "error");
 				let target = dst ? pcDir(dst, localDir) : join(localDir, posix.basename(from));
 				let isDir = false;

@@ -2,11 +2,11 @@
  * 셸 명령 분석 (pi 확장끼리 함께 씀: guard.ts 위험 명령 확인, modes.ts 계획 모드의 읽기 전용 판단)
  * 이 폴더(lib)에는 index.ts 가 없으므로 pi 가 확장으로 불러오지 않는다.
  *
- * 따옴표·이스케이프·주석·연산자(; && || | 괄호)·$(...)·`...`·heredoc 을 나눠
+ * 따옴표·이스케이프·주석·연산자(; && || | 괄호)·$(...)·`...`·$((계산))·heredoc 을 나눠
  * 파이프라인(단순 명령 목록), 안에서 실행되는 글, heredoc 본문, 출력 리다이렉트를 돌려준다.
  */
 
-/** 단순 명령: 낱말들과 출력 리다이렉트 대상(> 파일, >> 파일, &> 파일. /dev/null 은 뺌) */
+/** 단순 명령: 낱말들과 출력 리다이렉트 대상(> 파일, >> 파일, &> 파일, >& 파일. /dev/null 은 뺌) */
 export type Simple = { words: string[]; redirects: string[] };
 export type Parsed = { pipelines: Simple[][]; nested: string[]; heredocs: { words: string[]; body: string; pipe: number }[] };
 
@@ -19,12 +19,16 @@ export function parseShell(src: string): Parsed {
 	let has = false; // 지금 낱말이 시작됐는지 (빈 따옴표 "" 도 낱말)
 	let redirects: string[] = [];
 	let redirNext = false; // 다음 낱말이 출력 리다이렉트 대상
+	let dupNext = false; // 다음 낱말이 >& 뒤: 숫자·- 면 다른 출력으로 보내기(2>&1, >&-), 아니면 파일 (bash 에서 >&파일 은 &>파일 과 같음)
 	const pending: { delim: string; strip: boolean; words: string[] }[] = [];
 	const endWord = () => {
 		if (has) {
-			words.push(cur);
-			if (redirNext && cur !== "/dev/null") redirects.push(cur);
+			if (!(dupNext && /^(\d+-?|-)$/.test(cur))) {
+				words.push(cur);
+				if ((redirNext || dupNext) && cur !== "/dev/null") redirects.push(cur);
+			}
 			redirNext = false;
+			dupNext = false;
 		}
 		cur = "";
 		has = false;
@@ -59,6 +63,24 @@ export function parseShell(src: string): Parsed {
 		}
 		return [src.slice(i, j), j];
 	};
+	/** i 의 $ 가 $(( 계산 )) 이면 끝 ) 위치, 아니면 -1. 계산은 명령이 아니므로 안의 $(...) 만 꺼낸다.
+	 *  bash 처럼 안쪽 ( 의 짝이 바로 끝 ) 앞일 때만 계산 ($((a)+(b)) 는 $( (a)+(b) ) 명령). 따옴표·\·` 가 있으면 명령으로 봄 (놓치지 않게) */
+	const arith = (i: number): number => {
+		if (src[i + 2] !== "(") return -1;
+		const [inner, end] = balanced(i + 2);
+		if (/['"\\`]/.test(inner) || balanced(i + 3)[1] !== end - 1) return -1;
+		for (let j = i + 3; j < end - 1; j++) {
+			if (src[j] !== "$" || src[j + 1] !== "(") continue;
+			const e = arith(j);
+			if (e >= 0) j = e;
+			else {
+				const [cmd, ce] = balanced(j + 2);
+				out.nested.push(cmd);
+				j = ce;
+			}
+		}
+		return end;
+	};
 	let i = 0;
 	while (i < src.length) {
 		const c = src[i];
@@ -86,6 +108,12 @@ export function parseShell(src: string): Parsed {
 					cur += src[j + 1] ?? "";
 					j++;
 				} else if (src[j] === "$" && src[j + 1] === "(") {
+					const a = arith(j);
+					if (a >= 0) {
+						cur += "$((...))";
+						j = a;
+						continue;
+					}
 					const [inner, end] = balanced(j + 2);
 					out.nested.push(inner);
 					cur += "$(...)";
@@ -102,6 +130,13 @@ export function parseShell(src: string): Parsed {
 			continue;
 		}
 		if (c === "$" && src[i + 1] === "(") {
+			const a = arith(i);
+			if (a >= 0) {
+				cur += "$((...))"; // 계산: 낱말 (명령 아님)
+				has = true;
+				i = a + 1;
+				continue;
+			}
 			const [inner, end] = balanced(i + 2);
 			out.nested.push(inner);
 			cur += "$(...)";
@@ -167,7 +202,8 @@ export function parseShell(src: string): Parsed {
 			if (has && /^\d+$/.test(cur)) [cur, has] = ["", false]; // 2>파일 의 2 는 출력 번호 (낱말 아님)
 			endWord();
 			if (src[i + 1] === "&") {
-				i += 2; // >&2 : 다른 출력으로 보내기 (파일 아님)
+				i += 2; // >&2 : 다른 출력으로 보내기, >&파일 : 파일로 (다음 낱말을 보고 정함)
+				dupNext = true;
 				continue;
 			}
 			i += src[i + 1] === ">" || src[i + 1] === "|" ? 2 : 1;

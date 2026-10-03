@@ -8,6 +8,7 @@
 import { promises as fsp } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, posix, resolve } from "node:path";
+import { cleanPath, isPcAbsolute, windowsDrivePath } from "./paths.ts";
 
 export const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
 export const SESSION: string = ((globalThis as any).__piSession ||=
@@ -61,19 +62,24 @@ export type WorkDir = { remote: boolean; cwd: string; home?: string };
 export const workDir = (): WorkDir => (globalThis as any).__piWorkDir || { remote: false, cwd: process.cwd() };
 export type Target = { abs: string; remote: boolean };
 const slash = (p: string) => p.split("\\").join("/");
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR || `${homedir()}/.pi/agent`;
 
-/** 도구가 받은 경로 -> 실제 위치 (PC 또는 노트북). 상대 경로는 지금 작업 폴더 기준 */
+/** 도구가 받은 경로 -> 실제 위치 (PC 또는 노트북). 상대 경로는 지금 작업 폴더 기준.
+ *  pi 의 도구와 같게 정리한다 (lib/paths.ts: 맨 앞 @, /c/... 등). jupyter 모드라도 C:/... 나 //서버/... 는 PC 파일 */
 export function target(path: string, wd: WorkDir = workDir()): Target {
-	let s = slash(String(path || "").trim());
-	if (wd.remote) {
+	let s = slash(cleanPath(path).trim());
+	if (wd.remote && !isPcAbsolute(s)) {
 		const home = wd.home || "/home/jovyan";
 		if (s === "~" || s.startsWith("~/")) s = home + s.slice(1);
-		return { abs: posix.resolve(wd.cwd, s), remote: true };
+		const abs = posix.resolve(wd.cwd, s);
+		// 노트북 형식으로 쓴 pi 설정 폴더(~/.pi/agent/...)는 PC 의 것 (jupyter.ts 도 쓰기를 PC 로 보냄)
+		const ra = `${home}/.pi/agent`;
+		if (abs === ra || abs.startsWith(ra + "/")) return { abs: slash(AGENT_DIR) + abs.slice(ra.length), remote: false };
+		return { abs, remote: true };
 	}
+	s = windowsDrivePath(s);
 	if (s === "~" || s.startsWith("~/")) s = slash(homedir()) + s.slice(1);
-	const m = s.match(/^\/([a-zA-Z])(\/.*)?$/); // Git Bash 형식 /c/...
-	if (m && process.platform === "win32") s = `${m[1].toUpperCase()}:${m[2] || "/"}`;
-	return { abs: slash(resolve(wd.cwd, s)), remote: false };
+	return { abs: slash(resolve(wd.remote ? homedir() : wd.cwd, s)), remote: false };
 }
 
 /** 파일 내용 (없으면 null) */
@@ -105,11 +111,23 @@ export async function readHead(t: Target, n: number): Promise<{ data: Buffer; si
 			throw e;
 		}
 		if (st.kind === "directory") return null;
-		const size = Number(st.size) || 0;
+		// 노트북 홈 밖·숨김 경로는 크기를 알려 주지 않음 -> 노트북에서 직접 확인 (모르는 채로 통째로 읽으면 큰 파일에서 멈춤)
+		let size = typeof st.size === "number" ? st.size : Number.NaN;
+		if (!Number.isFinite(size)) {
+			const r = await nbRun(`stat -c %s -- ${shq(t.abs)}`, workDir().home || "/");
+			size = r.code === 0 ? Number.parseInt(r.out.trim(), 10) : Number.NaN;
+			if (!Number.isFinite(size)) return null;
+		}
 		if (size > 256 * 1024) {
-			// 큰 파일은 앞부분만 (노트북 홈 안, 숨김이 아닌 경로만 됨)
-			const r = await call("/jupyter/fs", { op: "read_range", path: t.abs, start: 0, end: n - 1 });
-			return { data: Buffer.from(r.data || "", "base64"), size: Number(r.total) || size };
+			// 큰 파일은 앞부분만: 나눠 받기(노트북 홈 안, 숨김이 아닌 경로), 안 되면 노트북에서 head 로
+			try {
+				const r = await call("/jupyter/fs", { op: "read_range", path: t.abs, start: 0, end: n - 1 });
+				return { data: Buffer.from(r.data || "", "base64"), size: Number(r.total) || size };
+			} catch {
+				const r = await nbRun(`head -c ${Math.floor(n)} -- ${shq(t.abs)} | base64 -w0`, workDir().home || "/");
+				if (r.code !== 0) return null;
+				return { data: Buffer.from(r.out.trim(), "base64"), size };
+			}
 		}
 		const all = await readTarget(t);
 		return all && { data: all.subarray(0, n), size: all.length };
