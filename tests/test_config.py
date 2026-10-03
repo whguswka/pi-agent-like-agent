@@ -67,6 +67,38 @@ except bridge.ConfigError:
 write(user, "")
 check("빈 파일은 괜찮음", bridge.load_config(repo, user)["_user"]["keys"] == [])
 
+# 메모장 등에서 ANSI(cp949)로 저장한 설정 파일: 프로그램이 죽지 않고(예전: UnicodeDecodeError) UTF-8 로 저장하라고 알림
+with open(user, "wb") as f:
+    f.write('{"copilot_model": "자동"}'.encode("cp949"))
+try:
+    bridge.load_config(repo, user)
+    check("UTF-8 이 아닌 설정 파일은 알림", False, "오류가 나지 않음")
+except bridge.ConfigError as e:
+    check("UTF-8 이 아닌 설정 파일(cp949)은 알림 + UTF-8 로 저장 안내", user in str(e) and "UTF-8 로" in str(e), e)
+except Exception as e:  # noqa: BLE001  (예전: UnicodeDecodeError 로 멈춤)
+    check("UTF-8 이 아닌 설정 파일(cp949)은 알림 + UTF-8 로 저장 안내", False, repr(e))
+
+# diag.py --report: 내 설정 파일이 틀려도 저장소 bridge.json 값으로 요약하고 오류를 함께 알림 (예전: 기본값만 보여 줌)
+#  (요약 함수는 브라우저·중계 서버에 연결하므로 바꿔 끼워서 받은 설정만 확인)
+import diag  # noqa: E402
+
+_got = {}
+_real = (diag.report, sys.argv)
+diag.report = lambda c: _got.update(cfg=c) or 0
+sys.argv = ["diag.py", "--report", "--config", repo]
+os.environ["PI_COPILOT_USER_CONFIG"] = user
+try:
+    rc = diag.main()
+except Exception as e:  # noqa: BLE001
+    rc = repr(e)
+finally:
+    diag.report, sys.argv = _real
+    del os.environ["PI_COPILOT_USER_CONFIG"]
+cfg = _got.get("cfg") or {}
+check("diag --report: 내 설정 파일 오류여도 저장소 설정 값 + 오류 알림", rc == 0 and cfg.get("copilot_models") == {"a": "A", "b": "B"}
+      and "UTF-8" in cfg.get("_error", ""), cfg)
+write(user, "")
+
 agent = os.path.join(tmp, "agent")
 os.makedirs(agent)
 write(os.path.join(agent, "bridge.json"), {"cdp_port": 9333})
@@ -86,6 +118,11 @@ write(os.path.join(agent, "bridge.json"), '{"browser": "edge"')
 out = subprocess.run([sys.executable, os.path.join(ROOT, "copilot", "bridge.py"), "--shell-config"], capture_output=True)
 check("--shell-config: 형식 오류면 2 와 안내", out.returncode == 2 and "설정 파일 오류" in out.stderr.decode("utf-8"),
       (out.returncode, out.stderr.decode("utf-8", "replace")))
+with open(os.path.join(agent, "bridge.json"), "wb") as f:
+    f.write('{"browser": "edge", "copilot_model": "자동"}'.encode("cp949"))
+out = subprocess.run([sys.executable, os.path.join(ROOT, "copilot", "bridge.py"), "--shell-config"], capture_output=True)
+check("--shell-config: UTF-8 이 아닌 설정 파일이면 2 와 안내 (예전: 오류 추적이 나며 1)", out.returncode == 2
+      and "UTF-8 로" in out.stderr.decode("utf-8"), (out.returncode, out.stderr.decode("utf-8", "replace")))
 
 # bin/kit-config.sh: pi_cfg_load + pi_cfg (Git Bash / Linux bash)
 bash = os.environ.get("PI_TEST_BASH") or shutil.which("bash")

@@ -905,6 +905,11 @@ class Copilot:
             if url != self.thread_url:
                 raise ThreadReset("Copilot 대화창이 바뀌었습니다 ({} -> {})".format(self.thread_url, url))
 
+    def marker_url(self, marker):
+        """보낸 메시지(marker)가 지금 화면에 있으면 화면의 대화 주소, 없으면 None (둘을 한 번에 읽음)
+        답을 기다리는 동안 사용자가 전용 창에서 자기 대화를 눌렀으면 None -> 그 대화를 중계 서버가 만든 대화로 기록하지 않게"""
+        return self.js("window.__piBridge.findMarker(%s) ? location.origin + location.pathname : null" % self.q(marker))
+
     # ---- 화면 조작: 모델 선택, 끝난 대화 삭제 (메뉴는 실제 마우스 동작으로 연다) ----
 
     def ui(self, expr, timeout=30):
@@ -1133,6 +1138,9 @@ def read_config_file(path):
             text = f.read()
     except FileNotFoundError:
         return None
+    except UnicodeDecodeError:  # 메모장 등에서 ANSI(cp949)로 저장한 경우 (OSError 가 아니므로 따로)
+        raise ConfigError("{} 를 UTF-8 로 읽을 수 없습니다 (ANSI 등 다른 인코딩으로 저장된 것 같습니다). "
+                          "메모장의 '다른 이름으로 저장'에서 인코딩을 UTF-8 로 골라 저장해 주세요".format(path))
     except OSError as e:
         raise ConfigError("{} 를 읽을 수 없습니다: {}".format(path, e))
     try:

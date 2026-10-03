@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-02.15"
+RELAY_VERSION = "2026-10-03.1"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -128,6 +128,7 @@ PREAMBLE = """[{tag}]
 @tool write path=<파일 경로>
 <파일 전체 내용>
 ```
+   파일 내용에 ``` 가 들어 있으면 바깥 블록은 ````text 로 열고 ```` 로 닫아 주세요 (backtick 4개).
 4. 요청이 끝났으면 코드 블록 없이 결과를 정리해서 답해 주세요.
 - JSON 은 올바른 형식이어야 합니다 (문자열 안 줄바꿈은 \\n, 따옴표는 \\").
 - 한 번에 블록 하나만 써 주세요.{multi_read}
@@ -166,15 +167,21 @@ LOOP_STOP = "같은 작업({name})이 계속 반복되어 여기서 멈췄습니
 
 
 def repeated_calls(messages, call):
-    """새 도구 호출과 똑같은 호출이 바로 앞에 연달아 몇 번 있었는지 (도구 결과는 건너뛰고, 다른 메시지가 나오면 멈춤)"""
+    """새 도구 호출과 똑같은 호출이 바로 앞에 연달아 몇 번 있었는지 (도구 결과는 건너뛰고, 다른 메시지가 나오면 멈춤)
+    결과까지 같아야 반복으로 센다: 가장 최근의 같은 호출과 결과가 다른 호출이 나오면 거기서 멈춤
+    (예: 학습 로그를 'tail -n 3 train.log' 로 지켜보는 것은 결과가 계속 바뀌므로 반복이 아님)"""
     fp = fingerprint({"role": "assistant", "tool_calls": [{"function": {
         "name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)}}]})
-    count = 0
+    results = {m.get("tool_call_id"): content_text(m.get("content")) for m in messages if m.get("role") == "tool"}
+    count, last = 0, None
     for m in reversed(messages):
         if m.get("role") == "tool":
             continue
         if m.get("role") == "assistant" and m.get("tool_calls") and fingerprint(m) == fp:
-            count += 1
+            res = [results.get(tc.get("id")) for tc in m["tool_calls"]]
+            if count and res != last:
+                break
+            count, last = count + 1, res
             continue
         break
     return count
@@ -196,11 +203,21 @@ def last_user_text(messages):
     return ""
 
 
+def tools_used_since_user(messages):
+    """마지막 사용자 요청 뒤로 도구를 쓴 적이 있으면 True (도구 호출 또는 도구 결과)"""
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    return any(m.get("tool_calls") or m.get("role") == "tool" for m in messages[last_user + 1:])
+
+
 # 파일을 만들거나 고치라는 요청인데, 도구 블록 없이 코드만 보여 주고 끝내면 한 번 다시 부탁한다
+#  (설명·예시만 원한 요청이었을 수도 있으므로, 그랬다면 방금 답을 다시 최종 답으로 달라고 덧붙임)
 CODE_NUDGE = ("코드를 보여 주시기만 하면 제가 파일로 만들 수가 없어요. 파일은 아래 형식의 write 블록 하나로 만들어 주시고, "
-              "실행이나 확인이 필요하면 그다음에 bash 블록으로 요청해 주세요.\n"
+              "실행이나 확인이 필요하면 그다음에 bash 블록으로 요청해 주세요. "
+              "설명이나 예시만 필요한 요청이었다면 방금 답을 그대로 최종 답으로 다시 주세요.\n"
               "```text\n@tool write path=<파일 경로>\n<파일 전체 내용>\n```")
 CHANGE_REQUEST_RE = re.compile(r"만들|작성|추가|수정|고쳐|고치|바꿔|저장|생성|확장|구현|리팩터|\b(create|write|add|fix|modify|update|implement)\b", re.I)
+# 방법·예시를 묻는 질문 ("파일 만드는 방법 알려줘", "...은 어떻게 고쳐?")은 코드 예시가 곧 답이므로 write 를 부탁하지 않는다
+HOWTO_RE = re.compile(r"예시(만|로)|예제(만|로)|알려 ?줘|설명해|궁금|[?？]\s*$")  # "README 에 설명을 추가해줘" 같은 고치기 요청은 해당 없음
 PROGRAM_FENCE_RE = re.compile(r"```[ \t]*(python|py|bash|sh|shell|javascript|js|typescript|ts|java|go|rust|sql|r|c|cpp|c\+\+|"
                               r"html|css|yaml|yml|toml|ini|dockerfile|makefile|powershell|ps1)[ \t]*\n", re.I)
 
@@ -208,10 +225,10 @@ PROGRAM_FENCE_RE = re.compile(r"```[ \t]*(python|py|bash|sh|shell|javascript|js|
 def wants_files_but_none_written(messages):
     """마지막 사용자 요청이 파일 생성·수정인데, 그 뒤로 도구를 한 번도 쓰지 않고 바로 답했으면 True
     (도구를 쓴 뒤의 답에 있는 코드는 결과 보고·설명일 수 있으므로 다시 부탁하지 않는다)"""
-    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=None)
-    if last_user is None or not CHANGE_REQUEST_RE.search(content_text(messages[last_user].get("content"))):
+    text = last_user_text(messages)
+    if not CHANGE_REQUEST_RE.search(text) or HOWTO_RE.search(text):
         return False
-    return not any(m.get("tool_calls") or m.get("role") == "tool" for m in messages[last_user + 1:])
+    return not tools_used_since_user(messages)
 
 
 ROLE_LINE_RE = re.compile(r"\s*(you are\b|너는\s|당신은\s)", re.I)
@@ -268,7 +285,10 @@ class Renderer:
             return "[요청]\n" + text
         if role == "tool":
             body = truncate_middle(text, limit or self.tool_result_chars)
-            return "TOOL_RESULT ({}):\n```text\n{}\n```".format(names.get(m.get("tool_call_id"), "?"), body.replace("```", "'''"))
+            # 결과 안의 ``` 는 바꾸지 않고(''' 로 바꾸면 Copilot 이 그 내용을 그대로 옮겨 쓸 때 파일이 달라짐),
+            # 안에 있는 가장 긴 ` 줄보다 긴 울타리로 감싼다 (최소 3개)
+            fence = "`" * max(3, max((len(r) for r in re.findall(r"`+", body)), default=0) + 1)
+            return "TOOL_RESULT ({}):\n{f}text\n{}\n{f}".format(names.get(m.get("tool_call_id"), "?"), body, f=fence)
         if role == "assistant":
             parts = [text] if text else []
             for tc in m.get("tool_calls") or []:
@@ -315,7 +335,8 @@ def split_text(text, limit):
         cur += piece
     if cur.strip():
         parts.append(cur)
-    return [p.strip() for p in parts if p.strip()]
+    # 앞뒤 줄바꿈만 뺀다 (조각이 들여쓴 코드 줄로 시작할 수 있으므로 앞의 공백은 그대로)
+    return [p.strip("\n") for p in parts if p.strip()]
 
 
 def build_parts(body, max_chars, marker):
@@ -340,7 +361,49 @@ def build_parts(body, max_chars, marker):
 # Copilot 답 -> 도구 호출 해석
 # ---------------------------------------------------------------------------
 
-FENCE_RE = re.compile(r"```[ \t]*([^\n`]*)\n(.*?)```", re.S)
+# 코드 블록 울타리 줄: 앞 공백 3개까지 + ` 3개 이상 + 언어 이름 등 (` 없음)
+FENCE_LINE_RE = re.compile(r" {0,3}(`{3,})([^`]*)$")
+NEAREST_FENCE_RE = re.compile(r"```[ \t]*([^\n`]*)\n(.*?)```", re.S)  # 예전 방식: 가장 가까운 ``` 에서 끝 (끝나지 않은 블록 뒤에만 씀)
+
+
+def fenced_blocks(text):
+    """답 원문(markdown)의 코드 블록 -> [{"lang", "text", "span": (시작, 끝)}] (span 은 울타리 줄까지 포함한 글자 위치)
+    파일 내용 안에 코드 블록이 들어 있어도(README 의 ```bash ... ```) 바깥 블록이 거기서 끝나지 않도록 줄 단위로 센다:
+     - 블록 안에서 언어 이름이 붙은 울타리(```bash)는 안쪽 블록의 시작, 이름 없는 울타리(```)는 안쪽 블록이 있으면 그 끝
+     - 안쪽 블록이 없을 때 이름 없는 울타리는 여는 울타리보다 ` 가 적지 않아야 바깥 블록의 끝 (````text 안의 ``` 는 내용)
+     - 끝나지 않은 블록은 블록으로 보지 않는다"""
+    blocks, cur, pos = [], None, 0
+    for line in text.split("\n"):
+        start, pos = pos, pos + len(line) + 1
+        m = FENCE_LINE_RE.match(line)
+        if cur is None:
+            if m:
+                cur = {"lang": m.group(2).strip(), "n": len(m.group(1)), "depth": 0, "lines": [], "start": start}
+            continue
+        if m and m.group(2).strip():  # 안쪽 블록 시작
+            cur["depth"] += 1
+        elif m and cur["depth"]:  # 안쪽 블록 끝
+            cur["depth"] -= 1
+        elif m and len(m.group(1)) >= cur["n"]:  # 바깥 블록 끝
+            blocks.append({"lang": cur["lang"], "text": "".join(ln + "\n" for ln in cur["lines"]),
+                           "span": (cur["start"], start + len(line))})
+            cur = None
+            continue
+        cur["lines"].append(line)
+    if cur is not None:
+        # 끝나지 않은 블록: Copilot 이 블록 하나를 닫지 않고 다음 블록을 연 경우 등. 그 뒤는 예전 방식(가장 가까운 ``` 에서 끝)으로 본다
+        for m in NEAREST_FENCE_RE.finditer(text, cur["start"]):
+            blocks.append({"lang": m.group(1).strip(), "text": m.group(2), "span": (m.start(), m.end())})
+    return blocks
+
+
+def cut_spans(text, blocks):
+    """text 에서 코드 블록(울타리 포함) 부분을 뺀 나머지 글"""
+    out, pos = [], 0
+    for b in blocks:
+        out.append(text[pos:b["span"][0]])
+        pos = b["span"][1]
+    return "".join(out) + text[pos:]
 
 
 def repair_json(s):
@@ -365,9 +428,14 @@ def repair_json(s):
                 continue
         elif ch == '"':
             in_str = True
+        elif ch in "}]":  # 끝의 쉼표는 문자열 밖에서만 뺀다 (문자열 안의 r'[,]' 같은 글자는 그대로)
+            j = len(out) - 1
+            while j >= 0 and out[j] in (" ", "\t", "\r", "\n"):
+                j -= 1
+            if j >= 0 and out[j] == ",":
+                del out[j]
         out.append(ch)
-    s = "".join(out)
-    return re.sub(r",\s*([}\]])", r"\1", s)
+    return "".join(out)
 
 
 def parse_block(text, lang, tool_names):
@@ -399,7 +467,9 @@ def parse_block(text, lang, tool_names):
         if args:
             return {"name": name, "arguments": args}, None
         return None, "'@tool {}' 형식에서 인자를 찾지 못했습니다. json 블록으로 주세요".format(name)
-    if not (st.startswith("{") and ('"tool"' in st or '"name"' in st)):
+    # 도구 호출은 "tool" 이 있거나, "name" 과 함께 "arguments"/"args"/"input" 이 있는 JSON 만
+    #  (최종 답에 든 예시 JSON {"name": "my-app", "version": "1.0.0"} 은 도구 블록이 아니므로 다시 부탁하지 않는다)
+    if not (st.startswith("{") and ('"tool"' in st or ('"name"' in st and re.search(r'"(arguments|args|input)"', st)))):
         return None, None
     obj, err = None, None
     for candidate in (st, repair_json(st)):
@@ -414,7 +484,11 @@ def parse_block(text, lang, tool_names):
             hint = (" - JSON 문자열 안의 역슬래시는 \\\\ 처럼 두 번 써야 합니다. 파일 내용을 쓰는 거라면 이스케이프가 필요 없는 "
                     "```text @tool write path=<경로>``` 형식을 쓰세요")
         return None, "JSON 해석 실패: {}{}".format(err, hint)
+    if "tool" not in obj and not ("name" in obj and any(k in obj for k in ("arguments", "args", "input"))):
+        return None, None
     name = obj.get("tool") or obj.get("name")
+    if not isinstance(name, str):
+        return None, "도구 이름(tool)은 문자열이어야 합니다 (예: \"tool\": \"read\")"
     args = obj.get("arguments", obj.get("args", obj.get("input", {})))
     if isinstance(args, str):
         try:
@@ -434,33 +508,36 @@ def parse_block(text, lang, tool_names):
 def parse_reply(reply, tool_names):
     """bridge 가 돌려준 답 -> (본문 텍스트, call | None, 오류 | None)"""
     text = reply.get("text") or ""
-    blocks = reply.get("code_blocks") or []
-    if not blocks:  # 원문(markdown)으로 받은 경우
-        blocks = [{"lang": m.group(1).strip(), "text": m.group(2)} for m in FENCE_RE.finditer(text)]
+    fenced = fenced_blocks(text)
+    blocks = reply.get("code_blocks") or fenced  # 화면에서 읽은 코드 블록이 없으면 원문(markdown)에서
     first_err = None
     for b in blocks:
         call, err = parse_block(b.get("text", ""), b.get("lang", ""), tool_names)
         if call:
             body = reply.get("text_without_code")
             if body is None:
-                body = FENCE_RE.sub("", text)
+                body = cut_spans(text, fenced)
             return body.strip(), call, None
         if err and not first_err:
             first_err = err
     # 울타리(```) 없이 온 블록 (Copilot 이 가끔 울타리를 빼고 씀)
     #  - 답 첫머리(300자 안)의 '@tool <도구>' 줄: read·bash 같은 짧은 도구는 그대로 받는다
     #    (긴 설명 중간에 나오는 것은 형식 설명일 수 있으므로 도구로 보지 않음)
+    #    블록은 '@tool' 줄부터 첫 빈 줄까지만: 뒤에 이어지는 설명(예: "결과를 본 뒤 `git commit` 하겠습니다")이
+    #    명령에 섞여 실행되지 않게 하고, 그 설명은 본문으로 남긴다
     #  - 파일 내용(write)은 코드 블록 밖에 있으면 마크다운 때문에 기호가 바뀔 수 있어(실제: ] 가 \] 로) 다시 부탁한다
     #  - 답 전체가 JSON 도구 블록이면 그대로
     st = text.strip()
     m = re.search(r"(?m)^@tool[ \t]+\w+", st)
     if m and m.start() <= 300:
-        call, err = parse_block(st[m.start():], "", tool_names)
+        blank = re.compile(r"\n[ \t\r]*\n").search(st, m.start())
+        end = blank.start() if blank else len(st)
+        call, err = parse_block(st[m.start():end], "", tool_names)
         if call and call["name"] == "write":
             call, err = None, ("파일 내용이 코드 블록(```) 밖에 있어 일부 기호가 바뀔 수 있습니다. "
                                "같은 내용을 ```text 코드 블록 안에 넣어 다시 주세요")
         if call:
-            return st[:m.start()].strip(), call, None
+            return "\n\n".join(p for p in (st[:m.start()].strip(), st[end:].strip()) if p), call, None
         first_err = first_err or err
     elif st.startswith("{") and st.endswith("}"):
         call, err = parse_block(st, "", tool_names)
@@ -472,8 +549,7 @@ def parse_reply(reply, tool_names):
 
 def leading_reads(reply, tool_names):
     """multi_read 용: 답의 코드 블록 중 맨 앞부터 이어지는 read 호출 목록 (read 가 아닌 블록이 나오면 거기서 멈춤)"""
-    text = reply.get("text") or ""
-    blocks = reply.get("code_blocks") or [{"lang": m.group(1).strip(), "text": m.group(2)} for m in FENCE_RE.finditer(text)]
+    blocks = reply.get("code_blocks") or fenced_blocks(reply.get("text") or "")
     calls = []
     for b in blocks:
         call, err = parse_block(b.get("text", ""), b.get("lang", ""), tool_names)
@@ -596,6 +672,11 @@ class ChatRegistry:
             self.save()
 
 
+# Copilot 탭 찾기는 한 번에 한 창씩 (max_tabs): 탭 목록 읽기부터 차지하기(필요하면 새 창 열기)까지 한 번에 해야
+#  두 창이 동시에 첫 요청을 받아도 같은 탭을 나눠 갖거나, 다른 창이 막 연 탭을 가져가거나 '닫힌 탭' 으로 지우지 않는다
+TAB_LOCK = threading.Lock()
+
+
 class CopilotLink:
     def __init__(self, cfg, registry=None, owner=None, claims=None, bucket=None):
         self.cfg = cfg
@@ -610,13 +691,14 @@ class CopilotLink:
         self.bucket = bucket if bucket is not None else {"lock": threading.Lock()}
 
     def connect(self):
-        try:
-            tabs = bridge.list_tabs(self.cfg["cdp_port"])
-        except bridge.BridgeError as e:
-            raise RelayError(503, str(e))
-        cop = [t for t in tabs if self.cfg["copilot_url_contains"] in t.get("url", "")]
-        if self.claims is not None:
-            cop = self.pick_tab(tabs, cop)
+        with TAB_LOCK:
+            try:
+                tabs = bridge.list_tabs(self.cfg["cdp_port"])
+            except bridge.BridgeError as e:
+                raise RelayError(503, str(e))
+            cop = [t for t in tabs if self.cfg["copilot_url_contains"] in t.get("url", "")]
+            if self.claims is not None:
+                cop = self.pick_tab(tabs, cop)
         if not cop:
             raise RelayError(503, "Copilot 탭을 찾지 못했습니다. start-chrome.cmd(또는 start-edge.cmd)로 연 전용 창에서 {} 에 로그인해 열어 두세요.".format(
                 self.cfg["copilot_url_contains"]))
@@ -624,14 +706,15 @@ class CopilotLink:
         bridge.log("Copilot 탭 연결: {}".format(cop[0].get("url", "")[:90]))
 
     def pick_tab(self, tabs, cop):
-        """창이 여러 개일 때: 이 창이 쓰던 탭 > 아무 창도 안 쓰는 Copilot 탭 > (첫 창이 아니면) 새 창을 열어서"""
+        """창이 여러 개일 때 (connect 가 TAB_LOCK 을 잡고 부름): 이 창이 쓰던 탭 > 아무 창도 안 쓰는 Copilot 탭 > 새 창을 열어서
+        창 1 은 처음 탭을 다른 창이 이미 가져갔을 때만 새 창을 연다 (Copilot 탭이 하나도 없으면 로그인부터 하도록 오류)"""
         live = {t.get("id") for t in tabs}
         for tid in [k for k in self.claims if k not in live]:  # 닫힌 탭
             del self.claims[tid]
         mine = [t for t in cop if self.claims.get(t.get("id")) == self.owner]
         if not mine:
             mine = [t for t in cop if t.get("id") not in self.claims]
-            if not mine and self.owner != "1":
+            if not mine and (self.owner != "1" or cop):
                 try:
                     mine = [bridge.open_window(self.cfg["cdp_port"], self.cfg["copilot_new_chat_url"])]
                     bridge.log("Copilot 창 {} 을 새로 열었습니다".format(self.owner))
@@ -726,7 +809,17 @@ class CopilotLink:
                 reply = self.cop.wait_reply(m.group(0).strip())
                 bridge.log("  <- 답 받음 ({}자, 코드 블록 {}개)".format(len(reply.get("text", "")), len(reply.get("code_blocks") or [])))
                 if new_thread and i == 1 and self.registry:  # 첫 답에서 대화 주소가 생김 -> 삭제 대상 목록에 기록
-                    self.registry.add(bridge.conversation_id(self.cop.thread_url), self.cop.thread_url, self.owner)
+                    # 단, 보낸 메시지(marker)가 아직 화면에 있을 때만: 기다리는 동안 사용자가 전용 창에서 자기 대화를 눌렀다면
+                    # 지금 주소는 그 대화이므로 절대 기록하면 안 된다 (확인하지 못하면 기록하지 않음. 지우지 못하고 남는 쪽이 안전)
+                    try:
+                        url = self.cop.marker_url(m.group(0).strip())
+                    except (bridge.BridgeError, TimeoutError, OSError):
+                        url = None
+                    if url and url == self.cop.thread_url:
+                        self.registry.add(bridge.conversation_id(url), url, self.owner)
+                    else:
+                        bridge.log("  (화면에서 보낸 메시지를 찾지 못해 이 대화는 삭제 목록에 넣지 않습니다: {})".format(
+                            self.cop.thread_url))
             return reply
         except bridge.Throttled as e:
             # 계정 단위 사용량 제한: 새 대화를 열어도 같은 답이 오므로 열지 않고, 지금 대화는 나중에 그대로 이어 쓴다
@@ -761,6 +854,7 @@ class Relay:
         self.model_label = ""  # 이번 요청에 쓸 Copilot 모델 (화면 이름)
         self.stat = None  # 이번 요청의 통계 (걸린 시간, 보낸 조각 수, 새 대화, Copilot 에 보낸 횟수) -> '답:' 로그 줄 끝에
         self.status = STATUS  # 진행 상태 (GET /status). 창이 여러 개면 Lanes 가 창마다 따로 줌
+        self.requests = 0  # 받은 요청 수 (세션 끝 알림 뒤, 정리하기 전에 새 세션의 요청이 먼저 들어왔는지 보려고)
 
     def log(self, *a):
         print(time.strftime("%H:%M:%S"), *a, flush=True)
@@ -775,6 +869,16 @@ class Relay:
             st["new"] = st["new"] or new_thread
         return self.link.request(parts, new_thread, model=self.model_label)
 
+    def ask_again(self, text):
+        """같은 대화에 이어서 다시 부탁 (형식 오류·거절·반복 등). 첫 질문은 이미 들어갔으므로, 여기서 사용량 제한(429)에
+        걸리면 새 대화로 바꾸지 않고 풀린 뒤 지금 대화에 이어서 보낸다"""
+        try:
+            return self.ask(build_parts(text, self.args.max_chars, "[pi-{}]".format(uuid.uuid4().hex[:6])), False)
+        except RelayError as e:
+            if e.status == 429:
+                self.fresh = False
+            raise
+
     def multi_read(self):
         return bool((getattr(self.link, "cfg", None) or {}).get("multi_read"))
 
@@ -786,9 +890,14 @@ class Relay:
         return " ({:.1f}초 · 조각 {}{}{})".format(time.time() - st["t0"], st["parts"], " · 새 대화" if st["new"] else "",
                                              " · 다시 보냄 {}".format(st["asks"] - 1) if st["asks"] > 1 else "")
 
-    def end_session(self, reason=""):
-        """pi 세션이 끝남 (pi 확장 copilot-session.ts 가 알림) -> 다음 요청은 새 대화, 쓰던 대화는 삭제 대상으로 정리"""
+    def end_session(self, reason="", seen=None):
+        """pi 세션이 끝남 (pi 확장 copilot-session.ts 가 알림) -> 다음 요청은 새 대화, 쓰던 대화는 삭제 대상으로 정리
+        seen: 끝 알림을 받았을 때의 요청 수. 정리는 뒤에서 하므로 그사이 다른 요청이 먼저 처리됐으면 아무것도 하지 않는다
+        (그 요청이 새 대화를 열면서 지난 대화는 이미 정리했거나, 같은 대화를 이어 쓰는 중이므로 지우거나 끊으면 안 됨)"""
         with self.lock:
+            if seen is not None and seen != self.requests:
+                self.log("pi 세션 끝 ({}) -> 그사이 새 요청이 와서 대화 정리는 건너뜁니다".format(reason or "?"))
+                return
             self.sent, self.fresh = [], True
             link = self.link
             registry = getattr(link, "registry", None)
@@ -810,6 +919,7 @@ class Relay:
 
     def handle(self, body):
         with self.lock:
+            self.requests += 1
             self.stat = {"t0": time.time(), "parts": 0, "asks": 0, "new": False}
             _tls.status = self.status
             self.status.update(busy=True, started=time.time())
@@ -866,7 +976,8 @@ class Relay:
                 self.log("도구 블록 오류 -> 다시 요청: {}".format(err))
                 fix = ("방금 블록은 사용할 수 없었습니다: {}\n올바른 형식의 코드 블록 하나로 다시 적어 주세요 "
                        "(요청이 끝났다면 블록 없이 최종 답).").format(err)
-            elif not nudged and not no_tools and REFUSAL_RE.search(body_text or "") and tool_names:
+            elif (not nudged and not no_tools and REFUSAL_RE.search(body_text or "") and tool_names
+                  and not tools_used_since_user(messages)):  # 도구를 쓴 뒤의 "확인할 수 없습니다" 는 결과에 대한 보통 답
                 self.log("Copilot 이 실행을 거절 -> 설명 후 다시 요청")
                 fix, nudged = REFUSAL_NUDGE, True
             elif (not code_nudged and not no_tools and "write" in tool_names and PROGRAM_FENCE_RE.search(body_text or "")
@@ -880,13 +991,12 @@ class Relay:
                 break
             retries += 1
             set_phase("다시 부탁하는 중")
-            reply = self.ask(build_parts(fix, self.args.max_chars, "[pi-{}]".format(uuid.uuid4().hex[:6])), False)
+            reply = self.ask_again(fix)
             body_text, call, err = parse_reply(reply, tool_names)
         if call and repeated_calls(messages, call) >= LOOP_LIMIT:
             count = repeated_calls(messages, call)
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
-            reply = self.ask(build_parts(LOOP_NUDGE.format(name=call["name"], count=count), self.args.max_chars,
-                                         "[pi-{}]".format(uuid.uuid4().hex[:6])), False)
+            reply = self.ask_again(LOOP_NUDGE.format(name=call["name"], count=count))
             body_text, call, err = parse_reply(reply, tool_names)
             if call and repeated_calls(messages, call) >= LOOP_LIMIT:
                 self.log("반복이 계속됨 -> 이 요청을 멈춤")
@@ -950,7 +1060,8 @@ class Relay:
 
 class Lanes:
     """max_tabs 가 2 이상일 때: pi 프로세스마다(요청 머리글 X-Pi-Session) Copilot 창을 하나씩 따로 써서 pi 여러 개를 동시에 쓴다.
-    창 1 은 처음부터 열려 있던 Copilot 탭, 나머지는 필요할 때 새 창으로 연다. 세션이 끝나면 그 창은 다음 세션이 이어 쓴다.
+    창 1 은 처음부터 열려 있던 Copilot 탭(다른 창이 먼저 가져갔으면 새 창), 나머지는 필요할 때 새 창으로 연다.
+    세션이 끝나면 그 창은 다음 세션이 이어 쓴다.
     창이 모두 쓰이는 중이면 가장 오래 쉰 창을 넘겨받는다 (넘겨준 세션은 다음 요청 때 새 대화로 이어 감)."""
 
     def __init__(self, args, cfg, registry, max_tabs):
@@ -1001,7 +1112,8 @@ class Lanes:
         if lane:
             with self.lock:
                 lane["session"] = None
-            threading.Thread(target=lane["relay"].end_session, args=(reason,), daemon=True).start()
+            # 지금까지의 요청 수를 함께 넘김: 정리하기 전에 이 창을 넘겨받은 새 세션의 요청이 먼저 오면 정리하지 않음
+            threading.Thread(target=lane["relay"].end_session, args=(reason, lane["relay"].requests), daemon=True).start()
 
     def status(self, session):
         lane = self.find(session)
@@ -1147,8 +1259,8 @@ def make_handler(relay, jup, cfg, lanes=None):
                 if reason != "reload":
                     if lanes:
                         lanes.end(str(body.get("session") or self.headers.get("X-Pi-Session") or ""), reason)
-                    else:
-                        threading.Thread(target=relay.end_session, args=(reason,), daemon=True).start()
+                    else:  # 지금까지의 요청 수를 함께 넘김 (정리하기 전에 새 세션의 요청이 먼저 오면 그 대화는 건드리지 않게)
+                        threading.Thread(target=relay.end_session, args=(reason, relay.requests), daemon=True).start()
                 return self.send_json(200, {"ok": True})
             if u.path == "/jupyter/exec":
                 # 창이 여러 개면(max_tabs) 창마다 노트북 터미널도 따로: 창 1 은 pibridge, 창 2 는 pibridge2 ...

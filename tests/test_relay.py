@@ -36,6 +36,18 @@ call, err = relay.parse_block("print('hello')", "python", TOOLS)
 check("일반 코드 블록은 무시", call is None and err is None, (call, err))
 call, err = relay.parse_block('{"name": "bash", "arguments": "{\\"command\\": \\"pwd\\"}"}', "json", TOOLS)
 check("arguments 가 문자열 JSON", call and call["arguments"]["command"] == "pwd", (call, err))
+# 도구 호출은 "tool" 이 있거나 "name" + arguments/args/input 이 있는 JSON 만 (최종 답의 예시 JSON 은 형식 오류로 다시 부탁하지 않음)
+call, err = relay.parse_block('{"name": "my-app", "version": "1.0.0"}', "json", TOOLS)
+check("예시 JSON(name 만 있음)은 도구 블록 아님 (오류도 아님)", call is None and err is None, (call, err))
+call, err = relay.parse_block('{"name": "my-app",\n  // 주석\n  "version": "1.0.0"\n}', "json", TOOLS)
+check("해석되지 않는 예시 JSON 도 name 만 있으면 오류 아님", call is None and err is None, (call, err))
+call, err = relay.parse_block('{"name": "bash", "input": {"command": "ls"}}', "json", TOOLS)
+check("name + input 은 도구 호출", call == {"name": "bash", "arguments": {"command": "ls"}}, (call, err))
+# 끝 쉼표는 문자열 밖에서만 뺌: 다른 보정(문자열 안 실제 줄바꿈)이 필요한 JSON 이어도 문자열 안의 r'[,]' 는 그대로
+call, err = relay.parse_block('{"tool": "write", "arguments": {"path": "a.py", "content": "parts = re.split(r\'[,]\', s)\nprint(parts)"},}',
+                              "json", TOOLS)
+check("끝 쉼표 보정은 문자열 밖에서만 (r'[,]' 그대로)",
+      call and call["arguments"]["content"] == "parts = re.split(r'[,]', s)\nprint(parts)", (call, err))
 
 # 2) 답 전체 해석 (markdown 원문 / 화면 code_blocks)
 text, call, err = relay.parse_reply({"text": "파일을 봅니다.\n```json\n{\"tool\": \"read\", \"arguments\": {\"path\": \"x\"}}\n```"}, TOOLS)
@@ -62,12 +74,33 @@ text, call, err = relay.parse_reply({"text": "@tool write path=<파일 경로>\n
 check("울타리 없는 예시 경로도 오류", call is None and err and "예시" in err, (text, call, err))
 text, call, err = relay.parse_reply({"text": "설명 " * 120 + "\n@tool write path=a.py\nprint(1)"}, TOOLS)
 check("긴 설명 중간의 울타리 없는 블록은 도구 아님", call is None, (text[:30], call, err))
+# 울타리 없는 '@tool bash' 는 첫 빈 줄까지만 명령 (뒤 설명 속 `git commit -am wip` 이 명령에 섞여 실행되면 안 됨)
+text, call, err = relay.parse_reply({"text": "@tool bash\ngit status\n\n결과를 본 뒤 `git commit -am wip` 로 커밋하겠습니다."}, TOOLS)
+check("울타리 없는 블록은 첫 빈 줄까지, 나머지는 본문", call == {"name": "bash", "arguments": {"command": "git status"}}
+      and text == "결과를 본 뒤 `git commit -am wip` 로 커밋하겠습니다.", (text, call, err))
+# 파일 내용 안에 코드 블록이 있어도(README 의 ```bash) 바깥 블록이 거기서 끝나지 않음
+_readme = "# T\n\n```bash\nls\n```\n\n끝\n"
+text, call, err = relay.parse_reply({"text": "```text\n@tool write path=README.md\n" + _readme + "```"}, TOOLS)
+check("write 내용 안의 ```bash 블록", call == {"name": "write", "arguments": {"path": "README.md", "content": _readme}}, (text, call, err))
+_readme4 = "# T\n\n```\nls\n```\n\n끝\n"
+text, call, err = relay.parse_reply({"text": "````text\n@tool write path=README.md\n" + _readme4 + "````"}, TOOLS)
+check("` 4개 바깥 블록 안의 이름 없는 ``` 블록은 내용",
+      call == {"name": "write", "arguments": {"path": "README.md", "content": _readme4}}, (text, call, err))
+text, call, err = relay.parse_reply({"text": "README 를 씁니다.\n```text\n@tool write path=README.md\n" + _readme + "```\n쓴 뒤 확인합니다."}, TOOLS)
+check("본문은 블록 전체(안쪽 블록 포함)를 뺀 앞뒤 글", call and text == "README 를 씁니다.\n\n쓴 뒤 확인합니다.", (text, call, err))
+check("끝나지 않은 블록은 블록 아님", relay.fenced_blocks('```json\n{"tool": "bash"}\n') == [])
+_src = "앞\n   ```json\n{}\n   ```\n뒤"
+_fb = relay.fenced_blocks(_src)
+check("울타리 앞 공백 3개까지는 블록 (span 은 울타리 줄까지)", [(b["lang"], b["text"]) for b in _fb] == [("json", "{}\n")]
+      and relay.cut_spans(_src, _fb) == "앞\n\n뒤" and relay.fenced_blocks("    ```json\n{}\n    ```") == [], _fb)
 
 # 3) 긴 메시지 나누기
 parts = relay.build_parts("가" * 25000, 10000, "[pi-abc]")
 check("긴 메시지 분할 (각 1만 자 이하)", len(parts) == 3 and all(len(p) <= 10000 for p in parts) and all(p.endswith("[pi-abc]") for p in parts),
       [len(p) for p in parts])
 check("앞 조각은 OK 만 답하라는 안내", "OK 라고만 답해" in parts[0] and "마지막입니다" in parts[-1])
+_sp = relay.split_text("a" * 50 + "\n\n    def f():\n        return 1\n", 60)
+check("나눈 조각이 들여쓴 줄로 시작해도 앞 공백은 그대로 (앞뒤 줄바꿈만 뺌)", _sp == ["a" * 50, "    def f():\n        return 1"], _sp)
 
 # 3-1) 아주 긴 기록을 새 대화에 다시 넣을 때: 최근은 그대로, 오래된 것은 요약, 맨 처음 요청도 남아야 함
 class A0:
@@ -91,6 +124,16 @@ check("300단계 기록 재주입: 조각 수/크기", 2 <= len(p0) <= 8 and all
 check("300단계 기록 재주입: 맨 처음 요청(요약)과 마지막 질문 포함",
       "[요청] 단계 1: bash" in joined and "[답변] 7" in joined and "단계 1 과 단계 2 의 숫자는?" in p0[-1], joined[:200])
 
+# 3-2) 도구 결과: 안의 ``` 는 그대로 두고 더 긴 울타리로 감쌈 (예전: ''' 로 바꿔서 Copilot 이 그대로 옮겨 쓰면 파일이 달라짐)
+_res = "# README\n```bash\nls\n```\n"
+_rendered = relay.Renderer(6000).message({"role": "tool", "tool_call_id": "r1", "content": _res}, {"r1": "read"})
+check("도구 결과: ``` 그대로 + ` 4개 울타리", _rendered.startswith("TOOL_RESULT (read):\n````text\n") and _rendered.endswith("\n````")
+      and "```bash\nls\n```" in _rendered and "'''" not in _rendered, _rendered)
+check("도구 결과: 울타리 안 내용이 그대로 읽힘", [b["text"] for b in relay.fenced_blocks(_rendered)] == [_res], relay.fenced_blocks(_rendered))
+check("도구 결과: ``` 가 없으면 ``` 울타리", relay.Renderer(6000).message({"role": "tool", "tool_call_id": "r1", "content": "a `b` c"},
+                                                                 {"r1": "read"}) == "TOOL_RESULT (read):\n```text\na `b` c\n```")
+check("지침: 파일 내용에 ``` 가 있으면 ` 4개 바깥 블록 (````text ... ````)", "````text" in relay.PREAMBLE and "````" in relay.PREAMBLE.split("````text", 1)[1])
+
 # 4) 같은 대화 이어쓰기 / 어긋나면 새 대화 / 한도에 닿으면 새 대화로 다시 (Copilot 탭 흉내)
 class A:
     max_chars = 10000
@@ -109,7 +152,10 @@ class FakeLink:
             self.reset_once = False
             raise relay.ThreadReset("Copilot 대화 한도")
         self.sent_log.append({"new_thread": new_thread, "parts": parts, "model": model})
-        return {"text": self.replies.pop(0)}
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):  # 이 차례의 질문에서 오류 (예: 다시 부탁할 때 사용량 제한)
+            raise reply
+        return {"text": reply}
 
 
 link = FakeLink(['```json\n{"tool": "write", "arguments": {"path": "hello.txt", "content": "hi"}}\n```', "다 만들었습니다.",
@@ -369,7 +415,7 @@ check("delete_finished_chats=false 면 지우지 않음", link14.cop.deleted == 
 # HTTP: /v1/session/end (reload 는 같은 대화를 이어 가므로 무시) + /v1/models 에 설정한 모델들
 _calls = []
 r15 = relay.Relay(A(), FakeLink([]))
-r15.end_session = lambda reason="": _calls.append(reason)
+r15.end_session = lambda reason="", seen=None: _calls.append((reason, seen))
 _srv2 = _Srv(("127.0.0.1", 0), relay.make_handler(r15, None, {"cdp_port": 1, "copilot_models": {"gpt-6.0-sol": "GPT 6.0 Sol"}}))
 _th.Thread(target=_srv2.serve_forever, daemon=True).start()
 _base = "http://127.0.0.1:{}".format(_srv2.server_address[1])
@@ -381,7 +427,7 @@ _ids = [m["id"] for m in _json.loads(_ur.urlopen(_base + "/v1/models", timeout=5
 import time as _time  # noqa: E402
 _time.sleep(0.3)
 _srv2.shutdown()
-check("/v1/session/end: reload 는 무시, quit 은 정리", _calls == ["quit"], _calls)
+check("/v1/session/end: reload 는 무시, quit 은 정리 (알림 때의 요청 수를 함께 넘김)", _calls == [("quit", 0)], _calls)
 check("/v1/models: copilot + 설정한 모델", _ids == ["copilot", "gpt-6.0-sol"], _ids)
 
 # '답:' 로그 줄의 통계 (걸린 시간 · 조각 · 새 대화 · 다시 보냄) + diag --report 의 최근 요청 통계
@@ -518,6 +564,189 @@ try:
     check("창 나누기: 진행 상태는 창마다 따로", _ra.status is not _rb2.status and _lanes.status("zzz")["busy"] is False)
 finally:
     relay.CopilotLink = _real_link
+
+
+def _quiet(fn):
+    with _cl.redirect_stdout(_io.StringIO()):
+        return fn()
+
+
+# 거절 문구: 도구를 쓰기 전이면 설명하고 다시 부탁, 도구를 쓴 뒤의 "확인할 수 없습니다" 는 결과에 대한 보통 답
+_lk = FakeLink(["저는 파일에 접근할 수 없습니다.", '```json\n{"tool": "read", "arguments": {"path": "a.txt"}}\n```'])
+_out = _quiet(lambda: relay.Relay(A(), _lk).handle({"messages": [sys_msg, {"role": "user", "content": "a.txt 내용을 보여줘"}],
+                                                     "tools": tools}))
+check("도구를 쓰기 전의 거절 -> 설명 후 다시 부탁", len(_lk.sent_log) == 2 and "직접 실행하실 필요는 없습니다" in _lk.sent_log[1]["parts"][0]
+      and _out.get("tool_calls"), (_lk.sent_log, _out))
+_tcall = lambda i: {"role": "assistant", "content": None, "tool_calls": [{"id": "t%d" % i, "type": "function",
+                    "function": {"name": "bash", "arguments": json.dumps({"command": "tail -n 3 train.log"})}}]}
+_tres = lambda i, out: {"role": "tool", "tool_call_id": "t%d" % i, "content": out}
+_lk = FakeLink(["로그를 봤지만 멈춘 원인은 확인할 수 없습니다. 설정 파일을 더 봐야 합니다.", "다시 부탁한 뒤의 답"])
+_out = _quiet(lambda: relay.Relay(A(), _lk).handle({"messages": [sys_msg, {"role": "user", "content": "학습이 왜 멈췄는지 봐줘"},
+                                                                  _tcall(1), _tres(1, "epoch 3")], "tools": tools}))
+check("도구를 쓴 뒤의 '확인할 수 없습니다' 는 그대로 최종 답", len(_lk.sent_log) == 1 and _out.get("content", "").startswith("로그를"),
+      (_lk.sent_log, _out))
+
+# 코드만 보여 준 답: 방법·예시를 묻는 질문이면 write 를 부탁하지 않음 ("...만들어줘" 는 그대로 부탁 - 위 시험)
+_code = "예시입니다.\n```python\nwith open('a.txt', 'w') as f:\n    f.write('hi')\n```"
+for _q in ("csv 파일을 작성하는 방법을 예시로 알려줘", "config.yaml 은 어떻게 수정해?"):
+    _lk = FakeLink([_code, "다시 부탁한 뒤의 답"])
+    _out = _quiet(lambda: relay.Relay(A(), _lk).handle({"messages": [sys_msg, {"role": "user", "content": _q}], "tools": tools}))
+    check("방법·예시 질문에는 write 를 부탁하지 않음: " + _q, len(_lk.sent_log) == 1 and _out.get("content") == _code, (_lk.sent_log, _out))
+check("write 부탁에 '설명·예시만 원했다면 방금 답을 최종 답으로' 안내", "방금 답을 그대로 최종 답으로" in relay.CODE_NUDGE)
+_lk = FakeLink([_code, "```text\n@tool write path=README.md\n설명\n```"])
+_quiet(lambda: relay.Relay(A(), _lk).handle({"messages": [sys_msg, {"role": "user", "content": "README 에 설명을 추가해줘"}], "tools": tools}))
+check("'설명을 추가해줘' 같은 고치기 요청은 그대로 write 를 부탁", len(_lk.sent_log) == 2, _lk.sent_log)
+
+# 블록 하나를 닫지 않고 다음 블록을 열면: 예전처럼 가장 가까운 ``` 까지를 첫 블록으로
+text, call, err = relay.parse_reply({"text": '```json\n{"tool": "read", "arguments": {"path": "a.py"}}\n\n```json\n{"tool": "read", "arguments": {"path": "b.py"}}\n```'}, TOOLS)
+check("닫지 않은 블록 뒤에 블록: 첫 블록을 도구로 (예전과 같음)", call and call["arguments"].get("path") == "a.py", (call, err))
+# 도구 이름이 문자열이 아니면 오류 안내 (예전: TypeError 로 500)
+call, err = relay.parse_block('{"tool": {"name": "read"}, "arguments": {}}', "json", TOOLS)
+check("도구 이름이 문자열이 아니면 형식 오류로 다시 부탁", call is None and err and "문자열" in err, (call, err))
+
+# 사용량 제한(429)이 첫 질문이 아니라 다시 부탁하는 중에 걸려도 같은 대화를 이어 감 (예전: 다음 요청이 새 대화로)
+_lk = FakeLink(["첫 답", '```json\n{"tool": "bash", "arguments": {"command": "ls"\n```', relay.RelayError(429, "Copilot 사용량 제한"),
+                "제한 뒤 답"])
+_r429 = relay.Relay(A(), _lk)
+_u1, _u2 = {"role": "user", "content": "안녕"}, {"role": "user", "content": "파일 목록 보여줘"}
+_a1 = _quiet(lambda: _r429.handle({"messages": [sys_msg, _u1], "tools": tools}))
+try:
+    _quiet(lambda: _r429.handle({"messages": [sys_msg, _u1, _a1, _u2], "tools": tools}))
+    _st429 = None
+except relay.RelayError as e:
+    _st429 = e.status
+_fresh429 = _r429.fresh
+_a3 = _quiet(lambda: _r429.handle({"messages": [sys_msg, _u1, _a1, _u2], "tools": tools}))
+check("다시 부탁하다 429 -> 같은 대화 유지, 풀린 뒤 같은 대화에 이어서", _st429 == 429 and _fresh429 is False
+      and _lk.sent_log[-1]["new_thread"] is False and _a3.get("content") == "제한 뒤 답", (_st429, _fresh429, _lk.sent_log))
+
+# 같은 명령이라도 결과가 계속 바뀌면(학습 로그 지켜보기) 반복이 아님: 결과까지 같을 때만 반복으로 셈
+_tail = {"name": "bash", "arguments": {"command": "tail -n 3 train.log"}}
+_poll = [sys_msg, {"role": "user", "content": "학습이 끝날 때까지 지켜봐줘"}, _tcall(1), _tres(1, "epoch 1"), _tcall(2), _tres(2, "epoch 2")]
+_same = _poll[:3] + [_tres(1, "epoch 2")] + _poll[4:]
+check("반복 세기: 결과가 바뀌면 1번, 결과까지 같으면 2번", relay.repeated_calls(_poll, _tail) == 1 and relay.repeated_calls(_same, _tail) == 2,
+      (relay.repeated_calls(_poll, _tail), relay.repeated_calls(_same, _tail)))
+_lk = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "tail -n 3 train.log"}}\n```', "다시 부탁한 뒤의 답"])
+_out = _quiet(lambda: relay.Relay(A(), _lk).handle({"messages": _poll, "tools": tools}))
+check("결과가 바뀌는 같은 명령은 반복으로 끊지 않음", len(_lk.sent_log) == 1 and _out.get("tool_calls"), (_lk.sent_log, _out))
+
+
+# 끝난 대화 삭제 안전장치: 새 대화의 첫 답을 받은 뒤, 보낸 메시지(marker)가 아직 화면에 있을 때만 '중계 서버가 만든 대화' 로 기록
+#  (기다리는 동안 사용자가 전용 창에서 자기 대화를 눌렀다면 그 대화를 기록해서 지우면 안 됨)
+class _RegCop:
+    def __init__(self, conv, page):
+        self.conv, self.page, self.thread_url, self.turns_left = conv, page, None, None
+
+    def new_chat(self):
+        self.thread_url = None
+
+    def send(self, text):
+        pass
+
+    def wait_reply(self, marker):
+        self.thread_url = "https://x/chat/conversation/" + self.conv  # 답을 받은 때의 화면 주소
+        return {"text": "답"}
+
+    def marker_url(self, marker):
+        if self.page == "error":
+            raise relay.bridge.BridgeError("페이지 스크립트 오류")
+        return self.thread_url if self.page == "ours" else None
+
+    def delete_chat(self, cid):
+        return True, "ok"
+
+
+for _conv, _page, _want, _name in (("c-ours", "ours", ["c-ours"], "보낸 메시지가 화면에 있으면 기록"),
+                                   ("c-users-own", "other", [], "사용자가 자기 대화를 눌렀으면(메시지 없음) 기록하지 않음"),
+                                   ("c-err", "error", [], "화면을 확인하지 못하면 기록하지 않음 (답은 그대로)")):
+    _lk = relay.CopilotLink({}, relay.ChatRegistry(os.path.join(_tmp, "c8-{}.json".format(_conv))))
+    _lk.cop = _RegCop(_conv, _page)
+    _o = _io.StringIO()
+    with _cl.redirect_stdout(_o):
+        _rep = _lk.request(["질문\n\n[pi-abc123]"], True)
+    check("대화 기록: " + _name, [c["id"] for c in _lk.registry.chats] == _want and _rep == {"text": "답"}
+          and (_want or "삭제 목록에 넣지 않습니다" in _o.getvalue()), (_lk.registry.chats, _o.getvalue()))
+
+# 세션 끝 정리는 뒤에서(다른 스레드) 하므로, 그사이 새 세션의 요청이 먼저 처리됐으면 그 대화를 끝내거나 지우지 않음
+_le = FakeLink(["새 세션 답"])
+_le.cfg = {"delete_finished_chats": True}
+_le.registry = relay.ChatRegistry(os.path.join(_tmp, "c13.json"))
+_le.cop = FakeCop()
+_le.cleanup = lambda: relay.CopilotLink.cleanup(_le)
+_re = relay.Relay(A(), _le)
+_seen = _re.requests  # 세션 끝 알림을 받은 때의 요청 수
+_quiet(lambda: _re.handle({"messages": [sys_msg, {"role": "user", "content": "새 세션"}], "tools": tools}))
+_le.registry.add("new1", "https://x/chat/conversation/new1")  # 새 세션이 연 대화 (실제로는 CopilotLink.request 가 기록)
+_quiet(lambda: _re.end_session("quit", _seen))
+check("세션 끝: 그사이 새 요청이 왔으면 정리하지 않음 (새 세션의 대화·이어 쓰기 유지)", _le.cop.deleted == [] and _re.fresh is False
+      and _re.sent and [c["state"] for c in _le.registry.chats] == ["active"], (_le.cop.deleted, _re.fresh, _le.registry.chats))
+_quiet(lambda: _re.end_session("quit", _re.requests))
+check("세션 끝: 그사이 요청이 없었으면 그대로 정리", _le.cop.deleted == ["new1"] and _re.fresh is True, (_le.cop.deleted, _re.fresh))
+
+# max_tabs: 탭 찾기·차지하기는 한 번에 한 창씩 (두 창이 동시에 첫 요청을 받아도 탭을 하나씩), 창 1 도 처음 탭을 뺏겼으면 새 창
+_bridge_real = (relay.bridge.list_tabs, relay.bridge.open_window, relay.bridge.Tab, relay.bridge.Copilot)
+_tabs14, _opened14 = [], []
+
+
+def _list14(port):
+    _time.sleep(0.05)  # (여러 창이 동시에 목록을 읽게)
+    return list(_tabs14)
+
+
+def _open14(port, url):
+    t = {"id": "W{}".format(len(_opened14) + 1), "url": url}
+    _opened14.append(t)
+    _tabs14.append(t)
+    return t
+
+
+class _Cop14:
+    def __init__(self, tab, cfg):
+        self.tab = tab
+
+
+relay.bridge.list_tabs, relay.bridge.open_window = _list14, _open14
+relay.bridge.Tab, relay.bridge.Copilot = (lambda info: info), _Cop14
+_cfg14 = {"cdp_port": 1, "copilot_url_contains": "/chat", "copilot_new_chat_url": "https://x/chat"}
+try:
+    _tabs14[:] = [{"id": "T", "url": "https://x/chat"}]
+    _claims, _errs = {}, []
+    _l2, _l1 = relay.CopilotLink(_cfg14, owner="2", claims=_claims), relay.CopilotLink(_cfg14, owner="1", claims=_claims)
+    _quiet(_l2.connect)
+    try:
+        _quiet(_l1.connect)  # 예전: 창 1 은 새 창을 열지 않아 탭 없이 503 (다시 켤 때까지)
+    except relay.RelayError as e:
+        _errs.append(e)
+    check("창 1: 처음 탭을 다른 창이 먼저 가져갔으면 새 창을 엶", not _errs and _l2.cop.tab["id"] == "T" and _l1.cop.tab["id"] == "W1"
+          and _claims == {"T": "2", "W1": "1"}, (_errs, _claims))
+    _tabs14[:], _opened14[:] = [{"id": "T", "url": "https://x/chat"}], []
+    _claims, _errs = {}, []
+    _links = [relay.CopilotLink(_cfg14, owner=o, claims=_claims) for o in ("1", "2", "3")]
+
+    def _con(lk):
+        try:
+            lk.connect()
+        except Exception as e:  # noqa: BLE001
+            _errs.append(e)
+
+    def _all():
+        ths = [_th.Thread(target=_con, args=(lk,)) for lk in _links]
+        [t.start() for t in ths]
+        [t.join() for t in ths]
+
+    _quiet(_all)
+    _got = sorted(lk.cop.tab["id"] for lk in _links if lk.cop)
+    check("창 3개가 동시에 연결해도 창마다 다른 탭 (오류 없음)", not _errs and _got == ["T", "W1", "W2"]
+          and sorted(_claims.values()) == ["1", "2", "3"], (_errs, _got, _claims))
+    _tabs14[:], _opened14[:] = [], []
+    try:
+        _quiet(relay.CopilotLink(_cfg14, owner="1", claims={}).connect)
+        _st14 = None
+    except relay.RelayError as e:
+        _st14 = e.status
+    check("Copilot 탭이 하나도 없으면 창 1 은 새 창 대신 로그인 안내 (503)", _st14 == 503 and _opened14 == [], (_st14, _opened14))
+finally:
+    relay.bridge.list_tabs, relay.bridge.open_window, relay.bridge.Tab, relay.bridge.Copilot = _bridge_real
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

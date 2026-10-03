@@ -242,7 +242,11 @@ def main():
         if not args.report:
             print("설정 파일 오류: {}".format(e))
             return 1
-        cfg = bridge.load_config(None, None)  # 요약은 기본값으로 보여 주고 오류를 함께 알림
+        # 요약은 내 설정 파일 없이 저장소 bridge.json 값으로 보여 주고 오류를 함께 알림 (그것도 틀렸으면 기본값)
+        try:
+            cfg = bridge.load_config(args.config, None)
+        except bridge.ConfigError:
+            cfg = bridge.load_config(None, None)
         cfg["_error"] = str(e)
     if args.report:
         return report(cfg)
