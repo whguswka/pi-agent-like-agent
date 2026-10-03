@@ -55,7 +55,8 @@ pi_node_candidates() {
   [ -n "$PI_NODE" ] && pi_node_name_ok "$PI_NODE" && echo "$PI_NODE"
   while IFS= read -r py; do
     [ -n "$py" ] || continue
-    "$py" "$PI_FIND_NODE_DIR/find-pynode.py" 2>/dev/null | tr -d '\r' | while IFS= read -r d; do
+    # 파이프로 받을 때 Python 은 cp949 로 내보내므로 한글이 든 사용자 폴더 경로가 깨짐 -> UTF-8 로
+    PYTHONIOENCODING=utf-8 "$py" "$PI_FIND_NODE_DIR/find-pynode.py" 2>/dev/null | tr -d '\r' | while IFS= read -r d; do
       command -v cygpath >/dev/null 2>&1 && d="$(cygpath -u "$d")"
       echo "$d"
     done

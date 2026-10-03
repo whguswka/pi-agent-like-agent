@@ -79,6 +79,30 @@ const s2 = readJson(A("settings.json"));
 check("예전 판의 등록 경로는 빼고, 사용자가 넣은 경로는 남김", !("prompts" in s2) && JSON.stringify(s2.skills) === JSON.stringify(["D:/team/skills"]), s2);
 out = run(null);
 check("저장소 폴더를 주지 않으면 복사하지 않음", !/추가|새 판/.test(out), out);
+
+// models.json: pi 처럼 주석과 끝의 쉼표를 받아들이고 새 모델을 넣음
+writeJson(path.join(tpl, "models.json"), { providers: { copilot: { baseUrl: "u", models: [{ id: "m1" }] } } });
+put(A("models.json"), '{\n  // 내 메모\n  "providers": { "copilot": { "baseUrl": "u", "models": [ { "id": "m1", "name": "a,b // 문자열" }, ] } },\n}\n');
+out = run(null);
+writeJson(path.join(tpl, "models.json"), { providers: { copilot: { baseUrl: "u", models: [{ id: "m1" }, { id: "m2" }] } } });
+out = run(null);
+let mj = readJson(A("models.json"));
+check("models.json 의 주석·끝 쉼표: 읽고 새 모델 추가 (문자열 안은 그대로)", mj.providers.copilot.models.map((m) => m.id).join() === "m1,m2"
+	&& mj.providers.copilot.models[0].name === "a,b // 문자열" && fs.existsSync(A("models.json.bak")), out);
+// 형식이 틀린 settings.json: 이번 새 항목은 고친 뒤 다시 실행할 때 넣음 ('지운 것'으로 보지 않음)
+writeJson(path.join(tpl, "settings.json"), { defaultModel: "m1", retry: { provider: { timeoutMs: 1 } }, newKey: 1 });
+put(A("settings.json"), '{ "defaultModel": "x", }');
+let failedRc = 0;
+try {
+	run(null);
+} catch (e) {
+	failedRc = e.status;
+	out = String(e.stdout);
+}
+check("형식이 틀리면 알리고 종료 코드 2", failedRc === 2 && out.includes("확인 필요"), out);
+writeJson(A("settings.json"), { defaultModel: "x" });
+out = run(null);
+check("고친 뒤 다시 실행하면 그때 새 항목 추가", readJson(A("settings.json")).newKey === 1, out);
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log("RESULT:", fails ? `FAIL (${fails})` : "PASS");
 process.exit(fails ? 1 : 0);

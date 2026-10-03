@@ -22,5 +22,5 @@ if not exist "%CHROME%" (
   echo chrome.exe not found. Edit the CHROME path in this file, or use start-edge.cmd.
   exit /b 1
 )
-start "" "%CHROME%" --remote-debugging-port=%PORT% --user-data-dir="%LOCALAPPDATA%\pi-copilot-chrome" --no-first-run --no-default-browser-check --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows "https://m365.cloud.microsoft/chat" "%JUPYTER_URL%"
+start "" /D "%LOCALAPPDATA%" "%CHROME%" --remote-debugging-port=%PORT% --user-data-dir="%LOCALAPPDATA%\pi-copilot-chrome" --no-first-run --no-default-browser-check --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows "https://m365.cloud.microsoft/chat" "%JUPYTER_URL%"
 echo Chrome started with remote debugging port %PORT%. Log in to Copilot (and Kubeflow for jupyter mode), then run pi in Git Bash.

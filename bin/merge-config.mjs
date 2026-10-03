@@ -14,9 +14,40 @@ const [tplDir, agentDir, kitHome] = process.argv.slice(2);
 const FILES = ["settings.json", "models.json"];
 const stateFile = path.join(agentDir, ".pi-agent-kit-template.json");
 
-const readJson = (f) => {
+/** 주석(//, /* *\/)과 끝의 쉼표 빼기 (pi 가 models.json 을 이렇게 읽으므로 같은 파일을 받아들여야 함). 문자열 안은 그대로 */
+function stripJsonc(s) {
+	let out = "";
+	let inStr = false;
+	let esc = false;
+	for (let i = 0; i < s.length; i++) {
+		const c = s[i];
+		if (inStr) {
+			out += c;
+			if (esc) esc = false;
+			else if (c === "\\") esc = true;
+			else if (c === '"') inStr = false;
+		} else if (c === '"') {
+			inStr = true;
+			out += c;
+		} else if (c === "/" && s[i + 1] === "/") {
+			while (i < s.length && s[i] !== "\n") i++;
+			out += "\n";
+		} else if (c === "/" && s[i + 1] === "*") {
+			i += 2;
+			while (i < s.length && !(s[i] === "*" && s[i + 1] === "/")) i++;
+			i++;
+		} else if (c === ",") {
+			let j = i + 1;
+			while (j < s.length && /\s/.test(s[j])) j++;
+			if (s[j] !== "}" && s[j] !== "]") out += c;
+		} else out += c;
+	}
+	return out;
+}
+const readJson = (f, lenient = false) => {
 	try {
-		return { ok: true, value: JSON.parse(fs.readFileSync(f, "utf8").replace(/^﻿/, "")) };
+		const text = fs.readFileSync(f, "utf8").replace(/^﻿/, "");
+		return { ok: true, value: JSON.parse(lenient ? stripJsonc(text) : text) };
 	} catch (e) {
 		return { ok: false, missing: e.code === "ENOENT", error: e.message };
 	}
@@ -148,16 +179,19 @@ let failed = false;
 for (const name of FILES) {
 	const t = readJson(path.join(tplDir, name));
 	if (!t.ok) continue;
-	state[name] = t.value;
 	const file = path.join(agentDir, name);
-	const u = readJson(file);
+	const u = readJson(file, name === "models.json");
 	if (!u.ok) {
 		if (!u.missing) {
-			console.log(`확인 필요: ${file} 의 형식이 잘못되어 새 항목을 넣지 못했습니다 (${u.error})`);
+			console.log(`확인 필요: ${file} 의 형식이 잘못되어 새 항목을 넣지 못했습니다 (${u.error}). 고친 뒤 install.sh 를 다시 실행하세요`);
 			failed = true;
-		}
+			// 지난 템플릿 기록은 그대로: 고친 뒤 다시 실행하면 이번 새 항목도 넣도록 (새 템플릿으로 바꾸면 '지운 것'으로 보게 됨)
+			if (prev[name] !== undefined) state[name] = prev[name];
+			else delete state[name];
+		} else state[name] = t.value;
 		continue;
 	}
+	state[name] = t.value;
 	const changes = [];
 	const merged =
 		name === "models.json"

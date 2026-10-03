@@ -27,7 +27,10 @@ for _a in "$@"; do
 done
 set -- "${PI_ARGS[@]}"
 if [ -n "$PI_JUPYTER" ]; then
-  _name="$(printf '%s' "$PI_JUPYTER" | sed 's#^~/##; s#^/##; s#[^A-Za-z0-9._-]#_#g')"
+  # 폴더 이름: 영문·숫자·._- 와 한글 등은 그대로, 나머지 기호(/ 공백 등)는 _ (바이트 단위로 바꾸면 한글 이름끼리 겹침)
+  _name="$(printf '%s' "$PI_JUPYTER" | sed 's#^~/##; s#^/##' | LC_ALL=C tr -c 'A-Za-z0-9._\200-\377-' '_')"
+  # 사용자가 pi 를 실행한 PC 폴더 (/upload·/download 의 PC 쪽 기준, /local 로 돌아갈 곳)
+  export PI_START_DIR="$(cygpath -m "$PWD" 2>/dev/null || pwd)"
   mkdir -p "$HOME/.pi/jupyter-work/${_name:-home}" && cd "$HOME/.pi/jupyter-work/${_name:-home}" || exit 1
   export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'  # /home/... 같은 노트북 경로를 Windows 경로로 바꾸지 않게
 fi
@@ -64,8 +67,8 @@ pi_browser_autostart() {
   for s in "$browser" "$([ "$browser" = chrome ] && echo edge || echo chrome)"; do  # 없으면 다른 브라우저로
     [ -f "$PI_HOME/copilot/start-$s.cmd" ] || continue
     # 주소는 인자 대신 환경변수로 넘김 (& 같은 기호를 cmd 가 명령으로 해석하지 않게)
-    if PI_CDP_PORT="$port" PI_JUPYTER_URL="$(pi_cfg jupyter_url)" \
-       cmd //c "$(cygpath -w "$PI_HOME/copilot/start-$s.cmd")" > /dev/null 2>&1 < /dev/null; then
+    if (cd "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" 2>/dev/null || cd "$HOME"; PI_CDP_PORT="$port" PI_JUPYTER_URL="$(pi_cfg jupyter_url)" \
+       cmd //c "$(cygpath -w "$PI_HOME/copilot/start-$s.cmd")" > /dev/null 2>&1 < /dev/null); then
       echo "[pi] Copilot 전용 창($s)을 띄웠습니다. 처음이면 그 창에서 Copilot 에 로그인하세요." >&2
       for i in $(seq 1 20); do (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && return 0; sleep 0.5; done
       return 0
@@ -89,7 +92,10 @@ pi_relay_autostart() {
   case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) script="$(cygpath -w "$script")" ;; esac
   log="$agent/copilot-relay.log"
   mkdir -p "$agent"
-  nohup "$py" "$script" >> "$log" 2>&1 < /dev/null &
+  # 로그가 5MB 를 넘으면 하나 전 것(.1)으로 돌려 둔다 (중계 서버를 켤 때만: 켜져 있는 동안은 파일을 쓰는 중)
+  [ -f "$log" ] && [ "$(wc -c < "$log")" -gt 5242880 ] 2>/dev/null && mv -f "$log" "$log.1" 2>/dev/null
+  # pi 설정 폴더에서 켠다: Windows 는 실행 중인 프로그램이 있는 폴더를 지우거나 이름을 바꿀 수 없음 (작업 폴더가 잠기지 않게)
+  (cd "$agent" && nohup "$py" "$script" >> "$log" 2>&1 < /dev/null &)
   for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open && break; sleep 0.5; done
   if ! pi_port_open; then
     echo "[pi] 중계 서버를 켜지 못했습니다. 로그($log) 끝부분:" >&2

@@ -21,5 +21,5 @@ if not exist "%EDGE%" (
   echo msedge.exe not found. Edit the EDGE path in this file.
   exit /b 1
 )
-start "" "%EDGE%" --remote-debugging-port=%PORT% --user-data-dir="%LOCALAPPDATA%\pi-copilot-edge" --no-first-run --no-default-browser-check --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows "https://m365.cloud.microsoft/chat" "%JUPYTER_URL%"
+start "" /D "%LOCALAPPDATA%" "%EDGE%" --remote-debugging-port=%PORT% --user-data-dir="%LOCALAPPDATA%\pi-copilot-edge" --no-first-run --no-default-browser-check --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows "https://m365.cloud.microsoft/chat" "%JUPYTER_URL%"
 echo Edge started with remote debugging port %PORT%. Log in to Copilot (and Kubeflow for jupyter mode), then run pi in Git Bash.

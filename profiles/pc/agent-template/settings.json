@@ -3,6 +3,7 @@
   "defaultModel": "gpt-6.0-sol",
   "enableInstallTelemetry": false,
   "retry": {
+    "enabled": false,
     "provider": {
       "timeoutMs": 900000,
       "maxRetries": 0
