@@ -7,6 +7,7 @@ Copilot 웹 채팅과 이어 주는 중계기를 더했습니다. pi 원본 코�
 pi 는 터미널에서 동작합니다. 할 일을 말로 지시하면 LLM 과 주고받으면서 파일을 읽고 고치고, 명령을 실행해 결과를 확인합니다.
 
 > **처음이면 [한 장 요약 (빠른 시작)](docs/빠른시작.md)** 부터 보세요. 설치, 매일 쓰는 법, 자주 쓰는 명령(`/plan`, `@파일`, `/undo`, `/remember` 등)이 한 장에 있습니다.
+> 사람이 직접 하는 일(반입, 설치, 업데이트, 되돌리기, 설정, 문제 보고)은 [수동 작업 절차](docs/수동-작업-절차.md) 에 순서대로 있습니다.
 
 ```
 [업무 PC]
@@ -55,11 +56,14 @@ pi 는 터미널에서 동작합니다. 할 일을 말로 지시하면 LLM 과 �
 아래 명령은 모두 **Git Bash** 에서 실행합니다. `~` 는 Windows 사용자 폴더(`C:\Users\<아이디>`)입니다.
 
 ### 2-1. 내려받아 풀기
-GitHub 저장소 화면의 **Code > Download ZIP** 으로 `pi-agent-like-agent-main.zip` 을 받고, zip 이 있는 폴더에서 (예: `cd ~/Downloads`):
+이미 `~/tools/pi` 가 있으면 설치하지 말고 [9장](#9-새-버전으로-바꾸기) 대로 바꾸세요.
+
+업무 PC 는 인터넷이 안 되므로, 인터넷 PC 에서 GitHub 저장소 화면의 **Code > Download ZIP** 으로 받은 `pi-agent-like-agent-main.zip` 을
+사내 반입 절차로 업무 PC 에 옮깁니다 ([수동 작업 절차 1장](docs/수동-작업-절차.md#1-반입과-배포-배포-담당)). zip 이 있는 폴더에서 (예: `cd ~/Downloads`):
 ```bash
 mkdir -p ~/tools && unzip -q pi-agent-like-agent-main.zip -d ~/tools/ && mv ~/tools/pi-agent-like-agent-main ~/tools/pi
 ```
-이미 `~/tools/pi` 가 있으면 [9장](#9-새-버전으로-바꾸기) 대로 하세요.
+- 받은 파일 이름이 `pi-agent-like-agent-main (1).zip` 처럼 바뀌었으면 명령의 이름도 바꿉니다 (공백이 있으면 따옴표로 감쌈).
 
 ### 2-2. Node.js 확인
 ```bash
@@ -70,14 +74,16 @@ bash ~/tools/pi/check-node.sh
   ```bash
   pip install --user nodejs-wheel-binaries==24.19.0
   ```
+  (`pip` 를 찾지 못하면 `python -m pip install --user nodejs-wheel-binaries==24.19.0`)
 - 자세한 내용(portable VS Code, 호환 모드, Node 를 찾는 순서): [docs/설치.md](docs/설치.md#1-nodejs-확인)
 
 ### 2-3. 설치
 ```bash
 bash ~/tools/pi/install.sh pc
 ```
-- 설정 템플릿을 `~/.pi/agent` 에 복사하고, `~/.bashrc` 에 PATH 를 넣습니다.
+- 설정 템플릿을 `~/.pi/agent` 에 복사하고, `~/.bashrc` 에 PATH 를 넣습니다 (Git Bash 창이 `~/.bashrc` 를 읽지 않는 경우 `~/.bash_profile` 도 맞춤).
 - **새 Git Bash 창**을 열고 `pi --version` 이 나오면 설치된 것입니다.
+- Node 를 찾지 못했다는 안내가 나왔으면 2-2 대로 준비한 뒤 이 명령을 한 번 더 실행합니다 (기본 명령·스킬 복사와 설정 갱신에 Node 를 씀).
 
 ### 2-4. 처음 실행과 Copilot 로그인
 ```bash
@@ -86,7 +92,8 @@ pi
 ```
 1. `pi` 를 실행하면 **Chrome 전용 창이 자동으로 뜹니다** (`[pi] Copilot 전용 창(chrome)을 띄웠습니다 ...`).
 2. 그 창에서 **Copilot 에 로그인**합니다. 처음 한 번만 하면 됩니다 (로그인은 전용 프로필에 남음).
-3. pi 화면에서 `hello.py 를 만들어서 hello 를 출력하고 실행해줘` 처럼 지시해 봅니다. 파일이 생기고 실행 결과가 나오면 준비 끝입니다.
+3. Copilot 채팅 화면이 나오면 pi 화면에서 `hello.py 를 만들어서 hello 를 출력하고 실행해줘` 처럼 지시해 봅니다.
+   첫 요청은 새 대화를 여느라 1~2분 걸립니다 (상태 줄에 진행이 보임). 파일이 생기고 실행 결과가 나오면 준비 끝입니다.
 
 전용 창에 대해:
 - 평소 쓰는 Chrome 과 **따로 뜨는 창**입니다 (전용 프로필 `%LOCALAPPDATA%\pi-copilot-chrome`). 평소 Chrome 의 탭·로그인은 건드리지 않습니다.
@@ -112,6 +119,9 @@ python ~/tools/pi/copilot/diag.py --report
 
 - `--report` 는 요약만 보여 줍니다. 나머지 진단은 마지막 줄에 `결과: 정상` 이 나오면 됩니다.
 - **문제가 생기면 `--report` 화면을 찍어 보내 주세요.** 상황 대부분이 한 장에 담깁니다. pi 를 쓰는 중이면 `/doctor` 로 같은 내용을 볼 수 있습니다.
+- `--send`, `--model`, `--delete-test`, `--input-limit` 은 전용 창의 Copilot 탭을 직접 움직입니다. **pi 가 일하지 않을 때** 실행하고,
+  `--send` 가 만든 시험 대화는 Copilot 목록에서 직접 지우세요.
+- `python` 이 Microsoft Store 를 띄우거나 실행되지 않으면 pi 안에서 `/doctor` 를 쓰세요 (pi 는 Python 을 따로 찾아 씀).
 
 ## 3. 기본 사용법
 
@@ -152,7 +162,7 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 - jupyter 모드에서는 노트북 작업 폴더의 파일이 나옵니다. `.git`, `node_modules`, `__pycache__`, `.venv` 등은 빼고 6단계 깊이까지 보여 줍니다.
 - 보낼 때 `@` 로 적은 텍스트 파일은 **내용이 요청에 함께 붙습니다.** LLM 이 파일을 따로 읽는 왕복(한 번에 7~20초)이 줄어듭니다.
   파일 하나 6000자, 모두 8000자, 5개까지이고, 넘으면 앞부분만 붙인 뒤 나머지는 LLM 이 읽게 합니다.
-  폴더·노트북(`.ipynb`)·바이너리·없는 파일은 붙이지 않습니다 (글은 그대로 갑니다).
+  폴더·노트북(`.ipynb`)·바이너리·없는 파일은 붙이지 않습니다 (글은 그대로 갑니다). `/` 로 시작하는 명령(`/explain @a.py` 등)에 적은 파일도 붙이지 않습니다.
 
 ### 3-3. 세션 (대화 기록)
 pi 는 대화를 자동으로 저장합니다 (`~/.pi/agent/sessions/`, 작업 폴더별).
@@ -252,10 +262,14 @@ pi --jupyter work/myproject -c       # 그 프로젝트의 지난 대화를 이�
 |---|---|
 | `/jupyter work/mlproj` (또는 `/web work/mlproj`) | 이후 명령·파일 작업을 노트북의 `~/work/mlproj` 에서 (없으면 만듦) |
 | `/jupyter` | 마지막으로 쓴 노트북 폴더로 다시 |
-| `/local` | 다시 이 PC 에서 (pi 를 시작한 폴더) |
+| `/local` | 다시 이 PC 에서 (pi 를 실행한 폴더) |
 | `/local ~/work/프로젝트` | 다시 이 PC 에서, 그 폴더를 작업 폴더로 |
 
 - 대화 내용·지침·모델은 그대로 이어집니다. 화면 아래 상태 줄의 `Jupyter: …` 가 지금 노트북 위치입니다 (없으면 PC).
+- 바꾼 위치는 `/new`, `/resume`, `/reload` 뒤에도 그대로입니다. 바꾼 뒤 첫 질문은 Copilot 새 대화라 1~2분 걸립니다 (작업 폴더가 바뀌어 지침을 다시 보냄).
+- jupyter 모드의 경로: 상대 경로는 노트북 작업 폴더, `~` 는 노트북 홈 기준입니다. `C:/...`, `//서버/...` 처럼 PC 경로를 적으면 PC 파일을 읽고 씁니다
+  (pi 설정 폴더 `~/.pi/agent` 도 PC 의 것: 스킬 만들기 등).
+- 노트북 폴더 이름에는 한글도 됩니다. `pi --jupyter` 로 시작한 세션 기록은 PC 의 `~/.pi/jupyter-work/<폴더 이름>` 에 노트북 폴더별로 따로 쌓입니다.
 - 연결에 실패하거나 없는 폴더를 주면 위치를 바꾸지 않습니다.
 - 노트북 쪽 명령은 JupyterLab 터미널 `pibridge` 에서 실행됩니다. JupyterLab 왼쪽 '실행 중인 터미널과 커널' 에서 열면 실시간으로 보입니다.
   pi 여러 개 동시 실행(`max_tabs`)을 켜면 두 번째 pi 부터는 `pibridge2`, `pibridge3` … 에서 실행됩니다.
@@ -279,6 +293,7 @@ pi --jupyter work/myproject -c       # 그 프로젝트의 지난 대화를 이�
 - 노트북 홈 밖이나 숨김 폴더(`.` 으로 시작)의 파일은 50MB 까지만 받을 수 있습니다.
 - 경로에 공백이 있으면 따옴표로 감쌉니다: `/upload "회의 자료.pdf"`
 - 노트북 쪽은 JupyterLab 탭이 열려 있으면 jupyter 모드가 아니어도 됩니다.
+- PC 쪽 상대 경로는 PC 작업 폴더 기준입니다. `pi --jupyter` 로 시작했으면 pi 를 실행한 폴더입니다.
 
 ## 6. 지침, 스킬, 메모리
 pi 에게 무엇을 어디에 적어 두는지 정리한 표입니다.
@@ -350,7 +365,7 @@ description: 주간 업무 보고서를 쓸 때 사용. 이번 주 git 기록을
 | 스킬 | 쓰는 때 |
 |---|---|
 | `skill-creator` | "○○ 스킬 만들어줘" 하면 형식에 맞게 만들어 줌. 팀 노하우를 스킬로 쌓기 쉬움 |
-| `office-files` | 엑셀·워드·PDF·한글(hwp, hwpx) 파일 읽기·만들기 (pandas, openpyxl, python-docx, pypdf 등. 없으면 사내 미러로 `--user` 설치) |
+| `office-files` | 엑셀·워드 파일 읽기·만들기, PDF·한글(hwp, hwpx) 파일 읽기 (pandas, openpyxl, python-docx, pypdf 등. 없으면 사내 미러로 `--user` 설치) |
 | `data-analysis` | CSV·엑셀 탐색, 요약 통계, 집계. 그래프는 파일로 저장 (한글 글꼴 요령 포함) |
 | `kubeflow-notebook` | 노트북 요령: GPU·메모리·디스크 확인, `pip --user`, 긴 작업은 nohup + 로그, 홈(PVC) 보존 |
 | `korean-report` | 주간보고·작업 결과 보고서·회의록 (개조식, 양식 파일 포함) |
@@ -423,13 +438,15 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 | 스킬 | PC `~/.pi/agent/skills/` | SKILL.md 는 PC 에서 읽음. 단 스킬에 딸린 스크립트는 명령이 노트북에서 실행되므로 쓸 수 없음 |
 | 세션 기록 | PC `~/.pi/agent/sessions/` | 노트북 프로젝트별로 따로 쌓임 (PC 작업 세션과 목록이 따로) |
 
-- "PC 에 있는 이 문서 읽어줘" 같은 요청은 노트북에서 찾습니다. PC 파일이 필요하면 `/upload` 로 노트북에 올리거나, `/local` 로 바꾼 뒤 요청하세요.
+- jupyter 모드에서 경로만 적으면 노트북에서 찾습니다. PC 파일은 `C:/Users/...` 처럼 드라이브부터 적으면 PC 에서 읽고 씁니다
+  (또는 `/upload` 로 올리거나 `/local` 로 바꾼 뒤 요청). 스킬 만들기(`~/.pi/agent/skills`)는 jupyter 모드에서도 PC 에 만들어집니다.
 - ML 작업이라면: 공통 규칙(코딩 스타일, 보고 방식)은 PC `~/.pi/agent/AGENTS.md`, 프로젝트 규칙(데이터 위치, 실험 방법)은 노트북 `~/work/<프로젝트>/AGENTS.md` 에 두고,
   `pi --jupyter work/<프로젝트>` 로 작업한 뒤 다음 날은 `-c` 를 붙여 이어 갑니다.
 
 ## 7. Copilot 대화 관리
 - **같은 대화에 이어서:** 중계 서버는 pi 세션 하나를 Copilot 대화 하나로 이어 갑니다. 처음에는 지침·도구 설명·요청을 함께 보내고, 그 뒤로는 새로 추가된 부분만 보냅니다.
-- **새 대화가 열리는 때:** 새 세션(`/new`, pi 다시 시작. `-c` 로 이어 시작해도 해당), 지침을 바꾸고 `/reload`, [3-6](#3-6-이-구성에서-피할-명령)의 기록을 바꾸는 명령,
+- **새 대화가 열리는 때:** 새 세션(`/new`, pi 다시 시작. `-c` 로 이어 시작해도 해당), 지침을 바꾸고 `/reload`, `/jupyter`·`/local` 로 실행 위치를 바꾼 다음 질문, `/kit share`·`/kit unshare`,
+  [3-6](#3-6-이-구성에서-피할-명령)의 기록을 바꾸는 명령,
   `Esc` 로 멈춘 다음 질문, 대화당 질문 수(`max_questions_per_chat`, 기본 100)에 닿았을 때.
   새 대화에는 지침과 최근 기록(오래된 것은 한 줄 요약)을 다시 넣으므로 1~2분 걸립니다.
 - **끝난 대화 자동 삭제:** pi 세션이 끝나면(종료, `/new` 등) 그 세션이 쓰던 Copilot 대화를 왼쪽 목록에서 지웁니다. 맥락은 pi 세션에 남아 있으므로 Copilot 쪽 대화는 남길 필요가 없습니다.
@@ -463,39 +480,38 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 - 그래도 모든 위험을 막지는 못합니다. 중요한 폴더는 git 으로 관리하고 바뀐 내용을 확인하세요. 시킨 범위를 벗어나는 작업이 보이면 `Esc` 로 멈춥니다.
 
 ## 9. 새 버전으로 바꾸기
-실행 중인 pi 를 모두 끈 뒤, 받은 zip 을 지정해 `update.sh` 를 실행합니다 (`~/tools/pi` 밖의 폴더에서).
+실행 중인 pi 를 모두 끄고 Copilot 전용 창도 닫은 뒤, 받은 zip 의 위치를 `Z=` 뒤에 적어 실행합니다 (`~/tools/pi` 밖의 폴더에서).
 ```bash
 cd ~
-bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
+Z=~/Downloads/pi-agent-like-agent-main.zip
+unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 ```
+- 새 판의 `update.sh` 를 꺼내 실행합니다. 지금 판에 `update.sh` 가 없는 예전 판(2026-10-02 이전)도 이 방법으로 바꿉니다.
+  이미 새 판을 쓰고 있으면 `bash ~/tools/pi/update.sh "$Z"` 도 같습니다.
 - 하는 일: zip 확인 → 중계 서버 끄기 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 판을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
-- 끝에 `지금 판 -> 새 판` 과 확인할 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 판으로 시작합니다 (중계 서버도 새 판으로 켜짐).
+- 끝에 `지금 판 -> 새 판` 과 확인할 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 판으로 시작합니다 (중계 서버도 새 판으로 켜짐). `/doctor` 의 '버전' 줄로 확인합니다.
 - 폴더가 사용 중이라 이름을 바꾸지 못하면 **아무것도 바꾸지 않고 멈춥니다.** pi, Copilot 전용 창, 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요.
-- 지금 판은 `python ~/tools/pi/copilot/diag.py --report` 의 '버전' 줄에서 볼 수 있습니다.
+- 받은 zip 이 지금과 같은 판이면 멈춥니다 (이전 판 폴더를 덮지 않도록). 브라우저가 `(1)` 을 붙여 저장한 새 파일인지 확인하고, 같은 판을 다시 깔려면 끝에 `--force`.
+- 메시지별 할 일, `update.sh` 가 안 될 때의 손 절차, 바꾼 뒤 5분 점검: [수동 작업 절차 3·4장](docs/수동-작업-절차.md#3-새-판으로-바꾸기)
 
 그대로 남는 것:
 - `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 판에 추가된 항목(새 모델 등)만** 넣습니다. 바뀐 파일은 `갱신:` 으로 알려 주고, 이전 파일은 `.bak` 으로 남깁니다.
 - 직접 고친 값과 직접 지운 항목, 내 설정 파일(`~/.pi/agent/bridge.json`), 지침(AGENTS.md), 스킬, 세션 기록은 그대로입니다.
-- 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다.
+- 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다. 새 판에서 빠진 키트 확장은 `~/.pi/agent/extensions.removed/` 로 옮깁니다 (직접 만든 확장은 그대로).
 - 기본 명령·스킬(`~/.pi/agent/prompts`, `skills`)은 고치지 않은 것만 새 판으로 바뀝니다. 직접 고친 것과 지운 것은 그대로입니다.
 - 예전 판에서 `copilot/bridge.json` 을 직접 고쳤다면 `update.sh` 가 그 항목을 알려 줍니다. 그 항목을 내 설정 파일([10장](#10-설정))로 옮기세요.
-- 잘 동작하면 `~/tools/pi.old` 는 지워도 됩니다.
+- 잘 동작하면 `~/tools/pi.old` 는 지워도 됩니다 (지우면 그 뒤로는 zip 으로만 되돌릴 수 있음).
 
-**`update.sh` 가 없는 예전 판에서 (처음 한 번만, 손으로):**
-1. 실행 중인 pi 를 모두 끄고, Copilot 전용 창도 닫습니다.
-2. zip 이 있는 폴더에서:
-   ```bash
-   rm -rf ~/tools/pi.old && mv ~/tools/pi ~/tools/pi.old
-   unzip -q pi-agent-like-agent-main.zip -d ~/tools/ && mv ~/tools/pi-agent-like-agent-main ~/tools/pi
-   bash ~/tools/pi/install.sh pc
-   ```
+**이전 판으로 되돌리기:** `~/tools/pi.old` 에는 바로 앞 판 하나만 남습니다 (다음 업데이트 때 지워짐). 받은 zip 은 보관해 두세요.
+- 이전 판 zip 이 있으면: `cd ~ && bash ~/tools/pi/update.sh <이전 판 zip>` (지금 판은 `pi.old` 로 남고, 그 판에 없는 확장은 치움)
+- zip 이 없으면 `pi.old` 로 되돌리는 절차: [수동 작업 절차 5장](docs/수동-작업-절차.md#5-이전-판으로-되돌리기)
 
 ## 10. 설정
 | 파일 | 내용 |
 |---|---|
 | `~/.pi/agent/bridge.json` | **내 설정 파일.** 아래 항목 중 바꾸고 싶은 것만 적습니다. 업데이트해도 그대로 남습니다 |
 | `~/tools/pi/copilot/bridge.json` | 중계 서버 설정의 기본값 (저장소에 들어 있는 파일이라 업데이트하면 새 판 값으로 바뀜. 직접 고치지 마세요) |
-| `~/.pi/agent/settings.json` | pi 설정: 기본 모델(`defaultModel`), 응답 대기(`retry.provider.timeoutMs`), Git Bash 경로(`shellPath`) |
+| `~/.pi/agent/settings.json` | pi 설정: 기본 모델(`defaultModel`), 응답 대기(`retry.provider.timeoutMs`), Git Bash 경로(`shellPath`), 자동 다시 시도 끔(`retry.enabled: false`: 오류·사용량 제한 때 같은 질문을 바로 여러 번 보내지 않게. 오류가 나면 같은 요청을 다시 보내면 이어서 진행) |
 | `~/.pi/agent/models.json` | pi 가 쓸 모델 목록 |
 
 **내 설정 파일 예시** (`~/.pi/agent/bridge.json`):
@@ -506,6 +522,8 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
   "copilot_models": { "gpt-7": "GPT 7" }
 }
 ```
+- 항목은 맨 바깥 `{ }` 안에 적습니다 (`_예시` 안에 넣으면 적용되지 않음). 파일은 **UTF-8** 로 저장합니다.
+- 새 모델을 `/model` 목록에 보이게 하려면 `~/.pi/agent/models.json` 에도 그 id 를 넣습니다 ([4장](#4-모델-고르기)).
 - 적은 항목만 기본값을 덮어씁니다. `copilot_models` 같은 표는 항목별로 합쳐집니다 (위 예시는 모델 하나를 더하는 것).
 - `_` 로 시작하는 항목(`_설명` 등)은 설명용이라 무시됩니다.
 - 형식이 틀리면 `pi` 를 실행할 때 `[pi] 설정 파일 오류: ... (줄 n, 칸 m)` 으로 알려 줍니다.
@@ -533,13 +551,13 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 | `notify_after_seconds` | `30` | 요청이 이 초보다 오래 걸리면 끝날 때 터미널 벨과 알림 (0 이면 끔) |
 | `default_mode` | `auto` | pi 를 시작할 때의 작업 모드: `plan`(계획) · `ask`(확인) · `auto`(자동) ([3-4](#3-4-작업-모드-plan-mode)) |
 
-- **설정을 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다.** 아래 명령으로 끄면 다음 `pi` 실행 때 새 설정으로 켜집니다.
+- **설정을 고친 뒤에는 중계 서버를 다시 켜야 적용됩니다.** 실행 중인 pi 를 모두 끈 뒤 아래 명령으로 끄면, 다음 `pi` 실행 때 새 설정으로 켜집니다 (`/doctor` 의 '내 설정' 줄로 확인).
   ```bash
   curl -s -X POST http://127.0.0.1:8765/shutdown
   ```
   (`browser`, `auto_start_browser`, `jupyter_url`, `default_mode` 는 `pi` 를 실행할 때마다 읽고, `guard` 로 시작하는 항목과 `notify_after_seconds` 는 고치면 바로 적용됩니다.)
 - JSON 파일에 Windows 경로를 쓸 때는 `/` 로 씁니다 (`"C:/Users/..."`). `\` 를 하나만 쓰면 JSON 오류가 납니다.
-- 전체 항목: [copilot/README-copilot.md 3장](copilot/README-copilot.md#3-설정-copilotbridgejson-중계-서버-옵션)
+- 중계 서버 항목 전체: [copilot/README-copilot.md 3장](copilot/README-copilot.md#3-설정-copilotbridgejson-중계-서버-옵션) (`guard`·`notify_after_seconds`·`default_mode` 는 위 표)
 - 중계 서버를 다른 에이전트에서 OpenAI 호환 API 로 쓰기: [copilot/README-copilot.md 5장](copilot/README-copilot.md#5-다른-에이전트에서-쓰기-중계-서버-api)
 
 ## 11. 문제 해결
@@ -547,12 +565,14 @@ bash ~/tools/pi/update.sh ~/Downloads/pi-agent-like-agent-main.zip
 
 | 증상 | 해결 |
 |---|---|
-| `pi: command not found` | 새 Git Bash 창을 여세요. 지금 창에서 바로 쓰려면 `export PATH="$HOME/tools/pi/bin:$PATH"` |
+| `pi: command not found` | 새 Git Bash 창을 여세요. 그래도 안 되면 `bash ~/tools/pi/install.sh pc` 를 다시 실행 (Git Bash 창이 읽는 파일에 PATH 를 넣음). 지금 창에서 바로 쓰려면 `export PATH="$HOME/tools/pi/bin:$PATH"` |
 | Node 를 찾지 못했다는 메시지 | `bash ~/tools/pi/check-node.sh` 결과대로 준비 ([2-2](#2-2-nodejs-확인)) |
 | 시작 화면에 `Warning: fd not found` / `ripgrep not found` | 무시해도 됩니다. 기본 도구(명령 실행, 파일 읽기·쓰기·고치기)는 이 둘 없이 동작하고, 입력창의 `@` 파일 목록도 fd 없이 나옵니다 |
 | `브라우저 원격 디버깅 포트(9222)에 연결할 수 없습니다` | 전용 창이 꺼져 있습니다. `pi` 를 다시 실행하면 다시 띄웁니다 (또는 `start-chrome.cmd`). 평소 쓰는 Chrome 창으로는 연결되지 않습니다 |
 | `Copilot 탭을 찾지 못했습니다` | 전용 창에 Copilot 탭이 열려 있고 로그인돼 있는지 확인 |
-| `중계 서버에 연결할 수 없습니다` | `~/.pi/agent/copilot-relay.log` 확인. Python 을 못 찾으면 `~/.bashrc` 에 `export PI_PYTHON=/c/.../python.exe` |
+| `Connection error.` 또는 `중계 서버에 연결할 수 없습니다` | pi 를 끄고 다시 실행하면 중계 서버도 다시 켜집니다. 그래도 안 되면 `~/.pi/agent/copilot-relay.log` 끝부분 확인. Python 을 못 찾으면 `~/.bashrc` 에 `export PI_PYTHON=/c/.../python.exe` |
+| JupyterLab 로그인이 풀림 (jupyter 모드) | 전용 창의 JupyterLab 탭에서 다시 로그인한 뒤 `/jupyter` |
+| 업데이트가 `이미 같은 판` 으로 멈춤 | 받은 zip 이 새 판인지 확인 ([9장](#9-새-버전으로-바꾸기)) |
 | `429 Copilot 사용량 제한에 걸렸습니다` | 계정 단위의 일시 제한입니다. 기다렸다가 같은 요청을 다시 하면 이어서 진행합니다. 자주 걸리면 `max_questions_per_minute` |
 | 오래 쓰다 보면 Copilot 이 멈추거나 형식을 틀림 | 대화가 너무 길어진 탓입니다. `/new` 로 새 세션을 시작하세요 (필요한 맥락은 AGENTS.md 나 메모 파일로) |
 | `같은 작업(...)이 계속 반복되어 여기서 멈췄습니다` | Copilot 이 같은 작업을 되풀이해서 중계 서버가 끊은 것입니다. 요청을 나누거나 바꿔서 다시 하세요 |
@@ -586,8 +606,8 @@ bash ~/tools/pi/install.sh jupyter
 | `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 6개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
-| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`) |
-| `docs/` | [한 장 요약](docs/빠른시작.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
+| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
+| `docs/` | [한 장 요약](docs/빠른시작.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**
 - 저장소 밖에서 받아야 하는 것은 **PyPI 패키지뿐**입니다 ([requirements.txt](requirements.txt)).

@@ -1,10 +1,10 @@
 # Jupyter용 pi — 사내 vLLM 연결
 
 `jupyter` 설정은 **Kubeflow JupyterLab 터미널**에서 pi 를 실행하고, 사내 **vLLM**(OpenAI 호환 API)을 LLM 으로 씁니다.
-설치는 [설치.md](설치.md) 의 1~2단계(`bash install.sh jupyter`)를 먼저 끝내세요.
+설치는 [설치.md](설치.md) 의 0~2단계(풀기, Node 확인, `bash install.sh jupyter`)를 먼저 끝내세요.
 
 ## 1. models.json 수정
-`~/.pi/agent/models.json` 을 열어 세 곳을 바꿉니다.
+`~/.pi/agent/models.json` 을 열어 아래 항목을 바꿉니다.
 
 | 항목 | 넣을 값 |
 |---|---|

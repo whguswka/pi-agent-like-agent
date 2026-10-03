@@ -70,7 +70,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `jupyter_url_contains` | JupyterLab 탭이 여러 개일 때 고를 주소 일부 (예: `/notebook/내네임스페이스/내노트북/`) |
 | `input_selector`, `send_button_selector`, `new_chat_selector`, `reply_selector` | 자동 인식이 안 될 때 CSS 선택자를 직접 지정. diag.py 가 후보를 보여줌 |
 | `use_stream` | Copilot WebSocket 원문으로 답 읽기 (기본 true) |
-| `first_reply_timeout_seconds` / `reply_timeout_seconds` | Copilot 답이 시작될 때까지 / 끝날 때까지 기다리는 최대 초 (기본 300 / 900). 응답이 느린 환경이면 늘리세요 |
+| `first_reply_timeout_seconds` / `reply_timeout_seconds` | Copilot 답이 시작될 때까지 / 끝날 때까지 기다리는 최대 초 (기본 300 / 900). 응답이 느린 환경이면 늘리세요. 늘릴 때는 `~/.pi/agent/settings.json` 의 `retry.provider.timeoutMs`(밀리초)도 함께 |
 | `copilot_model` | pi 모델 id 가 `copilot` 일 때 고를 Copilot 모델 (화면 이름, 기본 `GPT 6.0 Sol`). 비우면 화면에 선택된 모델 그대로 |
 | `copilot_models` | pi 모델 id → Copilot 화면의 모델 이름 표. 표에 없는 id 는 id 자체를 화면 이름으로 씀 |
 | `model_button_selector` | 모델 메뉴 버튼을 자동으로 못 찾을 때 CSS 선택자 (`diag.py --model` 이 버튼 HTML 을 보여 줌) |
@@ -94,7 +94,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 |---|---|
 | pi 에 `Copilot 탭을 찾지 못했습니다` | start-chrome.cmd(또는 start-edge.cmd)로 연 전용 창에 Copilot 탭이 열려 있고 로그인돼 있는지 |
 | pi 에 `브라우저 원격 디버깅 포트(9222)에 연결할 수 없습니다` | 전용 창이 꺼져 있음. `pi` 를 다시 실행하면 자동으로 띄웁니다 (또는 start-chrome.cmd). 평소 쓰는 Chrome 창으로는 연결되지 않습니다 |
-| pi 에 `중계 서버에 연결할 수 없습니다` | `~/.pi/agent/copilot-relay.log` 확인. Python 을 못 찾으면 `export PI_PYTHON=/c/.../python.exe` |
+| pi 에 `Connection error.` 또는 `중계 서버에 연결할 수 없습니다` | pi 를 끄고 다시 실행하면 중계 서버도 다시 켜집니다. 그래도 안 되면 `~/.pi/agent/copilot-relay.log` 확인. Python 을 못 찾으면 `export PI_PYTHON=/c/.../python.exe` |
 | `JupyterLab 탭을 찾지 못했습니다` (jupyter 모드) | 같은 전용 창에 JupyterLab 이 열려 있는지 (평소 Chrome 에 열린 탭은 쓸 수 없음). 여러 개면 `jupyter_url_contains` 지정 |
 | `JupyterLab 로그인이 만료되었습니다` | 전용 창의 JupyterLab 탭을 새로고침해 다시 로그인 (중계 서버는 자동으로 다시 붙음) |
 | `Copilot 입력창을 찾지 못했습니다` | `diag.py` 결과의 선택자를 `input_selector` 에 지정 |
@@ -102,10 +102,10 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | Copilot 이 "실행할 수 없다" 며 거절 | 중계 서버가 한 번 설명하고 다시 부탁합니다. 계속되면 요청을 더 구체적으로 적어 보세요 |
 | pi 에 `같은 작업(...)이 계속 반복되어 여기서 멈췄습니다` | Copilot 이 같은 작업을 되풀이해서 중계 서버가 끊은 것입니다. 요청을 나누거나 바꿔서 다시 하세요 |
 | 오래 쓰다 보면 Copilot 이 중간에 멈추거나 형식을 틀림 | 대화가 아주 길어진 탓입니다. pi 에서 새 세션(`/new`)을 시작하면 Copilot 도 새 채팅으로 시작합니다 |
-| 답이 잘리거나 이상함 | `python copilot/diag.py --send` 로 확인. `use_stream` 이 true 인지 |
+| 답이 잘리거나 이상함 | pi 가 일하지 않을 때 `python ~/tools/pi/copilot/diag.py --send` 로 확인 (시험 대화는 직접 지움). `use_stream` 이 true 인지 |
 | 노트북에 `pi-bridge` 폴더가 생김 | jupyter 모드의 실행 기록 폴더입니다. pi 를 쓰지 않을 때 지워도 됩니다 |
-| 로그에 `Copilot 모델 선택 실패` | 모델을 못 고르면 지금 모델로 계속합니다. `python copilot/diag.py --model` 로 메뉴 항목 이름을 보고 `models.json`/`bridge.json` 의 이름을 화면과 똑같이 맞추세요 |
-| 로그에 `지난 Copilot 대화 삭제 실패` | 3번까지 다시 시도합니다. `python copilot/diag.py --chats --delete-test` 결과를 보고 `chat_item_selector` 등을 조정하세요. 기록은 `~/.pi/agent/copilot-chats.json` |
+| 로그에 `Copilot 모델 선택 실패` | 모델을 못 고르면 지금 모델로 계속합니다. `python ~/tools/pi/copilot/diag.py --model` 로 메뉴 항목 이름을 보고 `models.json`/`bridge.json` 의 이름을 화면과 똑같이 맞추세요 |
+| 로그에 `지난 Copilot 대화 삭제 실패` | 3번까지 다시 시도합니다. `python ~/tools/pi/copilot/diag.py --chats --delete-test` 결과를 보고 `chat_item_selector` 등을 조정하세요. 기록은 `~/.pi/agent/copilot-chats.json` |
 
 ## 5. 다른 에이전트에서 쓰기 (중계 서버 API)
 중계 서버는 pi 가 아닌 다른 에이전트도 그대로 쓸 수 있습니다. 주소는 `http://127.0.0.1:8765` (기본).
