@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-03.2"
+RELAY_VERSION = "2026-10-03.3"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -194,6 +194,38 @@ UNFINISHED_RE = re.compile(r"다음 (블록|단계|작업)을? ?(을 )?(드리|�
 # 사용자가 도구 없이 답하라고 했거나 계획 모드(pi 의 /plan, 요청 앞에 "[계획 모드]")면 도구를 쓰라고 다시 부탁하지 않는다
 #  (계획을 적은 답에는 "다음 단계는", 코드 예시, "실행할 수 없" 같은 말이 자연스럽게 들어감)
 NO_TOOLS_RE = re.compile(r"도구는? (쓰지|사용하지) ?말|도구 없이|\[계획 모드\]")
+
+
+# pi 가 맥락 한도에 닿아 앞 대화를 요약할 때(compaction, /compact) 보내는 요청: 대화 전체가 메시지 하나(<conversation>)에 들어 있다.
+# 아주 긴 세션이면 수십만~수백만 자 -> 조각(max_chars)마다 Copilot 왕복이 한 번씩이라 오래 걸리고, 대화 한도에 걸려 요약이 실패한다.
+# 너무 길면 대화의 앞(처음 요청)과 뒤(최근 작업)만 남기고 가운데를 줄인다. 이전 요약과 요약 형식 안내는 그대로
+SUMMARY_SYSTEM_MARK = "context summarization assistant"  # pi 의 요약 요청 시스템 지시문에 있는 말
+SUMMARY_CONV_CHARS = 60000  # 대화 부분 최대 글자 (조각 6~7개)
+SUMMARY_HEAD_CHARS = 15000  # 그중 앞부분
+
+
+def shorten_summary_request(messages):
+    """pi 의 요약 요청이고 대화 부분이 너무 길면 가운데를 줄인 messages, 아니면 받은 messages 그대로"""
+    if not any(m.get("role") in ("system", "developer") and SUMMARY_SYSTEM_MARK in content_text(m.get("content"))
+               for m in messages):
+        return messages
+    out, changed = [], False
+    for m in messages:
+        text = content_text(m.get("content")) if m.get("role") == "user" else ""
+        mm = re.match(r"<conversation>\n(.*)\n</conversation>\n", text, re.S)
+        if not mm or len(mm.group(1)) <= SUMMARY_CONV_CHARS:
+            out.append(m)
+            continue
+        conv = mm.group(1)
+        head = conv[:SUMMARY_HEAD_CHARS]
+        tail = conv[-(SUMMARY_CONV_CHARS - SUMMARY_HEAD_CHARS):]
+        head = head[:head.rfind("\n")] if "\n" in head else head  # 줄 가운데에서 끊기지 않게
+        tail = tail[tail.find("\n") + 1:] if "\n" in tail else tail
+        note = ("\n\n[... 대화가 길어 가운데 {}자를 줄였습니다 (중계 서버: Copilot 메시지 크기 때문). "
+                "앞은 처음 요청, 뒤는 최근 작업입니다 ...]\n\n").format(len(conv) - len(head) - len(tail))
+        out.append(dict(m, content=text[:mm.start(1)] + head + note + tail + text[mm.end(1):]))
+        changed = True
+    return out if changed else messages
 
 
 def last_user_text(messages):
@@ -937,6 +969,10 @@ class Relay:
     def _handle(self, body, force_new):
         self.model_label = copilot_model_for(body.get("model"), getattr(self.link, "cfg", None) or {})
         messages = body.get("messages") or []
+        short = shorten_summary_request(messages)
+        if short is not messages:
+            self.log("pi 의 요약 요청(compaction)이 길어 대화 가운데를 줄여 보냅니다")
+            messages = short
         tools = body.get("tools") or []
         tool_names = {(t.get("function") or t).get("name") for t in tools}
         fps = [fingerprint(m) for m in messages]

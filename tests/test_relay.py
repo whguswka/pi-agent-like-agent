@@ -748,5 +748,28 @@ try:
 finally:
     relay.bridge.list_tabs, relay.bridge.open_window, relay.bridge.Tab, relay.bridge.Copilot = _bridge_real
 
+# pi 의 요약 요청(compaction): 대화가 아주 길면 가운데를 줄여 조각 수를 제한 (앞=처음 요청, 뒤=최근 작업, 이전 요약·형식 안내는 그대로)
+_sum_sys = {"role": "system", "content": "You are a context summarization assistant. Your task is to read a conversation between a user "
+            "and an AI assistant, then produce a structured summary following the exact format specified.\n\n"
+            "Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary."}
+_conv = "\n".join("[User]: 질문 {} ".format(i) + "가" * 2900 for i in range(100))
+_sum_user = {"role": "user", "content": [{"type": "text", "text": "<conversation>\n[User]: 처음 목표 FIRST-GOAL\n" + _conv +
+             "\n[Assistant]: 마지막 작업 LAST-WORK\n</conversation>\n\n<previous-summary>\n이전 요약 PREV-SUM\n</previous-summary>\n\n"
+             "The messages above are a conversation to summarize.\n\n## Goal\n[...]"}]}
+_lk = FakeLink(["## Goal\n- 요약입니다"])
+_out = _quiet(lambda: relay.Relay(A(), _lk).handle({"messages": [_sum_sys, _sum_user], "tools": []}))
+_sent = "".join(_lk.sent_log[0]["parts"])
+check("긴 요약 요청: 조각 수 제한 ({}개, 원래 대화 {}자)".format(len(_lk.sent_log[0]["parts"]), len(_conv)),
+      len(_lk.sent_log[0]["parts"]) <= 8, len(_lk.sent_log[0]["parts"]))
+check("긴 요약 요청: 처음 요청·최근 작업·이전 요약·형식 안내는 남고 가운데를 줄였다고 알림",
+      all(w in _sent for w in ("FIRST-GOAL", "LAST-WORK", "PREV-SUM", "## Goal", "가운데", "자를 줄였습니다")), _sent[-600:])
+check("긴 요약 요청: 요약을 그대로 돌려줌", (_out.get("content") or "").startswith("## Goal"), _out)
+_lk = FakeLink(["답"])
+_quiet(lambda: relay.Relay(A(), _lk).handle({"messages": [sys_msg, {"role": "user", "content": "<conversation>\n" + _conv + "\n</conversation>\n"}], "tools": tools}))
+check("요약 요청이 아니면 긴 글도 줄이지 않음", "가운데" not in "".join(_lk.sent_log[0]["parts"]) and len(_lk.sent_log[0]["parts"]) > 20,
+      len(_lk.sent_log[0]["parts"]))
+_short = [_sum_sys, {"role": "user", "content": "<conversation>\n[User]: 짧은 대화\n</conversation>\n\n## Goal"}]
+check("짧은 요약 요청은 그대로", relay.shorten_summary_request(_short) is _short)
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)
