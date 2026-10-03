@@ -18,6 +18,7 @@ from bridge import BridgeError, SessionExpired, Tab, list_tabs, log
 
 TERM_NAME = "pibridge"  # 터미널 연결 주소는 이름에 영문·숫자·밑줄만 허용 (하이픈 불가)
 RUN_DIR = "pi-bridge/run"  # Jupyter 루트 기준 (숨김 폴더는 파일 API 로 읽을 수 없어서 점 없는 이름)
+RANGE_CHUNK = 4 * 1024 * 1024  # 실행 중인 명령의 출력을 한 번에 읽는 최대 크기 (남으면 다음 확인 때)
 
 PAGE_JS = r"""
 (() => {
@@ -351,7 +352,21 @@ class Jupyter:
         out = {"done": run["done"], "exitCode": run["rc"], "aborted": run["aborted"] and not run["timed_out"],
                "timedOut": run["timed_out"]}
         if offset is not None:
-            data = self.read_rel(RUN_DIR + "/" + rid + ".out") or b""
+            rel = RUN_DIR + "/" + rid + ".out"
+            if offset and not (run["done"] or run["aborted"]):
+                # 실행 중에는 새로 생긴 부분만 읽는다 (매번 통째로 읽으면 출력이 긴 명령에서 점점 느려짐: 학습 로그 등).
+                # 끝난 뒤에는 남은 것을 한 번에 (아래). 나눠 읽기가 안 되는 답이면 예전처럼 통째로
+                r = self.call("readRange", rel, int(offset), int(offset) + RANGE_CHUNK - 1, timeout=60)
+                if r.get("status") == 206:
+                    part = base64.b64decode(r.get("b64") or "")
+                    out["data"] = base64.b64encode(part).decode()
+                    out["size"] = int(r.get("total") or offset + len(part))
+                    return out
+                if r.get("status") == 416:  # 아직 새 출력이 없음
+                    out["data"] = ""
+                    out["size"] = offset
+                    return out
+            data = self.read_rel(rel) or b""
             out["data"] = base64.b64encode(data[offset:]).decode()
             out["size"] = len(data)
         return out
