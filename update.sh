@@ -129,9 +129,24 @@ rmdir "$AGENT_DIR/extensions/lib" 2>/dev/null
 echo
 
 # 5) 확인할 점: 이전 판에서 copilot/bridge.json 을 직접 고쳤다면 내 설정 파일로 옮기도록 알림
+#    키트가 내놓은 그대로(아래 SHIPPED 중 하나)면 알리지 않는다: 판 사이에 키트가 바꾼 값(예: 모델 이름)을 '직접 고친 것' 으로 오해하지 않게
 if [ -n "$PY" ] && [ -f "$OLD/copilot/bridge.json" ]; then
   PYTHONIOENCODING=utf-8 "$PY" - "$(pi_native_path "$OLD/copilot/bridge.json")" "$(pi_native_path "$PI_HOME/copilot/bridge.json")" <<'EOF'
-import json, sys
+import hashlib, json, sys
+# 지금까지 판들이 내놓은 copilot/bridge.json 의 sha256 (bridge.json 을 바꾸는 판마다 추가. tests/test_config.py 가 확인)
+SHIPPED = {
+    "7a4ed807d6cb5f94c2d5657c9efb6736684e0823f0779d1ba8cf8598e5e7263f",  # 첫 판 (57c3eb0)
+    "fb964993442f84645abc7a56008ac3027b18b41a958c105365c0c8041cc5078f",  # 모델 자동 선택 (6ed2e2e)
+    "ea90ca2d7d56d52a2e4a6b9bb667cd4aae453b140e6ef45dd5474c00dac00270",  # Claude 모델 (bb1901d)
+    "c7e1fa6423a908f02dfd54e4c15f0a4e14fff02b6b040cc9e82759e0353a82d2",  # 전용 창 자동 실행 ~ 2026-10-04.1 (d3b4c19)
+    "afa7ee75ef540308023606902095430e39f804deebe5ebf46c4f0b2e23b58f18",  # 2026-10-06.1 (모델 이름 GPT-6 Sol 등)
+}
+try:
+    with open(sys.argv[1], "rb") as f:
+        if hashlib.sha256(f.read()).hexdigest() in SHIPPED:
+            sys.exit(0)
+except OSError:
+    sys.exit(0)
 def load(p):
     try:
         with open(p, encoding="utf-8-sig") as f:
@@ -147,5 +162,14 @@ if old is not None and new is not None:
 EOF
 fi
 [ -n "$PI_UPDATE_BOOT" ] && rm -f "$PI_UPDATE_BOOT"  # 예전 판용으로 꺼내 둔 update.sh
-echo "[update] 완료: ${OLD_VER:-예전 판} -> ${NEW_VER:-새 판}. 이전 판은 $OLD 에 있습니다 (잘 되면 지워도 됨)"
+# 6) 이 판에서 바뀐 점과 할 일 (CHANGELOG.md 의 '## <새 판>' 항목. 사내망에서는 GitHub 을 볼 수 없으므로 여기서 보여 줌)
+if [ -n "$NEW_VER" ] && [ -f "$PI_HOME/CHANGELOG.md" ]; then
+  notes="$(awk -v v="$NEW_VER" '$1 == "##" && $2 == v {on = 1; next} on && /^## / {exit} on && NF' "$PI_HOME/CHANGELOG.md")"
+  if [ -n "$notes" ]; then
+    echo "[update] 이 판에서 바뀐 점 (전체: $PI_HOME/CHANGELOG.md)"
+    printf '%s\n' "$notes" | sed 's/^/  /'
+    echo
+  fi
+fi
+echo "[update] 완료:${OLD_VER:-예전 판} -> ${NEW_VER:-새 판}. 이전 판은 $OLD 에 있습니다 (잘 되면 지워도 됨)"
 echo "         pi 를 실행하면 새 판으로 시작합니다. 상태 확인: pi 안에서 /doctor (또는 python $PI_HOME/copilot/diag.py --report)"

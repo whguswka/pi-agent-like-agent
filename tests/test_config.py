@@ -150,5 +150,17 @@ else:
     check("내 설정에 없으면 저장소 값 (직접 읽기)", out.split("\n") == ["chrome", "9222"], (out, err))
 
 shutil.rmtree(tmp, ignore_errors=True)
+
+# 판 내기 확인: 저장소 copilot/bridge.json 을 바꾸면 update.sh 의 SHIPPED 에 그 sha256 을 넣어야 함
+# (넣지 않으면 다음 업데이트 때 키트가 바꾼 값을 '직접 고친 항목' 으로 잘못 알림)
+import hashlib  # noqa: E402
+import re  # noqa: E402
+with open(os.path.join(ROOT, "copilot", "bridge.json"), "rb") as f:
+    _h = hashlib.sha256(f.read()).hexdigest()
+with open(os.path.join(ROOT, "update.sh"), encoding="utf-8") as f:
+    _shipped = set(re.findall(r'^\s*"([0-9a-f]{64})",', f.read(), flags=re.M))
+check("판 내기: 지금 copilot/bridge.json 의 sha256 이 update.sh 의 SHIPPED 에 있음", _h in _shipped, (_h, len(_shipped)))
+check("판 내기: CHANGELOG.md 에 지금 판(VERSION) 항목", "\n## " + open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
+      in open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8").read())
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

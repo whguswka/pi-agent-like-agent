@@ -8,6 +8,7 @@ pi 는 터미널에서 동작합니다. 할 일을 말로 지시하면 LLM 과 �
 
 > **처음이면 [한 장 요약 (빠른 시작)](docs/빠른시작.md)** 부터 보세요. 설치, 매일 쓰는 법, 자주 쓰는 명령(`/plan`, `@파일`, `/undo`, `/remember` 등)이 한 장에 있습니다.
 > 사람이 직접 하는 일(반입, 설치, 업데이트, 되돌리기, 설정, 문제 보고)은 [수동 작업 절차](docs/수동-작업-절차.md) 에 순서대로 있습니다.
+> 판마다 바뀐 점과 바꾼 뒤 할 일은 [바뀐 점 (CHANGELOG)](CHANGELOG.md) 에 있습니다.
 
 ```
 [업무 PC]
@@ -110,7 +111,7 @@ python ~/tools/pi/copilot/diag.py --report
 |---|---|
 | (없음) | 전용 창, Copilot 탭, 입력창 |
 | `--send` | + 시험 질문 하나를 새 대화로 보내고 답 읽기 |
-| `--model` | + 모델 메뉴 항목 읽기, 기본 모델 고르기 (`--model "GPT 6.0 Sol"` 처럼 이름 지정 가능) |
+| `--model` | + 모델 메뉴 항목 읽기, 기본 모델 고르기 (`--model "GPT-6 Sol"` 처럼 이름 지정 가능) |
 | `--chats` | + 왼쪽 채팅 목록 찾기 |
 | `--delete-test` | + 시험 대화를 하나 만들어 지워 보기 (다른 대화는 건드리지 않음) |
 | `--jupyter` | + JupyterLab 터미널에서 시험 명령 실행 ([5장](#5-실행-위치-바꾸기-pc-와-jupyter-노트북)을 쓸 때) |
@@ -226,9 +227,9 @@ pi 의 모델 목록에 Copilot 모델이 들어 있습니다. 모델을 고르�
 
 | pi 모델 id | Copilot 화면의 모델 |
 |---|---|
-| `gpt-6.0-sol` (기본) | GPT › GPT 6.0 Sol |
-| `gpt-5.6-sol-think` | GPT › GPT 5.6 Sol 깊이 생각하기 |
-| `gpt-5.6-sol-fast` | GPT › GPT 5.6 Sol 빠른 응답 |
+| `gpt-6.0-sol` (기본) | GPT › GPT-6 Sol |
+| `gpt-5.6-sol-think` | GPT › GPT-5.6 Sol 깊이 생각하기 |
+| `gpt-5.6-sol-fast` | GPT › GPT-5.6 Sol 빠른 응답 |
 | `claude-sonnet-4.5` | Claude › Sonnet 4.5 |
 | `claude-opus` | Claude › Opus |
 | `copilot` | `bridge.json` 의 `copilot_model` (비우면 화면에 선택된 모델 그대로) |
@@ -238,12 +239,14 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 ```
 - pi 화면에서는 `/model`(또는 `Ctrl+L`)로 고르고, `Ctrl+P` 로 다음 모델로 바꿉니다. 바꾸면 다음 질문부터 같은 Copilot 대화에서 모델만 바뀝니다.
 - 고른 모델은 그 세션에만 기록됩니다. 새 세션의 기본 모델로 삼으려면 `/model` 목록에서 `Ctrl+S` 를 누르거나 `~/.pi/agent/settings.json` 의 `defaultModel` 을 바꿉니다.
-- **깊이 생각하기**는 답마다 생각하는 시간이 붙어 느립니다. pi 는 작업 하나에 Copilot 과 여러 번 주고받으므로 평소에는 GPT 6.0 Sol 을 권합니다.
+- **깊이 생각하기**는 답마다 생각하는 시간이 붙어 느립니다. pi 는 작업 하나에 Copilot 과 여러 번 주고받으므로 평소에는 GPT-6 Sol 을 권합니다.
 - Copilot 메뉴에 새 모델이 생기면 `~/.pi/agent/models.json` 의 `models` 에 한 줄 추가합니다. `id` 는 **Copilot 화면의 모델 이름 그대로** 씁니다.
   ```json
   { "id": "새 모델 이름", "name": "새 모델 (Copilot)", "contextWindow": 1000000, "maxTokens": 16000 }
   ```
   짧은 id 를 쓰고 싶으면 `bridge.json` 의 `copilot_models` 에 `"짧은-id": "화면 이름"` 을 넣습니다.
+- Copilot 이 메뉴의 **모델 이름을 바꾸면** 그 모델을 고르지 못하고 '자동' 으로 답합니다. 띄어쓰기·`-`·버전 끝의 `.0` 만 다른 이름(`GPT 6.0 Sol` 과 `GPT-6 Sol`)은 같은 이름으로 보고,
+  그 밖에는 내 설정 파일의 `copilot_models` 에 새 이름을 적습니다 ([수동 작업 절차 6장](docs/수동-작업-절차.md#6-필요할-때-한-번-하는-설정)의 '모델 이름이 바뀌었을 때').
 
 ## 5. 실행 위치 바꾸기: PC 와 Jupyter 노트북
 pi 와 Copilot 은 PC 에서 돌고, **명령 실행과 파일 작업(도구 4개: bash, read, write, edit)만** Kubeflow 노트북에서 하게 할 수 있습니다. 노트북에는 아무것도 설치하지 않습니다.
@@ -579,6 +582,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | JupyterLab 로그인이 풀림 (jupyter 모드) | 전용 창의 JupyterLab 탭에서 다시 로그인한 뒤 `/jupyter` |
 | 업데이트가 `이미 같은 판` 으로 멈춤 | 받은 zip 이 새 판인지 확인 ([9장](#9-새-버전으로-바꾸기)) |
 | `429 Copilot 사용량 제한에 걸렸습니다` | 계정 단위의 일시 제한입니다. 기다렸다가 같은 요청을 다시 하면 이어서 진행합니다. 자주 걸리면 `max_questions_per_minute` |
+| 전용 창의 모델 버튼이 고른 모델이 아니라 `자동` (로그에 `Copilot 모델 선택 실패`) | Copilot 이 모델 이름을 바꾼 것입니다. [수동 작업 절차 6장](docs/수동-작업-절차.md#6-필요할-때-한-번-하는-설정)의 '모델 이름이 바뀌었을 때' |
 | 오래 쓰다 보면 Copilot 이 멈추거나 형식을 틀림 | 대화가 너무 길어진 탓입니다. `/new` 로 새 세션을 시작하세요 (필요한 맥락은 AGENTS.md 나 메모 파일로) |
 | `같은 작업(...)이 계속 반복되어 여기서 멈췄습니다` | Copilot 이 같은 작업을 되풀이해서 중계 서버가 끊은 것입니다. 요청을 나누거나 바꿔서 다시 하세요 |
 | 로그에 `Copilot 모델 선택 실패` | `diag.py --model` 로 메뉴 이름을 보고 `models.json`·`bridge.json` 의 이름을 화면과 똑같이 맞추세요 |
@@ -612,6 +616,7 @@ bash ~/tools/pi/install.sh jupyter
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 6개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
+| `CHANGELOG.md` | 판마다 바뀐 점과 바꾼 뒤 할 일 |
 | `docs/` | [한 장 요약](docs/빠른시작.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**

@@ -72,7 +72,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `input_selector`, `send_button_selector`, `new_chat_selector`, `reply_selector` | 자동 인식이 안 될 때 CSS 선택자를 직접 지정. diag.py 가 후보를 보여줌 |
 | `use_stream` | Copilot WebSocket 원문으로 답 읽기 (기본 true) |
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | Copilot 답이 시작될 때까지 / 끝날 때까지 기다리는 최대 초 (기본 300 / 900). 응답이 느린 환경이면 늘리세요. 늘릴 때는 `~/.pi/agent/settings.json` 의 `retry.provider.timeoutMs`(밀리초)도 함께 |
-| `copilot_model` | pi 모델 id 가 `copilot` 일 때 고를 Copilot 모델 (화면 이름, 기본 `GPT 6.0 Sol`). 비우면 화면에 선택된 모델 그대로 |
+| `copilot_model` | pi 모델 id 가 `copilot` 일 때 고를 Copilot 모델 (화면 이름, 기본 `GPT-6 Sol`). 비우면 화면에 선택된 모델 그대로 |
 | `copilot_models` | pi 모델 id → Copilot 화면의 모델 이름 표. 표에 없는 id 는 id 자체를 화면 이름으로 씀 |
 | `model_button_selector` | 모델 메뉴 버튼을 자동으로 못 찾을 때 CSS 선택자 (`diag.py --model` 이 버튼 HTML 을 보여 줌) |
 | `model_button_names` | 모델 메뉴 버튼을 알아보는 이름 (버튼 글자가 이 중 하나로 시작). 기본: 자동, 빠른 응답, 깊이 생각하기, GPT, Claude 등 |

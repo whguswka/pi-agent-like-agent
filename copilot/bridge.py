@@ -56,7 +56,7 @@ DEFAULT_CONFIG = {
     "multi_read": False,  # True 면 Copilot 이 파일 읽기(read) 블록을 여러 개 한 번에 줄 수 있음 (왕복 횟수 줄이기)
     "max_tabs": 1,  # 2 이상이면 pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶)
     # 모델 선택: Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 화면의 모델 메뉴에서 고른다
-    "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT 6.0 Sol"). 비우면 화면 그대로
+    "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT-6 Sol"). 비우면 화면 그대로
     "copilot_models": {},  # pi 모델 id -> 화면 이름. 표에 없는 id 는 id 자체를 화면 이름으로 씀
     "model_button_selector": "",  # 모델 메뉴 버튼 (비우면 자동: 메뉴가 달린 버튼 중 이름이 아래 이름으로 시작하는 것)
     "model_button_names": ["자동", "빠른 응답", "깊이 생각하기", "Auto", "Quick response", "Think deeper", "GPT", "Claude"],
@@ -73,6 +73,12 @@ DEFAULT_CONFIG = {
 def sq(s):
     """이름 비교용: 소문자 + 글자·숫자만 ('GPT-6.0 Sol ⌄' == 'gpt 6.0 sol'). 버튼의 화살표 같은 기호는 무시"""
     return re.sub(r"[\W_]+", "", (s or "").lower())
+
+
+def model_key(s):
+    """모델 이름 비교용: sq 에 더해 버전 끝의 '.0' 을 뺀다. Copilot 이 표기만 바꿔도 같은 모델로 본다
+    ('GPT 6.0 Sol' == 'GPT-6 Sol', 'GPT 5.6 Sol' == 'GPT-5.6 Sol'. '5.6' 과 '5' 는 다름)"""
+    return sq(re.sub(r"(\d)\.0(?!\d)", r"\1", s or ""))
 
 
 def conversation_id(url):
@@ -436,10 +442,11 @@ PAGE_LIB = r"""
 # 모델 메뉴·채팅 목록 메뉴·확인 창 찾기 (PAGE_LIB 다음에 불러옴). 클릭은 파이썬에서 실제 마우스 동작(CDP Input)으로 한다
 UI_LIB = r"""
 (() => {
-  const V = 2;
+  const V = 3;
   if (window.__piUI && window.__piUI.v === V) return true;
   const B = window.__piBridge;
   const sq = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');  // 글자·숫자만 (파이썬 sq 와 같게)
+  const mk = (s) => sq((s || '').replace(/(\d)\.0(?!\d)/g, '$1'));  // 모델 이름 (파이썬 model_key 와 같게: 'GPT 6.0 Sol' == 'GPT-6 Sol')
   const lines = (el) => (el.innerText || el.textContent || '').split('\n').map(s => s.trim()).filter(Boolean);
   const title = (el) => lines(el)[0] || (el.getAttribute('aria-label') || '').trim();
   const box = (el) => { el.scrollIntoView({block: 'nearest', inline: 'nearest'}); const r = el.getBoundingClientRect();
@@ -462,8 +469,8 @@ UI_LIB = r"""
   const inChatList = (el) => !!el.closest('a[href*="/conversation/"]');
   function modelButton(sel, names) {
     if (sel) { const el = document.querySelector(sel); return el && B.visible(el) ? el : null; }
-    const ns = names.map(sq).filter(Boolean);
-    const hit = (b) => { const t = sq(title(b)); return !!t && t.length <= 40 && ns.some(n => t === n || t.startsWith(n)); };
+    const ns = names.map(mk).filter(Boolean);
+    const hit = (b) => { const t = mk(title(b)); return !!t && t.length <= 40 && ns.some(n => t === n || t.startsWith(n)); };
     const all = [...document.querySelectorAll('button, [role="button"], [role="combobox"]')]
       .filter(b => B.visible(b) && !b.closest(MENU) && !b.closest('[role="dialog"], [role="alertdialog"]') && !inChatList(b) && hit(b));
     const top = (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top;
@@ -951,12 +958,13 @@ class Copilot:
 
     @staticmethod
     def pick(items, label):
-        """메뉴 항목에서 label 찾기: 이름(첫 줄)이 같은 것 우선, 없으면 label 을 포함하는 항목이 하나뿐일 때만"""
-        want = sq(label)
-        same = [i for i in items if sq(i["title"]) == want]
+        """메뉴 항목에서 label 찾기: 이름(첫 줄)이 같은 것 우선, 없으면 label 을 포함하는 항목이 하나뿐일 때만
+        (이름은 model_key 로 비교: 'GPT 6.0 Sol' 로 적어 두어도 화면의 'GPT-6 Sol' 을 고름)"""
+        want = model_key(label)
+        same = [i for i in items if model_key(i["title"]) == want]
         if same:
             return same[0]
-        part = [i for i in items if want and want in sq(i["text"])]
+        part = [i for i in items if want and want in model_key(i["text"])]
         return part[0] if len(part) == 1 else None
 
     def open_menu(self, rect):
@@ -1005,7 +1013,7 @@ class Copilot:
         st = self.model_state(label)
         if not st.get("found"):
             return False, "모델 메뉴 버튼을 찾지 못했습니다 (bridge.json 의 model_button_selector 확인)"
-        if sq(st["text"]) == sq(label):
+        if model_key(st["text"]) == model_key(label):
             return True, "이미 '{}'".format(st["text"])
         items = self.open_menu(st["rect"])
         if not items:

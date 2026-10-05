@@ -6,7 +6,7 @@
 사용법:  python diag.py             (브라우저 탭 + Copilot 페이지 구조 확인)
          python diag.py --jupyter   (+ JupyterLab 터미널에서 시험 명령 실행: jupyter 모드 확인)
          python diag.py --send      (+ Copilot 에 시험 질문 1개를 새 대화로 보내서 답 읽기까지 확인)
-         python diag.py --model "GPT 6.0 Sol"   (+ 모델 메뉴 항목을 보여 주고 그 모델을 골라 봄. 이름 생략 시 copilot_model)
+         python diag.py --model "GPT-6 Sol"   (+ 모델 메뉴 항목을 보여 주고 그 모델을 골라 봄. 이름 생략 시 copilot_model)
          python diag.py --chats     (+ 왼쪽 채팅 목록을 어떻게 찾는지 보여 줌)
          python diag.py --delete-test   (+ 시험 대화를 하나 만들어 '… > 삭제 > 확인' 으로 지워 봄. 다른 대화는 건드리지 않음)
          python diag.py --report    (한 화면 상태 요약: 버전·중계 서버·전용 창·설정·최근 로그. 아무것도 바꾸지 않음)
@@ -337,7 +337,7 @@ def main():
                 show("'{}' 고르기".format(label), ("OK " if good else "X ") + info)
                 ok = ok and good
             else:
-                show("고르기", "건너뜀 (모델 이름이 없음: --model \"GPT 6.0 Sol\")")
+                show("고르기", "건너뜀 (모델 이름이 없음: --model \"GPT-6 Sol\")")
 
     if args.chats:
         print("\n[7] 왼쪽 채팅 목록")

@@ -19,11 +19,11 @@
   "max_questions_per_chat": 100,
   "max_questions_per_minute": 0,
   "_모델": "pi 모델 id -> Copilot 화면의 모델 이름. 'copilot' 은 copilot_model 을 씀. 표에 없는 id 는 id 자체를 화면 이름으로 씀",
-  "copilot_model": "GPT 6.0 Sol",
+  "copilot_model": "GPT-6 Sol",
   "copilot_models": {
-    "gpt-6.0-sol": "GPT 6.0 Sol",
-    "gpt-5.6-sol-think": "GPT 5.6 Sol 깊이 생각하기",
-    "gpt-5.6-sol-fast": "GPT 5.6 Sol 빠른 응답",
+    "gpt-6.0-sol": "GPT-6 Sol",
+    "gpt-5.6-sol-think": "GPT-5.6 Sol 깊이 생각하기",
+    "gpt-5.6-sol-fast": "GPT-5.6 Sol 빠른 응답",
     "claude-sonnet-4.5": "Sonnet 4.5",
     "claude-opus": "Opus"
   },

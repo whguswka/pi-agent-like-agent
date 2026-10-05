@@ -366,6 +366,21 @@ link13.cfg = cfgm
 r13 = relay.Relay(A(), link13)
 r13.handle({"model": "gpt-5.6-sol-think", "messages": [sys_msg, {"role": "user", "content": "안녕"}], "tools": tools})
 check("요청의 모델을 Copilot 화면 이름으로 넘김", link13.sent_log[0]["model"] == "GPT 5.6 Sol 깊이 생각하기", link13.sent_log)
+# 메뉴에서 이름 찾기: Copilot 이 표기만 바꾼 이름(2026-10: 'GPT 6.0 Sol' -> 'GPT-6 Sol', 'GPT 5.6 Sol' -> 'GPT-5.6 Sol')도 같은 모델
+_mk = relay.bridge.model_key
+check("모델 이름 비교: '.0'·띄어쓰기·'-' 차이는 같음", _mk("GPT 6.0 Sol") == _mk("GPT-6 Sol") == _mk("gpt-6 sol ⌄")
+      and _mk("GPT 5.6 Sol 빠른 응답") == _mk("GPT-5.6 Sol 빠른 응답"))
+check("모델 이름 비교: 다른 버전은 다름", _mk("GPT-5.6 Sol") != _mk("GPT-5 Sol") and _mk("GPT-6 Sol") != _mk("GPT-60 Sol")
+      and _mk("GPT 6.05") != _mk("GPT 6.5") and _mk("Sonnet 4.5") != _mk("Sonnet 4"))
+_menu = [{"title": t, "text": t} for t in ("GPT-5.6 Sol 빠른 응답", "GPT-5.6 Sol 깊이 생각하기", "GPT-6 Sol")]
+_pick = relay.bridge.Copilot.pick
+check("메뉴에서 고르기: 예전 이름 'GPT 6.0 Sol' -> 화면의 'GPT-6 Sol'", (_pick(_menu, "GPT 6.0 Sol") or {}).get("title") == "GPT-6 Sol")
+check("메뉴에서 고르기: 새 이름 그대로", (_pick(_menu, "GPT-6 Sol") or {}).get("title") == "GPT-6 Sol"
+      and (_pick(_menu, "GPT 5.6 Sol 깊이 생각하기") or {}).get("title") == "GPT-5.6 Sol 깊이 생각하기")
+check("메뉴에서 고르기: 'GPT-5.6 Sol' 처럼 여럿에 걸리면 고르지 않음", _pick(_menu, "GPT-5.6 Sol") is None
+      and _pick(_menu, "GPT-7 Sol") is None)
+check("저장소 설정의 모델 이름이 지금 화면 이름 (2026-10)", relay.copilot_model_for("gpt-6.0-sol", relay.bridge.load_config(
+      os.path.join(os.path.dirname(relay.__file__), "bridge.json"), None)) == "GPT-6 Sol")
 
 # 끝난 대화 정리: 중계 서버가 만든 대화만 기록해 두고 그것만 지움
 import tempfile  # noqa: E402
