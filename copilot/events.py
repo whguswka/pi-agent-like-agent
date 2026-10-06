@@ -148,6 +148,11 @@ def _hm(t):
     return time.strftime("%m-%d %H:%M", time.localtime(t))
 
 
+def _chars(n):
+    n = n or 0
+    return "{:.1f}만 자".format(n / 10000) if n >= 10000 else "{}자".format(n)
+
+
 def summarize(events, days=7, now=None):
     """서비스별 요약 줄들 (사진 한 장용). 서비스 안내 문구(msg)는 넣지 않는다"""
     now = now or time.time()
@@ -194,8 +199,8 @@ def summarize(events, days=7, now=None):
         for i in [k for k, x in enumerate(ev) if x.get("ev") == "err" and x.get("kind") == "throttle"][-4:]:
             e, c = ev[i], ev[i].get("ctx") or {}
             nxt = next((x["t"] for x in ev[i + 1:] if x.get("ev") == "req"), None)  # 기록 차례로 그다음 성공
-            lines.append("  사용량 제한 {}: 직전 60분 {}개({:.0f}천 자) · 24시간 {}개 · 오늘 첫 요청부터 {:.1f}시간 · 대화 질문 {} -> {}".format(
-                _hm(e["t"]), c.get("req_60m", "?"), c.get("chars_60m", 0) / 1000, c.get("req_24h", "?"),
+            lines.append("  사용량 제한 {}: 직전 60분 {}개({}) · 24시간 {}개 · 오늘 첫 요청부터 {:.1f}시간 · 대화 질문 {} -> {}".format(
+                _hm(e["t"]), c.get("req_60m", "?"), _chars(c.get("chars_60m")), c.get("req_24h", "?"),
                 c.get("since_first_min", 0) / 60, "?" if e.get("chat_q") is None else e["chat_q"],
                 "다음 성공까지 {:.0f}분".format((nxt - e["t"]) / 60) if nxt is not None else "아직 성공 없음"))
         warns = [e.get("kind") for e in ev if e.get("ev") == "warn"]
