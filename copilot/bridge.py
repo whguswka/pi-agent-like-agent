@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     "ui_noise_selectors": ["[data-testid=\"chat-suggestion\"]"],
     "first_reply_timeout_seconds": 300,
     "reply_timeout_seconds": 900,
+    "input_ready_timeout_seconds": 60,  # 보내기 전에 Copilot 이 앞 답을 마무리하고 입력창을 열 때까지 기다리는 최대 초
     "max_questions_per_chat": 100,  # 이 수만큼 질문하면 새 대화로 (긴 대화에서 Copilot 이 규칙을 놓치므로). 0 이면 Copilot 한도까지
     "max_questions_per_minute": 0,  # 0 이면 끔. Copilot 사용량 제한을 피하려면 분당 질문 수 상한을 넣음
     # 메시지 크기: Copilot 메시지 하나의 최대 글자 수(넘으면 나눠 보내고, 조각마다 왕복 한 번), 도구 결과 하나의 최대 글자 수,
@@ -677,11 +678,61 @@ class Copilot:
     def input_len(self, sel):
         return self.js("window.__piBridge.inputText(window.__piBridge.findInput({})).replace(/[\\s\\u200b\\u200c]+/g, '').length".format(sel))
 
+    def input_state(self, sel):
+        """입력창 상태: found(찾음), editable(글을 받을 수 있음), focused(포커스가 입력창 안), busy(Copilot 이 답하는 중: 중지 버튼),
+        rect(입력창 안의 클릭할 곳). 앞 답을 마무리하는 동안 Copilot 은 입력창을 잠그거나 포커스를 다른 곳에 둘 수 있다"""
+        return self.js("""(() => { const B = window.__piBridge; const el = B.findInput(%s);
+            if (!el) return {found: false};
+            const field = el.tagName === 'TEXTAREA' || el.tagName === 'INPUT';
+            const editable = (field ? !(el.disabled || el.readOnly) : el.isContentEditable)
+                && el.getAttribute('aria-disabled') !== 'true' && el.getAttribute('aria-readonly') !== 'true';
+            const a = document.activeElement, r = el.getBoundingClientRect();
+            return {found: true, editable, focused: !!a && (a === el || el.contains(a)), busy: B.buttons(%s).length > 0,
+                    rect: {x: r.left + Math.min(r.width / 2, 40), y: r.top + Math.min(r.height / 2, 16)}}; })()""" % (
+            sel, self.q(self.cfg["stop_button_pattern"])))
+
+    @staticmethod
+    def state_note(st):
+        """로그용: 입력창이 글을 받을 수 없는 까닭"""
+        notes = [t for k, t in (("busy", "Copilot 이 답하는 중"),) if st.get(k)]
+        notes += [t for k, t in (("found", "입력창 없음"), ("editable", "입력창 잠김"), ("focused", "포커스 없음")) if not st.get(k)]
+        return ", " + ", ".join(notes) if notes else ""
+
+    def focus_input(self, sel):
+        """입력창에 포커스를 둔다. 스크립트 focus() 로 안 되면(잠겼다 풀린 입력창 등) 입력창을 실제로 클릭한다 -> 포커스 여부"""
+        if not self.js("""(() => { const el = window.__piBridge.findInput(%s); if (!el) return false;
+                el.scrollIntoView({block: 'nearest'}); el.focus(); return true; })()""" % sel):
+            return False
+        st = self.input_state(sel)
+        if st.get("focused"):
+            return True
+        if st.get("editable"):
+            self.mouse(st["rect"])
+            time.sleep(0.2)
+            return bool(self.input_state(sel).get("focused"))
+        return False
+
+    def wait_ready(self, sel):
+        """보내기 전에: Copilot 이 앞 답을 마무리하는 중(중지 버튼, 입력창 잠김)이면 끝날 때까지 기다리고 입력창에 포커스를 둔다 -> 포커스 여부.
+        WebSocket 으로 최종 답을 먼저 받으면 화면은 아직 마무리 중일 수 있다 (긴 코드 블록 답 등. 이때 붙여 넣으면 글이 안 들어감).
+        중지 버튼만 계속 보이면(다른 버튼을 잘못 알아본 것일 수 있음) 입력창이 열려 있는 한 5초까지만 기다린다"""
+        start, limit = time.time(), float(self.cfg.get("input_ready_timeout_seconds") or 60)
+        while True:
+            st = self.input_state(sel)
+            waited = time.time() - start
+            if st.get("found") and st.get("editable") and (not st.get("busy") or waited >= 5) or waited >= limit:
+                break
+            time.sleep(0.5)
+        if waited >= 1:
+            log("  (Copilot 이 앞 답을 마무리하는 동안 {:.0f}초 기다림{})".format(waited, self.state_note(st)))
+        return self.focus_input(sel)
+
     def clear_input(self, sel):
-        """비우기: 실제 키 입력(Ctrl+A, Backspace) - Lexical 같은 편집기도 정상 처리. 안 되면 execCommand"""
-        self.js("""(() => { const el = window.__piBridge.findInput(%s); if (el) el.focus(); })()""" % sel)
-        self.key("a", "KeyA", 65, modifiers=2)
-        self.key("Backspace", "Backspace", 8)
+        """비우기: 실제 키 입력(Ctrl+A, Backspace) - Lexical 같은 편집기도 정상 처리. 안 되면 execCommand
+        (입력창에 포커스가 없으면 Ctrl+A 는 화면 전체를 고르므로 누르지 않는다)"""
+        if self.focus_input(sel):
+            self.key("a", "KeyA", 65, modifiers=2)
+            self.key("Backspace", "Backspace", 8)
         if self.input_len(sel) > 0:  # textarea 등
             self.js("""(() => { const el = window.__piBridge.findInput(%s); el.focus();
                 document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); })()""" % sel)
@@ -769,8 +820,10 @@ class Copilot:
         want = len(re.sub(r"\s+", "", text))
         got = 0
         # 넣기: 붙여넣기 이벤트 (여러 줄·코드 블록이 그대로 들어감. 한 글자씩 치면 줄바꿈이 '보내기'로 처리됨)
+        # 넣기 전마다 Copilot 이 앞 답을 마무리했는지(입력창이 열리고 포커스가 들어갔는지) 확인한다.
         # 긴 글은 편집기가 처리하는 데 시간이 걸리므로 다 찰 때까지 기다리고, 덜 들어가면 지우고 한 번 더
         for attempt in (1, 2):
+            self.wait_ready(sel)
             self.clear_input(sel)
             self.js("""(() => { const el = window.__piBridge.findInput(%s); el.focus();
                 const dt = new DataTransfer(); dt.setData('text/plain', %s);
@@ -779,8 +832,15 @@ class Copilot:
             got = self.wait_filled(sel, want)
             if got >= want * 0.9:
                 break
-            log("  (붙여넣기가 덜 들어감 {}/{}자 -> {})".format(got, want, "다시 붙여넣기" if attempt == 1 else "줄 단위 입력"))
+            log("  (붙여넣기가 덜 들어감 {}/{}자{} -> {})".format(got, want, self.state_note(self.input_state(sel)),
+                                                         "다시 붙여넣기" if attempt == 1 else "줄 단위 입력"))
         if got < want * 0.9:  # 붙여넣기를 처리하지 않는 입력창: 줄 단위 입력 + Shift+Enter
+            # 포커스가 입력창에 없으면 치지 않는다 (친 글이 사라지고, 나중에 포커스가 돌아온 뒤의 줄만 들어가 끝부분만 남음)
+            if not self.wait_ready(sel):
+                st = self.input_state(sel)
+                self.clear_input(sel)
+                raise BridgeError("Copilot 입력창이 글을 받지 않습니다{} ({}/{}자). 전용 창의 Copilot 화면이 정상인지 보고 "
+                                  "같은 요청을 다시 보내 주세요.".format(self.state_note(st), got, len(text)))
             self.clear_input(sel)
             for i, line in enumerate(text.split("\n")):
                 if i:
@@ -789,9 +849,13 @@ class Copilot:
                     self.tab.call("Input.insertText", {"text": line}, timeout=60)
             got = self.wait_filled(sel, want)
         if got < want * 0.9:
+            st = self.input_state(sel)
             self.clear_input(sel)
-            raise BridgeError("입력창에 글자가 다 들어가지 않았습니다 ({}/{}자). Copilot 의 글자 수 제한일 수 있으니 "
-                              "내 설정 파일의 max_chars 를 줄이세요 (확인: diag.py --input-limit).".format(got, len(text)))
+            if st.get("editable") and st.get("focused"):
+                raise BridgeError("입력창에 글자가 다 들어가지 않았습니다 ({}/{}자). Copilot 의 글자 수 제한일 수 있으니 "
+                                  "내 설정 파일의 max_chars 를 줄이세요 (확인: diag.py --input-limit).".format(got, len(text)))
+            raise BridgeError("Copilot 입력창이 글을 받지 않습니다{} ({}/{}자). 전용 창의 Copilot 화면이 정상인지 보고 "
+                              "같은 요청을 다시 보내 주세요.".format(self.state_note(st), got, len(text)))
         if self.cfg["send_button_selector"]:
             self.click_send(self.cfg["send_button_selector"])
         else:

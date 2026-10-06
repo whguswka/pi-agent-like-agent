@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-06.1"
+RELAY_VERSION = "2026-10-06.2"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
