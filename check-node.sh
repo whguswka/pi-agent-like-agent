@@ -18,6 +18,8 @@ else
   echo "    - pip install --user nodejs-wheel-binaries==24.19.0   (Node.js 공식 바이너리 패키지)"
   echo "    - pip install --user playwright                       (1.46 이상. 내장 Node 사용, 브라우저 설치 불필요)"
   echo "    - (Windows) VS Code 데스크톱 1.93 이상                 (내장 Node 사용)"
-  echo "      portable VS Code 라면 그 폴더의 Code.exe 경로를 한 번 지정: setx PI_NODE \"C:\\경로\\Code.exe\"  (새 터미널부터 적용)"
+  echo "      portable VS Code 라면 그 폴더의 Code.exe 경로를 ~/.bashrc 에 한 번 적기 (경로는 / 로, 새 Git Bash 창부터 적용):"
+  echo "        echo >> ~/.bashrc; echo 'export PI_NODE=\"C:/경로/Code.exe\"' >> ~/.bashrc"
+  echo "      지금 창에서만 쓰려면 export PI_NODE=\"C:/경로/Code.exe\" (이 창을 닫으면 사라짐)"
   exit 1
 fi

@@ -37,6 +37,10 @@ DEFAULT_CONFIG = {
     "thread_limit_pattern": "reached (its|the) (limit|end)|conversation limit|start a new (chat|topic|conversation)|대화.{0,12}(한도|최대)|새 (대화|채팅).{0,6}시작",
     "throttle_pattern": "too many requests|try again later|요청이 너무 많|나중에 다시 시도",
     "stable_seconds": 4.0,
+    # 답을 만드는 동안에만 보이는 줄 (예: 처리 단계 제목). 이 줄이 보이는 동안은 글이 멈춰도 끝난 것으로 보지 않는다.
+    #  그 줄이 보이는데 글이 reply_busy_max_seconds 동안 그대로면 그래도 읽는다 (화면이 멈춘 경우)
+    "reply_busy_lines": [],
+    "reply_busy_max_seconds": 180,
     "use_stream": True,
     "stream_wait_after_dom_seconds": 15,
     "ui_noise_words": ["Microsoft 365 Copilot", "Copilot said:", "Copilot의 말:", "Copilot", "Copy", "Copied", "복사",
@@ -63,6 +67,7 @@ DEFAULT_CONFIG = {
     "model_button_names": ["자동", "빠른 응답", "깊이 생각하기", "Auto", "Quick response", "Think deeper", "GPT", "Claude"],
     "model_toggle_buttons": [],  # 메뉴가 아니라 화면의 단추로 고르는 모델 이름 (사내AI: ["안전모드", "성능모드"])
     "service_name": "Copilot",  # 안내·로그에 쓰는 이름 (사내AI 중계 서버는 "사내AI")
+    "extra_rules": [],  # 새 대화의 첫 메시지(진행 방식)에 덧붙일 규칙 (사내AI: 자기 도구로 직접 실행하지 말 것)
     "open_tab_if_missing": False,  # 전용 창에 이 서비스의 탭이 없으면 새로 연다 (사내AI)
     # 끝난 대화 삭제: 중계 서버가 만든 대화(copilot-chats.json 에 기록)만 왼쪽 목록에서 '… > 삭제 > 확인' 으로 지운다
     "delete_finished_chats": True,
@@ -122,19 +127,88 @@ def unmangle_copilot_text(text):
     return LINKIFY_RE.sub(r'\1"', text.replace("\\]:", "]:"))
 
 
+FENCE_OPEN_RE = re.compile(r"(`{3,}|~{3,})[^`]*")  # 코드 블록을 여는 줄 (```json 등. 한 줄에 붙은 ```...``` 는 아님)
+
+
+def without_noise(line, words):
+    """줄에서 화면 문구를 뺀 나머지 (긴 문구부터 빼므로 '코드 복사' 와 '복사' 를 적은 차례와 상관없음)"""
+    s = line.strip()
+    for w in sorted(words or [], key=len, reverse=True):
+        s = re.sub(re.escape(w), "", s, flags=re.I)
+    return s.strip()
+
+
+def noise_only(line, words):
+    """줄이 화면 문구(이름표, Copy/좋아요 버튼 등)만으로 된 짧은 줄인지"""
+    s = line.strip()
+    if not s or len(s) > 60:
+        return False
+    return not re.sub(r"[\s\W_]+", "", without_noise(s, words))
+
+
 def strip_ui_noise(text, words):
-    """답 영역에 섞여 들어온 화면 문구(이름표, Copy/좋아요 버튼 등)만으로 된 짧은 줄을 지운다"""
-    out = []
+    """답 영역에 섞여 들어온 화면 문구만으로 된 짧은 줄을 지운다 (코드 블록 ``` 안의 줄은 그대로)"""
+    out, fence = [], None
     for line in (text or "").split("\n"):
         s = line.strip()
-        if s and len(s) <= 60:
-            rest = s
-            for w in words:
-                rest = re.sub(re.escape(w), "", rest, flags=re.I)
-            if not re.sub(r"[\s\W_]+", "", rest):
+        if fence:
+            if re.fullmatch(re.escape(fence[0]) + "{%d,}" % len(fence), s):
+                fence = None
+        else:
+            m = FENCE_OPEN_RE.fullmatch(s)
+            if m:
+                fence = m.group(1)
+            elif noise_only(line, words):
                 continue
         out.append(line)
     return "\n".join(out).strip()
+
+
+def busy_line(text, lines):
+    """답을 만드는 동안에만 보이는 줄(설정 reply_busy_lines)이 있는지. 앞뒤 공백·기호(▶ 등)는 빼고 줄 전체가 같아야 함"""
+    want = {w.strip() for w in lines or [] if w and w.strip()}
+    if not want:
+        return False
+    return any(re.sub(r"^[\W_]+|[\W_]+$", "", ln.strip()) in want for ln in (text or "").split("\n"))
+
+
+def refence_code(text, blocks, words=()):
+    """화면에서 읽은 답(글만 있음)의 코드 블록을 ``` 로 다시 감싼다 (pi 화면에서 코드의 '#' 줄이 제목처럼 보이지 않게).
+    코드 바로 앞의 언어 표시 줄(예: 'JSON')은 뺀다 (그 사이의 화면 문구 줄은 건너뛰고 봄). 화면 글에서 코드를 못 찾으면 그대로"""
+    if not text or not blocks:
+        return text
+    out, pos = [], 0
+    for b in blocks:
+        code = (b.get("text") or "").strip("\n")
+        if not code.strip():
+            continue
+        i = text.find(code, pos)
+        if i < 0:
+            continue
+        lang = (b.get("lang") or "").strip()
+        head = text[pos:i].split("\n")
+        j = len(head) - 2  # 마지막 조각은 코드와 같은 줄의 앞부분
+        while j >= 0 and (not head[j].strip() or noise_only(head[j], words)):
+            j -= 1
+        if lang and j >= 0 and without_noise(head[j], words).lower() == lang.lower():  # 'JSON' 또는 'JSON 코드 복사'
+            del head[j]
+        before = "\n".join(head)
+        fence = "`" * max(3, max((len(r) for r in re.findall(r"`+", code)), default=0) + 1)
+        out.append(before + ("" if not before or before.endswith("\n") else "\n"))
+        out.append("{f}{lang}\n{code}\n{f}".format(f=fence, lang=lang, code=code))
+        pos = i + len(code)
+        if pos < len(text) and text[pos] != "\n":
+            out.append("\n")
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def drop_lang_lines(text, blocks):
+    """코드를 뺀 본문에 남은 언어 표시 줄(코드 블록의 언어와 같은 한 줄, 예: 'JSON')을 지운다"""
+    langs = {(b.get("lang") or "").strip().lower() for b in blocks or []} - {""}
+    if not text or not langs:
+        return text
+    return "\n".join(ln for ln in text.split("\n") if ln.strip().lower() not in langs)
 
 
 class BridgeError(Exception):
@@ -932,6 +1006,7 @@ class Copilot:
             self.q(cfg["stop_button_pattern"]), self.q(cfg["thread_limit_pattern"]))
         start = time.time()
         base, level, last_len, last_change, limit_seen, base_limit = None, None, None, time.time(), False, None
+        busy_logged = False
         while True:
             now = time.time()
             if now - start > cfg["reply_timeout_seconds"]:
@@ -974,6 +1049,17 @@ class Copilot:
                 last_len, last_change = cur, now
             limit_seen = limit_new
             if not st["stop"] and now - last_change >= cfg["stable_seconds"]:
+                # 답을 만드는 동안에만 보이는 줄(reply_busy_lines)이 있으면 더 기다림 (단계 사이에 오래 멈추는 화면)
+                busy = cfg.get("reply_busy_lines")
+                if busy and now - last_change < float(cfg.get("reply_busy_max_seconds") or 0) and busy_line(self.js(
+                        """(() => { const B = window.__piBridge; const input = B.findInput(%s);
+                        return B.textOf(B.replyEls(%s, %d, %s, input) || [], %s); })()""" % (
+                        sel_in, self.q(marker), level, sel_reply, noise)), busy):
+                    if not busy_logged:
+                        log("  (Copilot 이 아직 답을 만드는 중이라 더 기다립니다)")
+                        busy_logged = True
+                    time.sleep(1.0)
+                    continue
                 break
             time.sleep(0.5)
         if self.stream_ok:  # 화면은 끝났는데 WebSocket 최종 답이 아직이면 조금 더 기다린다
@@ -997,6 +1083,10 @@ class Copilot:
         if limit_seen and len(reply.get("text", "")) < 400 and not reply.get("code_blocks"):
             raise ThreadReset("Copilot 대화 한도에 도달")
         self.thread_url = reply.get("url")
+        # 화면 글에는 코드 블록의 ``` 가 없으므로 다시 감싼다 (WebSocket 원문처럼 markdown 으로). 언어 표시 줄은 뺌
+        blocks = reply.get("code_blocks") or []
+        reply["text"] = refence_code(reply.get("text"), blocks, cfg["ui_noise_words"])
+        reply["text_without_code"] = drop_lang_lines(reply.get("text_without_code"), blocks)
         for k in ("text", "text_without_code"):
             reply[k] = unmangle_copilot_text(strip_ui_noise(reply.get(k), cfg["ui_noise_words"]))
         for c in reply.get("code_blocks") or []:

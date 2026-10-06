@@ -36,10 +36,11 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-06.3"
+RELAY_VERSION = "2026-10-06.4"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
+STARTED = 0  # 중계 서버를 켠 시각 (설정 파일을 읽기 직전, 초). /health 로 알려 bin/pi 가 그 뒤에 바뀐 설정을 알아봄
 _tls = threading.local()  # 지금 스레드가 일하는 창의 상태 (max_tabs 가 2 이상이면 창마다 따로)
 
 
@@ -132,7 +133,7 @@ PREAMBLE = """[{tag}]
 4. 요청이 끝났으면 코드 블록 없이 결과를 정리해서 답해 주세요.
 - JSON 은 올바른 형식이어야 합니다 (문자열 안 줄바꿈은 \\n, 따옴표는 \\").
 - 한 번에 블록 하나만 써 주세요.{multi_read}
-- 메시지 끝의 [pi-xxxxxx] 표시는 무시하세요.
+- 메시지 끝의 [pi-xxxxxx] 표시는 무시하세요.{extra}
 
 사용할 수 있는 도구
 {tools}
@@ -142,7 +143,9 @@ PREAMBLE = """[{tag}]
 """
 
 # Copilot 이 "직접 실행할 수 없다"며 거절하면 한 번 설명하고 다시 부탁한다
-REFUSAL_RE = re.compile(r"(실행|접근|확인)(할|하실)? ?수 ?[는가]? ?없|(can ?not|can't|unable to) (run|execute|access)|주장할 ?수 ?는? ?없", re.I)
+REFUSAL_RE = re.compile(r"(실행|접근|확인)(할|하실)? ?수 ?[는가]? ?없|(can ?not|can't|unable to) (run|execute|access)|주장할 ?수 ?는? ?없"
+                         # 자기 도구로 직접 찾아보고 "작업 환경에 존재하지 않습니다" 처럼 답함 (도구를 직접 쓰는 채팅 서비스)
+                         r"|(작업 ?환경|파일 ?시스템|이 환경)[^\n]{0,30}(존재하지 않|없습니다|확인되지 않|찾을 수 없)", re.I)
 REFUSAL_NUDGE = ("괜찮습니다. 직접 실행하실 필요는 없습니다. 실행은 제가 pi 로 하고 결과를 그대로 붙여 드릴게요. "
                  "요청을 진행하기 위한 다음 작업 하나를 정해진 형식의 코드 블록(json)으로만 적어 주세요.")
 
@@ -194,6 +197,33 @@ UNFINISHED_RE = re.compile(r"다음 (블록|단계|작업)을? ?(을 )?(드리|�
 # 사용자가 도구 없이 답하라고 했거나 계획 모드(pi 의 /plan, 요청 앞에 "[계획 모드]")면 도구를 쓰라고 다시 부탁하지 않는다
 #  (계획을 적은 답에는 "다음 단계는", 코드 예시, "실행할 수 없" 같은 말이 자연스럽게 들어감)
 NO_TOOLS_RE = re.compile(r"도구는? (쓰지|사용하지) ?말|도구 없이|\[계획 모드\]")
+
+# 서비스가 개인정보·민감 정보 확인으로 답하지 않음 (사내AI 등): 다시 부탁하지 않고 멈춰서 그 답을 그대로 pi 에 알린다.
+#  짧고 코드 블록이 없으며, 개인정보 낱말과 거절 표현이 함께 있을 때만
+#  (분석 결과의 "이 테이블에는 개인정보 컬럼이 포함되어 있습니다" 같은 답은 거절이 아님)
+PRIVACY_TERM_RE = re.compile(r"개인 ?정보|민감한? ?정보|중요 ?정보|기밀 ?정보|personal (data|information)|sensitive (data|information)", re.I)
+PRIVACY_REFUSAL_RE = re.compile(
+    r"(공유|입력|전송|제공|업로드)(하지|하시지) ?(않|마)"
+    r"|(답변|응답|처리|진행|도움|분석)[을를이가]? ?(드리|해 ?드리|하)?(기|는 ?것이?)? ?(어렵|힘들|곤란)"
+    r"|(답변|응답|처리|진행|분석|도와)[을를]? ?(드릴|해 ?드릴|할|하실|해) ?수 ?(가 |는 )?없"
+    r"|(can ?not|can't|unable to|not able to) (help|assist|process|answer|continue)", re.I)
+REFUSED_STATUS = 422  # pi 에 돌려주는 오류 번호 (인증 오류처럼 보이지 않게 401/403 은 쓰지 않음)
+
+
+def privacy_refusal(reply):
+    text = (reply.get("text") or "").strip()
+    if not text or len(text) > 500 or reply.get("code_blocks") or sum(1 for ln in text.split("\n") if ln.strip()) > 8:
+        return False
+    return bool(PRIVACY_TERM_RE.search(text) and PRIVACY_REFUSAL_RE.search(text))
+
+
+class PrivacyRefused(Exception):
+    """서비스가 개인정보·민감 정보 확인으로 답하지 않음. part/total: 나눠 보낸 메시지에서 거절한 조각 (마지막 조각이면 None)
+    redo: 다음 요청 때 같은 대화에 지침과 기록을 처음부터 다시 보내야 함 (보내지 못한 조각이 있거나 새 대화의 첫 메시지)"""
+
+    def __init__(self, text, part=None, total=None, redo=True):
+        super().__init__(text)
+        self.text, self.part, self.total, self.redo = text, part, total, redo
 
 
 # pi 가 맥락 한도에 닿아 앞 대화를 요약할 때(compaction, /compact) 보내는 요청: 대화 전체가 메시지 하나(<conversation>)에 들어 있다.
@@ -765,8 +795,9 @@ class CopilotLink:
     def connect(self):
         if not self.cfg.get("copilot_url_contains"):  # 빈 글자는 모든 주소에 들어 있어 아무 탭(Copilot 탭 등)이나 잡게 됨
             raise RelayError(503, "{} 의 주소가 설정되지 않았습니다. 내 설정 파일(사내AI 는 ~/.pi/agent/inhouse.json)에 "
-                                  "copilot_url_contains(주소의 호스트 이름)와 copilot_new_chat_url(새 대화 주소)을 적고 "
-                                  "중계 서버를 다시 켜세요.".format(self.cfg.get("service_name") or "Copilot"))
+                                  "copilot_url_contains(주소의 호스트 이름)와 copilot_new_chat_url(새 대화 주소)을 적은 뒤 "
+                                  "pi 를 다시 실행하세요 (설정 파일이 바뀌면 중계 서버를 새로 켭니다).".format(
+                                      self.cfg.get("service_name") or "Copilot"))
         with TAB_LOCK:
             try:
                 tabs = bridge.list_tabs(self.cfg["cdp_port"])
@@ -905,6 +936,12 @@ class CopilotLink:
                     else:
                         bridge.log("  (화면에서 보낸 메시지를 찾지 못해 이 대화는 삭제 목록에 넣지 않습니다: {})".format(
                             self.cop.thread_url))
+                if i < len(parts):  # 중간 조각은 'OK' 만 답하라고 했음
+                    if privacy_refusal(reply):
+                        raise PrivacyRefused(reply.get("text", ""), i, len(parts))
+                    said = norm(reply.get("text", ""))
+                    if len(said) > 20 or "ok" not in said.lower():
+                        bridge.log("  (Copilot 이 중간 조각에 OK 대신 답함: {})".format(said[:100]))
             return reply
         except bridge.Throttled as e:
             # 계정 단위 사용량 제한: 새 대화를 열어도 같은 답이 오므로 열지 않고, 지금 대화는 나중에 그대로 이어 쓴다
@@ -935,6 +972,7 @@ class Relay:
         self.lock = threading.Lock()
         self.sent = []  # 현재 Copilot 대화창에 들어가 있는 메시지 지문
         self.fresh = True  # True 면 다음 요청은 새 대화로
+        self.redo_same_chat = False  # True 면 다음 요청은 지금 대화에 지침과 기록을 처음부터 다시 (개인정보 확인으로 멈춘 뒤)
         self.reminded_at = 0  # 마지막으로 진행 규칙 요약을 붙였을 때의 질문 수
         self.model_label = ""  # 이번 요청에 쓸 Copilot 모델 (화면 이름)
         self.stat = None  # 이번 요청의 통계 (걸린 시간, 보낸 조각 수, 새 대화, Copilot 에 보낸 횟수) -> '답:' 로그 줄 끝에
@@ -953,6 +991,20 @@ class Relay:
             st["asks"] += 1
             st["new"] = st["new"] or new_thread
         return self.link.request(parts, new_thread, model=self.model_label)
+
+    def refused(self, e):
+        """서비스가 개인정보·민감 정보 확인으로 답하지 않음 -> 다시 부탁하지 않고 멈춰서 그 답을 그대로 pi 에 알린다 (오류 422).
+        지금 대화는 그대로 두고 다음 요청도 이 대화에 보낸다. 보내지 못한 조각이 있거나 새 대화의 첫 메시지였으면
+        다음 요청 때 지침과 기록을 처음부터 다시 (빠진 지침 없이 이어 가도록)"""
+        name = (getattr(self.link, "cfg", None) or {}).get("service_name") or "Copilot"
+        where = " (긴 메시지 {}/{})".format(e.part, e.total) if e.part else ""
+        rest = " 나머지 {}개 조각은 보내지 않았습니다.".format(e.total - e.part) if e.part and e.total and e.total > e.part else ""
+        self.log("{}: 개인정보·민감 정보 확인으로 답하지 않음{} -> 멈춤".format(name, where))
+        self.fresh = False
+        if e.redo:
+            self.redo_same_chat = True
+        return RelayError(REFUSED_STATUS, "{}: 개인정보·민감 정보 확인으로 답하지 않았습니다{}. 답: «{}»{}".format(
+            name, where, norm(e.text)[:300], rest))
 
     def ask_again(self, text):
         """같은 대화에 이어서 다시 부탁 (형식 오류·거절·반복 등). 첫 질문은 이미 들어갔으므로, 여기서 사용량 제한(429)에
@@ -1010,11 +1062,14 @@ class Relay:
             self.status.update(busy=True, started=time.time())
             set_phase("준비 중")
             try:
-                return self._handle(body, False)
-            except ThreadReset as e:
-                self.log("Copilot 대화를 새로 시작해서 다시 보냅니다:", e)
-                set_phase("새 대화로 다시 보내는 중")
-                return self._handle(body, True)
+                try:
+                    return self._handle(body, False)
+                except ThreadReset as e:
+                    self.log("Copilot 대화를 새로 시작해서 다시 보냅니다:", e)
+                    set_phase("새 대화로 다시 보내는 중")
+                    return self._handle(body, True)
+            except PrivacyRefused as e:
+                raise self.refused(e)
             finally:
                 self.status["busy"] = False
                 _tls.status = None
@@ -1031,7 +1086,8 @@ class Relay:
         fps = [fingerprint(m) for m in messages]
         names = self.renderer.tool_names_by_id(messages)
         n = len(self.sent)
-        delta = (not force_new) and (not self.fresh) and n and len(fps) > n and fps[:n] == self.sent
+        redo, self.redo_same_chat = self.redo_same_chat and not force_new, False
+        delta = (not force_new) and (not redo) and (not self.fresh) and n and len(fps) > n and fps[:n] == self.sent
         marker = "[pi-{}]".format(uuid.uuid4().hex[:6])
         if delta:
             new = messages[n:]
@@ -1049,7 +1105,7 @@ class Relay:
             new_thread = False
         else:
             parts = self.full_parts(messages, tools, names, marker)
-            new_thread = True
+            new_thread = not redo  # 개인정보 확인으로 멈춘 뒤에는 같은 대화에 처음부터 다시
         was_fresh, self.fresh = self.fresh, True  # 도중에 실패하면 다음 요청은 새 대화로 (성공하면 아래에서 False)
         try:
             reply = self.ask(parts, new_thread)
@@ -1058,6 +1114,8 @@ class Relay:
                 self.fresh = was_fresh
             raise
         body_text, call, err = parse_reply(reply, tool_names)
+        if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
+            raise PrivacyRefused(reply.get("text", ""), redo=new_thread)
         retries, nudged, code_nudged, cont_nudged = 0, False, False, False
         no_tools = bool(NO_TOOLS_RE.search(last_user_text(messages)))
         while call is None and retries < 2:
@@ -1082,11 +1140,15 @@ class Relay:
             set_phase("다시 부탁하는 중")
             reply = self.ask_again(fix)
             body_text, call, err = parse_reply(reply, tool_names)
+            if call is None and privacy_refusal(reply):
+                raise PrivacyRefused(reply.get("text", ""), redo=new_thread)
         if call and repeated_calls(messages, call) >= LOOP_LIMIT:
             count = repeated_calls(messages, call)
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
             reply = self.ask_again(LOOP_NUDGE.format(name=call["name"], count=count))
             body_text, call, err = parse_reply(reply, tool_names)
+            if call is None and privacy_refusal(reply):
+                raise PrivacyRefused(reply.get("text", ""), redo=new_thread)
             if call and repeated_calls(messages, call) >= LOOP_LIMIT:
                 self.log("반복이 계속됨 -> 이 요청을 멈춤")
                 body_text, call = LOOP_STOP.format(name=call["name"]), None
@@ -1109,8 +1171,11 @@ class Relay:
 
     def full_parts(self, messages, tools, names, marker):
         system = "\n\n".join(content_text(m.get("content")) for m in messages if m.get("role") in ("system", "developer"))
+        rules = (getattr(self.link, "cfg", None) or {}).get("extra_rules") or []  # 서비스별로 덧붙일 진행 규칙
+        rules = [rules] if isinstance(rules, str) else rules
         head = PREAMBLE.format(tag=PROTOCOL_TAG, tools=render_tools(tools), system=system_for_copilot(system),
-                               multi_read=MULTI_READ_RULE if self.multi_read() and "read" in names_of(tools) else "")
+                               multi_read=MULTI_READ_RULE if self.multi_read() and "read" in names_of(tools) else "",
+                               extra="".join("\n- " + r.strip() for r in rules if r and r.strip()))
         convo = [m for m in messages if m.get("role") not in ("system", "developer")]
         # 새 대화에 다시 넣는 기록: 최근 것은 그대로(full_budget), 그 앞은 한 줄 요약(brief_budget), 더 오래된 것은 생략
         full_budget = getattr(self.args, "resend_recent_chars", None) or self.args.max_chars * 2
@@ -1290,7 +1355,9 @@ def make_handler(relay, jup, cfg, lanes=None):
 
         def health(self):
             thr = getattr(relay.link, "throttled_at", None)
-            out = {"server": "ok", "version": RELAY_VERSION, "thread_messages": len(relay.sent),
+            # started: 켠 시각(설정을 읽은 시각). bin/pi 가 그 뒤에 바뀐 설정 파일이 있으면 다시 켠다 (일하는 중(busy)이 아닐 때)
+            busy = bool(STATUS["busy"]) or (any(w["busy"] for w in lanes.summary()) if lanes else False)
+            out = {"server": "ok", "version": RELAY_VERSION, "started": STARTED, "busy": busy, "thread_messages": len(relay.sent),
                    "copilot_turns_left": relay.link.turns_left,
                    "copilot_throttled_at": time.strftime("%H:%M:%S", time.localtime(thr)) if thr else None,
                    "jupyter": {"root": jup.root, "home": jup.home, "terminal": jup.term}}
@@ -1373,7 +1440,7 @@ def make_handler(relay, jup, cfg, lanes=None):
             try:
                 msg = relay.handle(body)
             except RelayError as e:
-                if e.status != 429:  # 사용량 제한이면 지금 대화를 그대로 둔다
+                if e.status not in (429, REFUSED_STATUS):  # 사용량 제한·개인정보 확인이면 지금 대화를 그대로 둔다
                     relay.reset()
                 relay.log("오류:", e)
                 return self.send_json(e.status, {"error": {"message": bridge.service_text(e), "type": "copilot_relay_error"}})
@@ -1449,6 +1516,8 @@ def main():
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except AttributeError:
             pass
+    global STARTED
+    STARTED = int(time.time())
     try:
         cfg = bridge.load_config(args.config)
     except bridge.ConfigError as e:

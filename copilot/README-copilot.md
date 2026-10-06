@@ -81,7 +81,9 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `service_name`, `model_toggle_buttons`, `open_tab_if_missing` | 사내AI 중계 서버용 (`copilot/inhouse.json`): 안내·로그에 쓸 이름, 메뉴 대신 화면 단추로 고르는 모델(안전모드·성능모드), 탭이 없으면 전용 창에 새로 열기 |
 | `chat_item_selector` | 왼쪽 채팅 목록 항목을 자동으로 못 찾을 때 CSS 선택자 (`diag.py --chats` 참고) |
 | `chat_more_pattern` / `delete_menu_pattern` / `delete_confirm_pattern` | 대화의 '…' 버튼 이름 / 메뉴의 '삭제' / 확인 창의 '삭제' 를 알아보는 정규식 (화면 문구가 바뀌면 조정) |
-| `stable_seconds` | 화면에서 읽을 때 답이 이 시간 동안 안 바뀌면 끝난 것으로 봄 |
+| `stable_seconds` | 화면에서 읽을 때 답이 이 시간 동안 안 바뀌면 끝난 것으로 봄 (Copilot 4초, 사내AI 8초) |
+| `reply_busy_lines` / `reply_busy_max_seconds` | 답을 만드는 동안에만 보이는 줄(처리 단계 제목 등)의 목록. 그 줄이 보이는 동안은 글이 멈춰도 끝난 것으로 보지 않음 (앞뒤 공백·기호를 빼고 줄 전체가 같을 때). 그 줄이 보이는데 글이 `reply_busy_max_seconds`(기본 180초) 동안 그대로면 그래도 읽음 |
+| `extra_rules` | 새 대화의 첫 메시지(진행 방식)에 덧붙일 규칙 목록. 사내AI: 자기 도구(코드 실행, 파일 검색 등)로 직접 처리하지 말 것 |
 | `max_questions_per_chat` | 기본 100. 이 수만큼 질문하면 새 대화로 넘어감 (0 이면 Copilot 한도(600)까지 한 대화). 시험에서 규칙 요약 없이 80개를 넘기자 Copilot 이 진행 규칙을 놓쳤고, 규칙 요약을 넣은 뒤 60개까지는 문제가 없었음. 새 대화에는 최근 기록과 그 앞 요약만 들어가므로 아주 오래된 내용은 Copilot 이 기억하지 못함 (필요하면 파일을 다시 읽게 하세요) |
 | `max_questions_per_minute` | 0 이면 끔. 숫자를 넣으면 분당 그 수를 넘지 않게 기다렸다 보냄 (Copilot 사용량 제한 예방, 아래 참고) |
 | `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |

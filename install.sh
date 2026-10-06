@@ -62,8 +62,18 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
 esac
 PATH_LINE="export PATH=\"$PI_HOME/bin:\$PATH\""
 # 파일 끝에 PATH 한 줄 더하기 (마지막 줄에 줄바꿈이 없으면 먼저 넣음: 메모장으로 고친 파일이면 앞 줄에 붙어 둘 다 망가짐)
-add_path_line() { [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ] && echo >> "$1"; echo "$PATH_LINE" >> "$1"; }
+add_rc_line() { [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ] && echo >> "$1"; echo "$2" >> "$1"; }
+add_path_line() { add_rc_line "$1" "$PATH_LINE"; }
 grep -qF "$PI_HOME/bin" "$HOME/.bashrc" 2>/dev/null || { add_path_line "$HOME/.bashrc"; echo "PATH 추가: ~/.bashrc"; }
+# Windows: 이 창에서만 export 한 PI_NODE(예: portable VS Code 의 Code.exe)로 설치했으면 ~/.bashrc 에도 적는다 (새 창에서도 쓰게).
+#  위에서 실제로 그 Node 를 골랐을 때만, ~/.bashrc 에 PI_NODE 줄이 아직 없을 때만
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  if [ -n "${PI_NODE:-}" ] && [ "${PI_MERGE_NODE:-}" = "$PI_NODE" ] && [[ "$PI_NODE" != *"'"* ]] \
+     && ! grep -q 'PI_NODE' "$HOME/.bashrc" 2>/dev/null; then
+    add_rc_line "$HOME/.bashrc" "export PI_NODE='$PI_NODE'"
+    echo "PI_NODE 고정: ~/.bashrc (export PI_NODE='$PI_NODE', 새 Git Bash 창에서도 이 Node 를 씀)"
+  fi ;;
+esac
 # 로그인 셸(Git Bash 창, JupyterLab 터미널)은 ~/.bash_profile, ~/.bash_login, ~/.profile 중 처음 있는 것만 읽는다
 LOGIN_RC=
 for f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do [ -e "$f" ] && { LOGIN_RC="$f"; break; }; done

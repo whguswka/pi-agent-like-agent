@@ -821,5 +821,140 @@ check("요약 요청이 아니면 긴 글도 줄이지 않음", "가운데" not 
 _short = [_sum_sys, {"role": "user", "content": "<conversation>\n[User]: 짧은 대화\n</conversation>\n\n## Goal"}]
 check("짧은 요약 요청은 그대로", relay.shorten_summary_request(_short) is _short)
 
+# 개인정보·민감 정보 확인으로 답하지 않음: 다시 부탁하지 않고 멈춰서 그 답을 그대로 알림 (422). 대화는 그대로 둠
+import re as _re  # noqa: E402
+import urllib.error as _ue  # noqa: E402
+_REFUSALS = ["죄송하지만, 개인정보 보호를 위해 이메일과 같은 민감한 정보를 공유하지 않는 것이 좋습니다. 다른 도움이 필요하시면 말씀해 주세요 :)",
+             "요청에 개인정보가 포함되어 있어 답변드리기 어렵습니다.",
+             "민감정보가 포함된 요청은 처리할 수 없습니다.",
+             "I can't help with that because it may contain personal information."]
+_NOT_REFUSALS = ["이 테이블에는 개인정보 컬럼(이메일)이 포함되어 있습니다: email, phone",
+                 "개인정보 마스킹 함수를 추가했습니다. 테스트도 통과합니다.",
+                 "죄송합니다, 앞의 명령에 오타가 있었습니다.",
+                 "분석을 마쳤습니다. 모델별 테이블:\n- a: t1, t2\n- b: t3"]
+check("개인정보 확인 거절을 알아봄", all(relay.privacy_refusal({"text": t}) for t in _REFUSALS),
+      [t for t in _REFUSALS if not relay.privacy_refusal({"text": t})])
+check("개인정보 낱말이 든 보통 답은 거절이 아님 (분석 결과 등)", not any(relay.privacy_refusal({"text": t}) for t in _NOT_REFUSALS),
+      [t for t in _NOT_REFUSALS if relay.privacy_refusal({"text": t})])
+check("코드 블록이 있거나 긴 답은 거절로 보지 않음", not relay.privacy_refusal({"text": _REFUSALS[0], "code_blocks": [{"text": "x"}]})
+      and not relay.privacy_refusal({"text": _REFUSALS[0] + " 설명" * 200}))
+_nomark = lambda parts: [_re.sub(r"\[pi-[0-9a-f]+\]", "", p) for p in parts]  # noqa: E731
+_msgs = [sys_msg, {"role": "user", "content": "~/data 의 표를 정리해줘"}]
+_lkp = FakeLink([_REFUSALS[0], "다시 받은 답"])
+_rp = relay.Relay(A(), _lkp)
+try:
+    _quiet(lambda: _rp.handle({"messages": _msgs, "tools": tools}))
+    _st, _em = None, ""
+except relay.RelayError as _e:
+    _st, _em = _e.status, str(_e)
+check("새 대화의 첫 메시지 거절: 422 + 받은 답 그대로 + 다시 부탁하지 않음", _st == 422 and "공유하지 않는" in _em and len(_lkp.sent_log) == 1,
+      (_st, _em, len(_lkp.sent_log)))
+check("거절 뒤: 지금 대화를 그대로 두고 다음 요청은 같은 대화에 처음부터", _rp.fresh is False and _rp.redo_same_chat is True)
+_a = _quiet(lambda: _rp.handle({"messages": _msgs, "tools": tools}))
+check("다시 요청하면: 같은 대화(new_thread=False)에 지침·요청을 처음부터, 보낸 내용은 처음과 똑같음 (덧붙인 글 없음)",
+      _lkp.sent_log[1]["new_thread"] is False and _nomark(_lkp.sent_log[1]["parts"]) == _nomark(_lkp.sent_log[0]["parts"])
+      and _a.get("content") == "다시 받은 답", (_lkp.sent_log[1]["new_thread"], _a))
+_lkd = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "cat a.csv"}}\n```', _REFUSALS[1], "정리했습니다"])
+_rd = relay.Relay(A(), _lkd)
+_u = {"role": "user", "content": "a.csv 요약해줘"}
+_a1 = _quiet(lambda: _rd.handle({"messages": [sys_msg, _u], "tools": tools}))
+_m2 = [sys_msg, _u, _a1, {"role": "tool", "tool_call_id": _a1["tool_calls"][0]["id"], "content": "id,name\n1,a"}]
+try:
+    _quiet(lambda: _rd.handle({"messages": _m2, "tools": tools}))
+    _st = None
+except relay.RelayError as _e:
+    _st = _e.status
+_a3 = _quiet(lambda: _rd.handle({"messages": _m2, "tools": tools}))
+check("이어 가던 대화에서 거절: 422, 다음 요청은 같은 대화에 새 부분만 똑같이 다시", _st == 422 and _lkd.sent_log[2]["new_thread"] is False
+      and _nomark(_lkd.sent_log[2]["parts"]) == _nomark(_lkd.sent_log[1]["parts"]) and _a3.get("content") == "정리했습니다",
+      (_st, _lkd.sent_log[2]))
+
+
+class _CopParts:  # 조각마다 답을 돌려주는 가짜 화면 (CopilotLink.request 시험용)
+    def __init__(self, replies):
+        self.replies, self.sent, self.thread_url, self.turns_left = list(replies), [], "https://x/chat/c1", None
+
+    def new_chat(self):
+        pass
+
+    def check_same_thread(self):
+        pass
+
+    def send(self, part):
+        self.sent.append(part)
+
+    def wait_reply(self, marker):
+        return {"text": self.replies.pop(0)}
+
+
+_lp = relay.CopilotLink({"cdp_port": 1, "copilot_url_contains": "x", "service_name": "사내AI"}, None)
+_lp.cop, _lp.pace = _CopParts([_REFUSALS[0], "끝"]), (lambda: None)
+_parts = relay.build_parts("가" * 15000, 10000, "[pi-aaaaaa]")
+try:
+    _quiet(lambda: _lp.request(_parts, True))
+    _pr = None
+except relay.PrivacyRefused as _e:
+    _pr = _e
+check("나눠 보낸 중간 조각이 거절되면 멈춤 (나머지 조각은 보내지 않음)", _pr is not None and (_pr.part, _pr.total) == (1, 2)
+      and len(_lp.cop.sent) == 1 and _pr.redo, (_pr and (_pr.part, _pr.total), len(_lp.cop.sent)))
+_rq = relay.Relay(A(), _lp)
+_err = _quiet(lambda: _rq.refused(_pr))
+check("거절 알림: 몇째 조각인지 + 받은 답 + 나머지 조각을 보내지 않았다는 것만", _err.status == 422 and str(_err).startswith("사내AI: ")
+      and "(긴 메시지 1/2)" in str(_err) and "나머지 1개 조각은 보내지 않았습니다" in str(_err) and _rq.redo_same_chat, str(_err))
+_lp.cop = _CopParts(["OK", "끝"])
+check("중간 조각에 OK 면 다음 조각까지 보냄", (_quiet(lambda: _lp.request(_parts, True)) or {}).get("text") == "끝" and len(_lp.cop.sent) == 2)
+# HTTP: 422 로 알리고 대화는 지우지 않음 + /health 에 켠 시각과 일하는 중인지
+_rh = relay.Relay(A(), FakeLink([_REFUSALS[0]]))
+import types as _types  # noqa: E402
+_srv5 = _Srv(("127.0.0.1", 0), relay.make_handler(_rh, _types.SimpleNamespace(root="", home="", term=""),
+                                                  {"cdp_port": 1, "copilot_url_contains": "x"}))
+_th.Thread(target=_srv5.serve_forever, daemon=True).start()
+_b5 = "http://127.0.0.1:{}".format(_srv5.server_address[1])
+try:
+    _quiet(lambda: _ur.urlopen(_ur.Request(_b5 + "/v1/chat/completions", data=_json.dumps({"messages": _msgs, "tools": tools}).encode(),
+                                           headers={"Content-Type": "application/json"}), timeout=10).read())
+    _code = 200
+except _ue.HTTPError as _e:
+    _code = _e.code
+_h5 = _json.loads(_ur.urlopen(_b5 + "/health", timeout=5).read())
+_srv5.shutdown()
+check("HTTP: 422, 대화는 그대로 (다음 요청도 이 대화)", _code == 422 and _rh.fresh is False and _rh.redo_same_chat, (_code, _rh.fresh))
+check("/health: 켠 시각(started)과 일하는 중(busy) (bin/pi 가 바뀐 설정을 알아보고 다시 켤 때 씀)",
+      "started" in _h5 and _h5.get("busy") is False, _h5)
+
+# 자기 도구로 직접 찾아보고 '이 작업 환경에 없다' 는 답 -> 실행 거절처럼 한 번 설명하고 다시 부탁
+check("'작업 환경에 존재하지 않습니다' 류는 실행 거절로 봄", bool(relay.REFUSAL_RE.search("~/models 경로가 이 작업 환경에 존재하지 않습니다."))
+      and bool(relay.REFUSAL_RE.search("현재 접근 가능한 파일 시스템 어디에서도 확인되지 않습니다."))
+      and not relay.REFUSAL_RE.search("오류는 확인되지 않았습니다. 테스트 3개 통과."))
+_lks = FakeLink(["요청하신 ~/proj 경로가 이 작업 환경에 존재하지 않습니다.", '```json\n{"tool": "bash", "arguments": {"command": "ls ~/proj"}}\n```'])
+_as = _quiet(lambda: relay.Relay(A(), _lks).handle({"messages": [sys_msg, {"role": "user", "content": "~/proj 정리해줘"}], "tools": tools}))
+check("그 답이면 '직접 실행하실 필요 없다' 고 다시 부탁해 도구 블록을 받음", len(_lks.sent_log) == 2 and relay.REFUSAL_NUDGE in _lks.sent_log[1]["parts"][0]
+      and _as.get("tool_calls") and _as["tool_calls"][0]["function"]["name"] == "bash", (_lks.sent_log, _as))
+# 서비스별 규칙(extra_rules): 새 대화의 첫 메시지 진행 방식에 덧붙임
+_lx = FakeLink(["답"])
+_lx.cfg = {"extra_rules": ["당신의 도구로 직접 실행하지 마세요."]}
+_quiet(lambda: relay.Relay(A(), _lx).handle({"messages": _msgs, "tools": tools}))
+check("extra_rules: 첫 메시지의 진행 방식에 덧붙임", "표시는 무시하세요.\n- 당신의 도구로 직접 실행하지 마세요.\n" in _lx.sent_log[0]["parts"][0],
+      _lx.sent_log[0]["parts"][0][:1200])
+check("inhouse.json: 답 끝 기다림 8초, 진행 중 줄은 비워 둠(내 설정 파일에), 자기 도구로 실행하지 말라는 규칙",
+      _kc["stable_seconds"] == 8.0 and _kc["reply_busy_lines"] == [] and any("도구" in r for r in _kc["extra_rules"]), _kc)
+
+# 화면에서 읽은 답: 진행 중 줄, 코드 블록 다시 감싸기, 코드 안의 줄은 화면 문구로 지우지 않음
+_B = relay.bridge
+check("busy_line: 줄 전체가 같을 때만 (앞뒤 ▶ 같은 기호는 빼고 봄)", _B.busy_line("처리 단계\n먼저 확인합니다", ["처리 단계"])
+      and _B.busy_line("▼ 처리 단계 ", ["처리 단계"]) and not _B.busy_line("▶ 처리 단계 열기\n답", ["처리 단계"])
+      and not _B.busy_line("처리 단계", []))
+_rf = _B.refence_code('아래처럼 하면 됩니다.\nJSON\n코드 복사\n{"tool": "bash"}\n끝.', [{"lang": "json", "text": '{"tool": "bash"}\n'}], ["코드 복사"])
+check("코드 블록을 ``` 로 다시 감쌈 (언어 표시 줄은 뺌)", _rf == '아래처럼 하면 됩니다.\n코드 복사\n```json\n{"tool": "bash"}\n```\n끝.', _rf)
+check("언어 표시와 단추 글이 한 줄에 붙어 있어도 그 줄을 뺌 ('JSON 코드 복사')",
+      _B.refence_code('JSON 코드 복사\n{"a": 1}\n', [{"lang": "json", "text": '{"a": 1}'}], ["코드 복사"]) == '```json\n{"a": 1}\n```\n')
+check("코드 안의 '#' 줄은 감싸져서 pi 화면에서 제목이 되지 않음",
+      _B.refence_code("설명\n# 주석\nls\n", [{"lang": "bash", "text": "# 주석\nls"}]) == "설명\n```bash\n# 주석\nls\n```\n")
+check("화면 글에서 코드를 못 찾으면 그대로", _B.refence_code("abc", [{"lang": "x", "text": "zzz"}]) == "abc")
+check("화면 문구 줄은 지우되 코드 블록 안의 같은 글은 그대로", _B.strip_ui_noise("코드 복사\n```text\n코드 복사\n```", ["코드 복사"]) == "```text\n코드 복사\n```")
+check("코드를 뺀 본문의 언어 표시 줄 지움", _B.drop_lang_lines("JSON\n코드 복사\n설명", [{"lang": "json", "text": "{}"}]) == "코드 복사\n설명")
+check("화면 문구는 적은 차례와 상관없이 긴 것부터 ('복사' 를 먼저 적어도 '코드 복사' 줄을 지움)",
+      _B.strip_ui_noise("코드 복사\n본문", ["복사", "코드 복사"]) == "본문")
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

@@ -50,7 +50,7 @@ function helpLines(): string[] {
 		`── pi 빠른 도움말 (판 ${version()}) ── 닫기: /kit 다시 입력 또는 요청 보내기`,
 		" 입력  Enter 보내기 · Shift+Enter 줄바꿈 · Esc 멈추기 · Ctrl+O 도구 출력 펼치기 · !명령 직접 실행 · @ 파일 고르기(내용이 함께 감)",
 		" 모델  /model 또는 Ctrl+L 고르기 · Ctrl+P 다음 모델",
-		" 세션  pi -c 이어서 · /resume 고르기 · /new 새로 · /name 이름 붙이기 · 끝내기 /quit 또는 Ctrl+C 두 번",
+		" 세션  pi -c 이어서 · /resume 고르기 · /new 새로 · /name 이름 붙이기 · 끝내기 /quit(/exit) 또는 Ctrl+C 두 번",
 		" 작업  /plan 계획부터 (승인하면 진행) · /mode 계획·확인·자동 · /undo pi 가 고친 파일 되돌리기",
 		` 명령  ${prompts.join(" ") || "(없음)"}`,
 		`       내 명령: ${A}/prompts/<이름>.md`,
@@ -61,7 +61,7 @@ function helpLines(): string[] {
 	if (bridge) {
 		lines.push(
 			" 노트북 /jupyter 폴더 · /local · /upload 파일·폴더 · /download 파일·폴더",
-			` 설정  내 설정 ${A}/bridge.json (고친 뒤 중계 서버 다시 켜기: curl -s -X POST http://127.0.0.1:8765/shutdown)`,
+			` 설정  내 설정 ${A}/bridge.json · 사내AI ${A}/inhouse.json (고친 뒤 pi 를 다시 실행하면 중계 서버도 새 설정으로)`,
 			` 문제  /doctor 상태 요약 (화면을 찍어 보내기) · 로그 ${A}/copilot-relay.log`,
 		);
 	} else {
@@ -144,6 +144,13 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setWidget("pi-kit", lines && [lines.join("\n")]);
 		shown = lines ? what : null;
 	};
+	// /exit: pi 의 끝내기 명령은 /quit 이다. 다른 도구 습관으로 /exit 을 치면 요청으로 보내지므로 같은 일을 하게 한다
+	pi.registerCommand("exit", {
+		description: "pi 끝내기 (/quit 과 같음)",
+		handler: async (_args, ctx) => {
+			ctx.shutdown();
+		},
+	});
 	pi.registerCommand("kit", {
 		description: "pi 빠른 도움말. /kit share <폴더> 로 팀 공유 폴더의 스킬·명령 등록, /kit unshare <폴더> 로 빼기",
 		handler: async (args, ctx) => {

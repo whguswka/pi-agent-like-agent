@@ -5,8 +5,10 @@ PI_HOME="$(cd "$(dirname "$SELF")/.." && pwd)"
 . "$PI_HOME/bin/find-node.sh"
 . "$PI_HOME/bin/kit-config.sh"
 NODE="$(pi_find_node)" || {
-  echo "[pi] 사용할 수 있는 Node.js(20.15 이상)를 찾지 못했습니다." >&2
-  echo "     export PI_NODE=/node/실행파일/경로   로 지정하세요.  (진단: $PI_HOME/check-node.sh)" >&2
+  echo "[pi] 사용할 수 있는 Node.js(20.15 이상)를 찾지 못했습니다. (진단: bash $PI_HOME/check-node.sh)" >&2
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) _ex="C:/경로/Code.exe" ;; *) _ex="/경로/bin/node" ;; esac
+  echo "     node 실행 파일(또는 VS Code 의 Code.exe) 경로를 ~/.bashrc 에 한 번 적으면 새 터미널부터 씁니다:" >&2
+  echo "       echo >> ~/.bashrc; echo 'export PI_NODE=\"$_ex\"' >> ~/.bashrc" >&2
   exit 1
 }
 [ -n "$PI_DEBUG" ] && echo "[pi] node: $NODE ($(pi_node_exec "$NODE" -v | tr -d '\r'))" >&2
@@ -38,16 +40,34 @@ fi
 # 중계 서버 자동 시작 (브리지 pi): 설정(models.json)이 중계 서버 주소를 쓰는데 꺼져 있으면 백그라운드로 켠다
 #  (8765: Copilot 중계 서버, 8766: 사내AI 중계 서버 - models.json 에 사내AI 모델이 있을 때)
 pi_port_open() { (exec 3<>"/dev/tcp/127.0.0.1/${1:-8765}") 2>/dev/null; }
-# 실행 중인 중계 서버가 이 코드와 버전이 다르면(새 코드로 바꾼 뒤) 끈다. 우리 중계 서버가 아니면 건드리지 않음 (인자: relay.py, 포트)
+# 실행 중인 중계 서버를 끈다 (다음 줄에서 새로 켬): 이 코드와 버전이 다르거나(새 코드로 바꾼 뒤),
+# 켠 뒤에 설정 파일이 바뀌었으면 (일하는 중이면 다음 실행 때). 우리 중계 서버가 아니면 건드리지 않음 (인자: relay.py, 포트, 설정 파일들)
 pi_relay_stop_old() {
-  local want h pid i port="${2:-8765}"
+  local want h pid i f m started why= script="$1" port="${2:-8765}" name
+  shift 2
+  name="중계 서버$([ "$port" = 8765 ] || echo "($port)")"
   command -v curl >/dev/null 2>&1 || return 0
-  want="$(sed -n 's/^RELAY_VERSION = "\(.*\)".*/\1/p' "$1")"
+  want="$(sed -n 's/^RELAY_VERSION = "\(.*\)".*/\1/p' "$script")"
   [ -n "$want" ] || return 0
   h="$(curl -s -m 3 "http://127.0.0.1:$port/health" 2>/dev/null)"
   case "$h" in *'"server": "ok"'*) ;; *) return 0 ;; esac
-  case "$h" in *"\"version\": \"$want\""*) return 0 ;; esac
-  echo "[pi] 중계 서버$([ "$port" = 8765 ] || echo "($port)")를 새 코드로 다시 켭니다" >&2
+  case "$h" in
+    *"\"version\": \"$want\""*)
+      started="$(printf '%s' "$h" | sed -n 's/.*"started": \([0-9][0-9]*\).*/\1/p')"
+      [ -n "$started" ] || return 0
+      for f in "$@"; do
+        [ -n "$f" ] || continue
+        command -v cygpath >/dev/null 2>&1 && f="$(cygpath -u "$f")"
+        [ -f "$f" ] && m="$(stat -c %Y "$f" 2>/dev/null)" && [ -n "$m" ] && [ "$m" -gt "$started" ] && { why="$f"; break; }
+      done
+      [ -n "$why" ] || return 0
+      case "$h" in *'"busy": true'*)
+        echo "[pi] 설정 파일이 바뀌었지만 $name가 일하는 중이라 다음 실행 때 반영합니다 ($why)" >&2
+        return 0 ;;
+      esac
+      echo "[pi] 설정 파일이 바뀌어 $name를 다시 켭니다 ($why)" >&2 ;;
+    *) echo "[pi] $name를 새 코드로 다시 켭니다" >&2 ;;
+  esac
   curl -s -m 3 -X POST "http://127.0.0.1:$port/shutdown" >/dev/null 2>&1
   for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open "$port" || return 0; sleep 0.3; done
   # 예전 중계 서버(/shutdown 없음): 그 포트에서 대기 중인 프로세스를 끈다 (Windows)
@@ -99,9 +119,11 @@ pi_relay_autostart() {
 }
 # 중계 서버 하나 켜기 (인자: 포트, 로그 파일, 내 설정 파일(비우면 기본), 이름, relay.py 에 더 넘길 인자...)
 pi_relay_start() {
-  local port="$1" log="$2" ucfg="$3" name="$4" script="$PI_HOME/copilot/relay.py" agent="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" py i
+  local port="$1" log="$2" ucfg="$3" name="$4" script="$PI_HOME/copilot/relay.py" agent="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" py i a
+  local kcfg="$PI_HOME/copilot/bridge.json" prev=
   shift 4
-  pi_port_open "$port" && pi_relay_stop_old "$script" "$port"
+  for a in "$@"; do [ "$prev" = --config ] && kcfg="$a"; prev="$a"; done  # 저장소 설정 파일 (사내AI: copilot/inhouse.json)
+  pi_port_open "$port" && pi_relay_stop_old "$script" "$port" "$kcfg" "${ucfg:-${PI_COPILOT_USER_CONFIG:-$agent/bridge.json}}"
   pi_port_open "$port" && return 0  # 이미 실행 중 (같은 버전)
   py="$(pi_find_python)" || { echo "[pi] $name를 켤 Python 을 찾지 못했습니다. PI_PYTHON=/python/경로 로 지정하세요." >&2; return 0; }
   # 로그가 5MB 를 넘으면 하나 전 것(.1)으로 돌려 둔다 (중계 서버를 켤 때만: 켜져 있는 동안은 파일을 쓰는 중)
