@@ -606,6 +606,9 @@ try:
     [t.join() for t in _ths]
     _el = _time.time() - _t0
     check("창 나누기: 두 세션을 동시에 처리 (0.6초씩 -> 합쳐 1초 안)", _out == {"A": "창 1 의 답", "B": "창 2 의 답"} and _el < 1.0, (_out, _el))
+    for _ln in _lanes.lanes:  # 두 창이 거의 같은 때 끝나므로 창 1 을 가장 오래 쉰 창으로 정해 둠 (끝난 차례에 따라 가끔 실패하던 것)
+        if _ln["relay"] is _ra:
+            _ln["used"] -= 5
     _rc = _lanes.pick("C")
     check("창 나누기: 창이 모두 쓰이면 가장 오래 쉰 창을 넘겨받음", _rc is _ra and len(_lanes.lanes) == 2, [ln["session"] for ln in _lanes.lanes])
     _lanes.end("B", "quit")
