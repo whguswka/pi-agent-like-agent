@@ -1025,6 +1025,30 @@ try:
           and "공유하지" not in _sum and "개인정보는" not in _sum, _sum)
     check("diag --report 한 줄", "Copilot 요청 3 · 오류 2 (사용량 제한 1) · 다시 부탁 1" == _E.summary_line(_E.read_events(_evp)),
           _E.summary_line(_E.read_events(_evp)))
+    # 내부 오류·대화 바꿈의 문구에는 경로·대화 주소가 섞일 수 있어 남기지 않음 (예외 이름·종류만)
+    _lki = FakeLink(["답"])
+    _lki.fail = RuntimeError("처리 중 오류 C:/Users/someone/secret-path-XYZ")
+    try:
+        _quiet(lambda: relay.Relay(A(), _lki).handle({"messages": _msgs, "tools": tools}))
+    except RuntimeError:
+        pass
+
+    class _UrlResetLink(FakeLink):
+        def request(self, parts, new_thread, model=""):
+            if not new_thread and not getattr(self, "_done", False):
+                self._done = True
+                raise relay.ThreadReset("Copilot 대화창이 바뀌었습니다 (https://x/c/secretA -> https://x/c/secretB)")
+            return FakeLink.request(self, parts, new_thread, model)
+
+    _lku = _UrlResetLink(["첫 답", "다시 연 대화의 답"])
+    _ru = relay.Relay(A(), _lku)
+    _au = _quiet(lambda: _ru.handle({"messages": _msgs, "tools": tools}))
+    _quiet(lambda: _ru.handle({"messages": _msgs + [_au, {"role": "user", "content": "다음"}], "tools": tools}))
+    _raw2 = open(_evp, encoding="utf-8").read()
+    _last = [e for e in _E.read_events(_evp) if e["ev"] in ("err", "reset")][-2:]
+    check("내부 오류 문구·대화 주소는 기록에 없음 (예외 이름과 종류만)", "secret-path-XYZ" not in _raw2 and "secretA" not in _raw2
+          and _last[0].get("kind") == "internal" and _last[0].get("exc") == "RuntimeError" and "msg" not in _last[0]
+          and _last[1].get("kind") == "thread_changed" and "msg" not in _last[1], _last)
 finally:
     relay.EVENTS = _ev_real
 check("오류 종류 가르기", [_E.classify(m) for m in ("Copilot 처리 실패: Copilot 답이 시작되지 않았습니다 (300초)",

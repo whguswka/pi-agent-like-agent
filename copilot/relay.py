@@ -36,6 +36,9 @@ from jupyter import FsError, Jupyter  # noqa: E402
 
 # 끊김·제한 기록 (events.py): 요청마다 어떻게 끝났는지를 내용 없이 한 줄씩. main() 이 파일을 정함 (시험에서는 꺼져 있음)
 EVENTS = events.EventLog()
+# 오류 기록에 안내 문구를 함께 남기는 종류 (서비스·중계 서버가 만든 정해진 문구라 요청·답의 글이 섞이지 않음)
+MSG_KINDS = {"throttle", "privacy", "login", "config", "browser", "tab", "no_reply_start", "reply_not_done", "input", "send",
+             "marker_missing"}
 
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
@@ -893,7 +896,7 @@ class CopilotLink:
             bridge.log("  지난 Copilot 대화 삭제 {}: {}".format("OK" if ok else "실패", info))
             (self.registry.deleted if ok else self.registry.failed)(c["id"])
             if not ok:
-                EVENTS.write({"ev": "warn", "kind": "delete", "msg": str(info)[:200]})
+                EVENTS.write({"ev": "warn", "kind": "delete"})  # 안내 문구에는 대화 제목(첫 질문에서 만들어짐)이 들어갈 수 있어 남기지 않음
 
     def request(self, parts, new_thread, model=""):
         """조각들을 차례로 Copilot 에 보내고 마지막 답을 돌려준다. model 은 Copilot 화면의 모델 이름 ("" 이면 그대로)"""
@@ -926,7 +929,7 @@ class CopilotLink:
                     self.model_now = model
                 else:
                     self.model_failed = model
-                    EVENTS.write({"ev": "warn", "kind": "model_select", "model": model, "msg": str(info)[:200]})
+                    EVENTS.write({"ev": "warn", "kind": "model_select", "model": model})
             reply, waits, mid_not_ok = None, [], 0
             for i, part in enumerate(parts, 1):
                 m = re.search(r"\[pi[-#][0-9a-f]+\]\s*$", part)
@@ -1092,7 +1095,7 @@ class Relay:
                     except ThreadReset as e:
                         self.log("Copilot 대화를 새로 시작해서 다시 보냅니다:", e)
                         EVENTS.write({"ev": "reset", "kind": events.classify(str(e), events.RESET_KINDS),
-                                      "chat_q": getattr(self.link, "asked", None), "msg": str(e)[:200]})
+                                      "chat_q": getattr(self.link, "asked", None)})  # 문구에 대화 주소가 들어갈 수 있어 종류만
                         set_phase("새 대화로 다시 보내는 중")
                         out = self._handle(body, True)
                 except PrivacyRefused as e:
@@ -1152,8 +1155,13 @@ class Relay:
         st = self.stat or {}
         ev = {"ev": "err", "kind": kind, "status": getattr(e, "status", None), "ms": int((time.time() - st.get("t0", time.time())) * 1000),
               "new": st.get("new", False), "parts": st.get("parts", 0), "asks": st.get("asks", 0), "model": self.model_label,
-              "chat_q": getattr(self.link, "asked", None), "turns_left": getattr(self.link, "turns_left", None),
-              "msg": str(e)[:200]}
+              "chat_q": getattr(self.link, "asked", None), "turns_left": getattr(self.link, "turns_left", None)}
+        # 안내 문구는 서비스·중계 서버가 만든 정해진 문구일 때만 (이 PC 안에서만 보며 요약에는 안 나옴).
+        # 내부 오류 등은 문구에 경로나 처리하던 글이 섞일 수 있어 예외 이름만
+        if kind in MSG_KINDS:
+            ev["msg"] = str(e)[:200]
+        else:
+            ev["exc"] = type(e).__name__
         try:
             ev["ctx"] = events.usage_context(EVENTS.read(time.time() - 86400))
         except (OSError, ValueError):

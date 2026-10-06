@@ -1009,9 +1009,10 @@ class Copilot:
             self.q(cfg["stop_button_pattern"]), self.q(cfg["thread_limit_pattern"]))
         start = time.time()
         base, level, last_len, last_change, limit_seen, base_limit = None, None, None, time.time(), False, None
-        busy_logged, busy_from, first_ms, how = False, None, None, "dom"
+        busy_logged, busy_from, busy_last, first_ms, how = False, None, None, None, "dom"
+        # busy_ms: 처리 중 줄을 처음 본 때부터 마지막으로 본 때까지 (그 뒤 답을 쓰는 시간은 빼고)
         wait = lambda h: {"how": h, "ms": int((time.time() - start) * 1000), "first_ms": first_ms,  # noqa: E731
-                          "busy_ms": int((time.time() - busy_from) * 1000) if busy_from else 0, "thr": self.last_throttling}
+                          "busy_ms": int((busy_last - busy_from) * 1000) if busy_from else 0, "thr": self.last_throttling}
         while True:
             now = time.time()
             if now - start > cfg["reply_timeout_seconds"]:
@@ -1064,6 +1065,7 @@ class Copilot:
                     if not busy_logged:
                         log("  (Copilot 이 아직 답을 만드는 중이라 더 기다립니다)")
                         busy_logged, busy_from, how = True, now, "dom-busy"
+                    busy_last = now
                     time.sleep(1.0)
                     continue
                 if busy_from and now - last_change >= float(cfg.get("reply_busy_max_seconds") or 0):
