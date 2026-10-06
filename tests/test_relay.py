@@ -824,7 +824,7 @@ check("짧은 요약 요청은 그대로", relay.shorten_summary_request(_short)
 # 개인정보·민감 정보 확인으로 답하지 않음: 다시 부탁하지 않고 멈춰서 그 답을 그대로 알림 (422). 대화는 그대로 둠
 import re as _re  # noqa: E402
 import urllib.error as _ue  # noqa: E402
-_REFUSALS = ["죄송하지만, 개인정보 보호를 위해 이메일과 같은 민감한 정보를 공유하지 않는 것이 좋습니다. 다른 도움이 필요하시면 말씀해 주세요 :)",
+_REFUSALS = ["죄송합니다. 이름이나 연락처 같은 개인정보는 공유하지 않는 편이 좋겠습니다. 다른 질문이 있으면 알려 주세요.",
              "요청에 개인정보가 포함되어 있어 답변드리기 어렵습니다.",
              "민감정보가 포함된 요청은 처리할 수 없습니다.",
              "I can't help with that because it may contain personal information."]
