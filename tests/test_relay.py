@@ -717,7 +717,8 @@ for _conv, _page, _want, _name in (("c-ours", "ours", ["c-ours"], "보낸 메시
     _o = _io.StringIO()
     with _cl.redirect_stdout(_o):
         _rep = _lk.request(["질문\n\n[pi-abc123]"], True)
-    check("대화 기록: " + _name, [c["id"] for c in _lk.registry.chats] == _want and _rep == {"text": "답"}
+    check("대화 기록: " + _name, [c["id"] for c in _lk.registry.chats] == _want  # _ 로 시작하는 칸은 끊김·제한 기록용
+          and {k: v for k, v in _rep.items() if not k.startswith("_")} == {"text": "답"}
           and (_want or "삭제 목록에 넣지 않습니다" in _o.getvalue()), (_lk.registry.chats, _o.getvalue()))
 
 # 세션 끝 정리는 뒤에서(다른 스레드) 하므로, 그사이 새 세션의 요청이 먼저 처리됐으면 그 대화를 끝내거나 지우지 않음
@@ -969,6 +970,84 @@ check("화면 문구 줄은 지우되 코드 블록 안의 같은 글은 그대�
 check("코드를 뺀 본문의 언어 표시 줄 지움", _B.drop_lang_lines("JSON\n코드 복사\n설명", [{"lang": "json", "text": "{}"}]) == "코드 복사\n설명")
 check("화면 문구는 적은 차례와 상관없이 긴 것부터 ('복사' 를 먼저 적어도 '코드 복사' 줄을 지움)",
       _B.strip_ui_noise("코드 복사\n본문", ["복사", "코드 복사"]) == "본문")
+
+# 끊김·제한 기록 (events.py): 요청마다 어떻게 끝났는지 내용 없이 한 줄씩 -> diag.py --limits 로 한 화면 요약
+_E = relay.events
+_evp = os.path.join(_tmp, "relay-events.jsonl")
+_ev_real = relay.EVENTS
+relay.EVENTS = _E.EventLog(_evp, svc="Copilot")
+try:
+    _lkv = FakeLink(["답 안의 글 REPLY-MARK-7f3a 입니다", "실행해 주시면 다음으로 넘어가겠습니다.", "끝"])
+    _rv = relay.Relay(A(), _lkv)
+    _u1 = {"role": "user", "content": "요청 PROMPT-MARK-91c2 처리해줘"}
+    _av1 = _quiet(lambda: _rv.handle({"messages": [sys_msg, _u1], "tools": tools}))
+    _u2 = {"role": "user", "content": "이어서 해줘"}
+    _quiet(lambda: _rv.handle({"messages": [sys_msg, _u1, _av1, _u2], "tools": tools}))
+    _raw = open(_evp, encoding="utf-8").read()
+    check("기록에 요청·답·지침의 글이 남지 않음 (내용 없이)", "PROMPT-MARK-91c2" not in _raw and "REPLY-MARK-7f3a" not in _raw
+          and "SYSTEM PROMPT" not in _raw and "이어서 해줘" not in _raw and "넘어가겠습니다" not in _raw, _raw[:400])
+    _req = [e for e in _E.read_events(_evp) if e["ev"] == "req"]
+    check("요청 기록: 걸린 시간·새 대화·조각·보낸 글자 수·결과·답 글자 수", len(_req) == 2 and _req[0]["new"] and _req[0]["parts"] == 1
+          and _req[0]["chars"] > 0 and _req[0]["result"] == "text" and _req[0]["reply_chars"] == len("답 안의 글 REPLY-MARK-7f3a 입니다")
+          and "ms" in _req[0] and _req[0]["svc"] == "Copilot", _req)
+    check("요청 기록: 다시 부탁한 까닭 (멈춤 -> 이어서)", _req[1]["nudges"] == ["continue"] and _req[1]["asks"] == 2, _req[1])
+    # 사용량 제한: 그때까지의 사용량(최근 60분 요청 수·글자 수 등)을 함께 남김
+    _lkv.fail = relay.RelayError(429, "Copilot 사용량 제한에 걸렸습니다: 요청이 너무 많습니다 (Throttled)")
+    try:
+        _quiet(lambda: _rv.handle({"messages": [sys_msg, _u1, _av1, _u2, {"role": "assistant", "content": "끝"},
+                                                {"role": "user", "content": "하나 더"}], "tools": tools}))
+    except relay.RelayError:
+        pass
+    _lkv.fail = None
+    _err = [e for e in _E.read_events(_evp) if e["ev"] == "err"]
+    check("사용량 제한 기록: 종류 + 최근 10분·60분·24시간 요청 수와 글자 수, 오늘 첫 요청부터", len(_err) == 1
+          and _err[0]["kind"] == "throttle" and _err[0]["ctx"]["req_60m"] == 2 and _err[0]["ctx"]["req_10m"] == 2
+          and _err[0]["ctx"]["chars_60m"] == sum(e["chars"] for e in _req) and "since_first_min" in _err[0]["ctx"], _err)
+    # 대화 한도로 새 대화를 열면 '대화 바꿈' 기록
+    _lkv.replies, _lkv.reset_once = ["한도 뒤 답"], True
+    _quiet(lambda: _rv.handle({"messages": [sys_msg, _u1, _av1, _u2, {"role": "assistant", "content": "끝"},
+                                            {"role": "user", "content": "또 하나"}], "tools": tools}))
+    _rs = [e for e in _E.read_events(_evp) if e["ev"] == "reset"]
+    check("대화 바꿈 기록: 대화 한도", len(_rs) == 1 and _rs[0]["kind"] == "thread_limit", _rs)
+    # 개인정보 확인 거절도 오류 종류로 (내용은 요약에 나오지 않음)
+    _rvp = relay.Relay(A(), FakeLink([_REFUSALS[0]]))
+    try:
+        _quiet(lambda: _rvp.handle({"messages": _msgs, "tools": tools}))
+    except relay.RelayError:
+        pass
+    check("개인정보 확인 거절 기록: 종류 privacy, 422", [e.get("kind") for e in _E.read_events(_evp) if e["ev"] == "err"][-1] == "privacy")
+    # 요약 (diag.py --limits): 횟수·시간만, 서비스 안내 문구(msg)는 나오지 않음
+    _sum = "\n".join(_E.summarize(_E.read_events(_evp)))
+    check("요약: 요청 수·다시 부탁·오류 종류·사용량 제한의 직전 사용량", "== Copilot (요청 3" in _sum and "멈춤 1" in _sum
+          and "사용량 제한 1" in _sum and "직전 60분 2개" in _sum and "다음 성공까지" in _sum and "대화 한도 1" in _sum
+          and "개인정보 확인 거절 1" in _sum, _sum)
+    check("요약에는 안내 문구가 나오지 않음 (사진으로 가져가도 되게)", "요청이 너무 많습니다" not in _sum and "Throttled" not in _sum
+          and "공유하지" not in _sum and "개인정보는" not in _sum, _sum)
+    check("diag --report 한 줄", "Copilot 요청 3 · 오류 2 (사용량 제한 1) · 다시 부탁 1" == _E.summary_line(_E.read_events(_evp)),
+          _E.summary_line(_E.read_events(_evp)))
+finally:
+    relay.EVENTS = _ev_real
+check("오류 종류 가르기", [_E.classify(m) for m in ("Copilot 처리 실패: Copilot 답이 시작되지 않았습니다 (300초)",
+                                                   "Copilot 처리 실패: Copilot 답이 끝나지 않았습니다 (900초)",
+                                                   "Copilot 처리 실패: Copilot 입력창이 글을 받지 않습니다",
+                                                   "브라우저 원격 디버깅 포트(9222)에 연결할 수 없습니다", "무언가 다른 오류")]
+      == ["no_reply_start", "reply_not_done", "input", "browser", "other"])
+_now = 1_800_000_000.0
+_ctx = _E.usage_context([{"ev": "req", "t": _now - 300, "chars": 10}, {"ev": "req", "t": _now - 1800, "chars": 20},
+                         {"ev": "req", "t": _now - 7200, "chars": 40}, {"ev": "err", "t": _now - 60}], _now)
+check("사용량 계산: 최근 10분 1·60분 2·24시간 3, 글자 수", (_ctx["req_10m"], _ctx["req_60m"], _ctx["req_24h"], _ctx["chars_60m"],
+                                                    _ctx["chars_24h"]) == (1, 2, 3, 30, 70), _ctx)
+_off = os.path.join(_tmp, "off.jsonl")
+_E.EventLog(_off, enabled=False).write({"ev": "req"})
+check("collect_events: false 면 파일을 만들지 않음", not os.path.exists(_off))
+_rot = os.path.join(_tmp, "rot.jsonl")
+_lg = _E.EventLog(_rot, max_bytes=500)
+for _i in range(20):
+    _lg.write({"ev": "req", "i": _i})
+check("4MB(시험은 500바이트)를 넘으면 하나 전 것(.1)으로 돌림, 읽을 때는 둘 다", os.path.exists(_rot + ".1")
+      and [e["i"] for e in _E.read_events(_rot)] == list(range(20)), [e["i"] for e in _E.read_events(_rot)])
+check("답 모양: ``` 짝이 안 맞으면 표시 (열린 채 끝남)", _E.reply_shape("```python\nprint(1)\n")["odd_fences"]
+      and not _E.reply_shape("```\nx\n```")["odd_fences"])
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

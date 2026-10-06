@@ -223,6 +223,13 @@ def report(cfg):
                 st["split"], st["retry"], st["errors"]))
         else:
             show("최근 요청", "통계 없음 (이 판의 중계 서버로 요청하면 쌓임)")
+        try:
+            import events
+            line = events.summary_line(load_events(7))
+            if line:
+                show("끊김·제한 (7일)", line + " (자세히: diag.py --limits)")
+        except (OSError, ValueError, ImportError):
+            pass
         tail = [ln + "\n" for ln in lines[-12:]]
         print("  --- 중계기 최근 로그 (! = 오류·실패) ---")
         for ln in tail:
@@ -230,6 +237,25 @@ def report(cfg):
             print("  {} {}".format("!" if bad else " ", ln.rstrip()[:150]))
     except OSError:
         show("중계기 로그", "없음")
+    return 0
+
+
+EVENT_FILES = ("relay-events.jsonl", "inhouse-events.jsonl")  # Copilot 중계 서버, 사내AI 중계 서버
+
+
+def load_events(days=7):
+    import events
+    since = time.time() - days * 86400
+    return [e for name in EVENT_FILES for e in events.read_events(os.path.join(bridge.agent_dir(), name), since)]
+
+
+def limits(days=7):
+    """끊김·제한 기록 요약 (한 화면, 사진 한 장으로 가져오기). 내용(요청·답·안내 문구)은 보여 주지 않는다"""
+    import events
+    for line in events.summarize(load_events(days), days):
+        print(line)
+    print("  (기록: {} · 내용 없이 횟수·시간만 · 끄기: 내 설정 파일에 \"collect_events\": false)".format(
+        ", ".join("~/.pi/agent/" + n for n in EVENT_FILES)))
     return 0
 
 
@@ -244,7 +270,11 @@ def main():
     ap.add_argument("--report", action="store_true", help="한 화면 상태 요약 (읽기만 함)")
     ap.add_argument("--input-limit", action="store_true", help="입력창이 한 번에 받는 글자 수 확인 (보내지 않음)")
     ap.add_argument("--inhouse", action="store_true", help="사내AI 탭을 확인 (copilot/inhouse.json + 내 설정 ~/.pi/agent/inhouse.json)")
+    ap.add_argument("--limits", action="store_true", help="끊김·제한 기록 요약 (내용 없이 횟수·시간만, 사진 한 장용. 읽기만 함)")
+    ap.add_argument("--days", type=int, default=7, help="--limits 로 볼 기간 (일, 기본 7)")
     args = ap.parse_args()
+    if args.limits:
+        return limits(args.days)
     try:
         if args.inhouse:  # 사내AI 중계 서버(8766)와 같은 설정
             cfg = bridge.load_config(os.path.join(HERE, "inhouse.json"), os.path.join(bridge.agent_dir(), "inhouse.json"))

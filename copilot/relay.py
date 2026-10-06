@@ -31,12 +31,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bridge  # noqa: E402
+import events  # noqa: E402
 from jupyter import FsError, Jupyter  # noqa: E402
+
+# 끊김·제한 기록 (events.py): 요청마다 어떻게 끝났는지를 내용 없이 한 줄씩. main() 이 파일을 정함 (시험에서는 꺼져 있음)
+EVENTS = events.EventLog()
 
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-06.4"
+RELAY_VERSION = "2026-10-06.5"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -867,6 +871,15 @@ class CopilotLink:
             set_phase("속도 조절로 {:.0f}초 기다리는 중".format(wait))
             time.sleep(wait)
 
+    def ui_state(self):
+        """오류 때의 화면 상태 (끊김·제한 기록. 글은 없이 참·거짓만): 입력창 찾음·글 받음·포커스, 응답 중지 단추, 보내기 단추"""
+        if self.cop is None:
+            return None
+        st = self.cop.input_state(self.cop.q(self.cfg.get("input_selector") or ""))
+        send = self.cop.js("window.__piBridge.buttons(%s).length > 0" % self.cop.q(self.cfg.get("send_button_pattern") or ""))
+        return {"input": st.get("found"), "editable": st.get("editable"), "focused": st.get("focused"), "stop": st.get("busy"),
+                "send": bool(send)}
+
     def cleanup(self):
         """끝난 대화(registry 의 finished) 삭제. 실패해도 요청은 계속한다 (3번까지 다시 시도)"""
         if not self.registry or not self.cfg.get("delete_finished_chats", True):
@@ -879,6 +892,8 @@ class CopilotLink:
                 ok, info = False, str(e)
             bridge.log("  지난 Copilot 대화 삭제 {}: {}".format("OK" if ok else "실패", info))
             (self.registry.deleted if ok else self.registry.failed)(c["id"])
+            if not ok:
+                EVENTS.write({"ev": "warn", "kind": "delete", "msg": str(info)[:200]})
 
     def request(self, parts, new_thread, model=""):
         """조각들을 차례로 Copilot 에 보내고 마지막 답을 돌려준다. model 은 Copilot 화면의 모델 이름 ("" 이면 그대로)"""
@@ -911,7 +926,8 @@ class CopilotLink:
                     self.model_now = model
                 else:
                     self.model_failed = model
-            reply = None
+                    EVENTS.write({"ev": "warn", "kind": "model_select", "model": model, "msg": str(info)[:200]})
+            reply, waits, mid_not_ok = None, [], 0
             for i, part in enumerate(parts, 1):
                 m = re.search(r"\[pi[-#][0-9a-f]+\]\s*$", part)
                 if not m:
@@ -924,6 +940,7 @@ class CopilotLink:
                 set_phase("답 기다리는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
                 reply = self.cop.wait_reply(m.group(0).strip())
                 bridge.log("  <- 답 받음 ({}자, 코드 블록 {}개)".format(len(reply.get("text", "")), len(reply.get("code_blocks") or [])))
+                waits.append(reply.get("_wait") or {})
                 if new_thread and i == 1 and self.registry:  # 첫 답에서 대화 주소가 생김 -> 삭제 대상 목록에 기록
                     # 단, 보낸 메시지(marker)가 아직 화면에 있을 때만: 기다리는 동안 사용자가 전용 창에서 자기 대화를 눌렀다면
                     # 지금 주소는 그 대화이므로 절대 기록하면 안 된다 (확인하지 못하면 기록하지 않음. 지우지 못하고 남는 쪽이 안전)
@@ -942,7 +959,8 @@ class CopilotLink:
                     said = norm(reply.get("text", ""))
                     if len(said) > 20 or "ok" not in said.lower():
                         bridge.log("  (Copilot 이 중간 조각에 OK 대신 답함: {})".format(said[:100]))
-            return reply
+                        mid_not_ok += 1
+            return dict(reply, _waits=waits, _mid_not_ok=mid_not_ok)
         except bridge.Throttled as e:
             # 계정 단위 사용량 제한: 새 대화를 열어도 같은 답이 오므로 열지 않고, 지금 대화는 나중에 그대로 이어 쓴다
             self.throttled_at = time.time()
@@ -990,7 +1008,13 @@ class Relay:
             st["parts"] += len(parts)
             st["asks"] += 1
             st["new"] = st["new"] or new_thread
-        return self.link.request(parts, new_thread, model=self.model_label)
+            st["chars"] = st.get("chars", 0) + sum(len(p) for p in parts)
+            st["split"] = st.get("split") or len(parts) > 1
+        reply = self.link.request(parts, new_thread, model=self.model_label)
+        if st is not None and isinstance(reply, dict):  # 끊김·제한 기록: 조각마다 답이 어떻게 끝났는지
+            st.setdefault("waits", []).extend(w for w in reply.get("_waits") or [] if w)
+            st["mid_not_ok"] = st.get("mid_not_ok", 0) + (reply.get("_mid_not_ok") or 0)
+        return reply
 
     def refused(self, e):
         """서비스가 개인정보·민감 정보 확인으로 답하지 않음 -> 다시 부탁하지 않고 멈춰서 그 답을 그대로 pi 에 알린다 (오류 422).
@@ -1063,16 +1087,84 @@ class Relay:
             set_phase("준비 중")
             try:
                 try:
-                    return self._handle(body, False)
-                except ThreadReset as e:
-                    self.log("Copilot 대화를 새로 시작해서 다시 보냅니다:", e)
-                    set_phase("새 대화로 다시 보내는 중")
-                    return self._handle(body, True)
-            except PrivacyRefused as e:
-                raise self.refused(e)
+                    try:
+                        out = self._handle(body, False)
+                    except ThreadReset as e:
+                        self.log("Copilot 대화를 새로 시작해서 다시 보냅니다:", e)
+                        EVENTS.write({"ev": "reset", "kind": events.classify(str(e), events.RESET_KINDS),
+                                      "chat_q": getattr(self.link, "asked", None), "msg": str(e)[:200]})
+                        set_phase("새 대화로 다시 보내는 중")
+                        out = self._handle(body, True)
+                except PrivacyRefused as e:
+                    raise self.refused(e)
+            except Exception as e:  # noqa: BLE001  끊김·제한 기록 (오류 종류 + 그때까지의 사용량). 오류는 그대로 올려 보냄
+                self.record_error(e)
+                raise
+            else:
+                self.record_request(out)
+                return out
             finally:
                 self.status["busy"] = False
                 _tls.status = None
+
+    def note_nudge(self, kind):
+        if self.stat is not None:
+            self.stat.setdefault("nudges", []).append(kind)
+
+    def note_reply(self, reply):
+        """마지막 답의 모양 (끊김·제한 기록: 글자 수, ``` 짝, 코드 블록 수)"""
+        if self.stat is not None and isinstance(reply, dict):
+            self.stat["shape"] = events.reply_shape(reply.get("text"))
+            self.stat["code_blocks"] = len(reply.get("code_blocks") or [])
+
+    def record_request(self, out):
+        """끊김·제한 기록: 요청 하나가 어떻게 끝났는지 (내용 없이). 기록이 실패해도 답은 그대로 돌려줌"""
+        try:
+            self._record_request(out)
+        except Exception as e:  # noqa: BLE001
+            self.log("(끊김·제한 기록 실패: {})".format(e))
+
+    def _record_request(self, out):
+        st = self.stat or {}
+        EVENTS.write(dict({"ev": "req", "ms": int((time.time() - st.get("t0", time.time())) * 1000), "new": st.get("new", False),
+                           "parts": st.get("parts", 0), "asks": st.get("asks", 0), "chars": st.get("chars", 0),
+                           "split": bool(st.get("split")), "model": self.model_label, "nudges": st.get("nudges", []),
+                           "waits": st.get("waits", []), "mid_not_ok": st.get("mid_not_ok", 0),
+                           "result": "tool" if out.get("tool_calls") else "text",
+                           "tool": (out.get("tool_calls") or [{}])[0].get("function", {}).get("name"),
+                           "chat_q": getattr(self.link, "asked", None), "turns_left": getattr(self.link, "turns_left", None),
+                           "code_blocks": st.get("code_blocks", 0)}, **st.get("shape", {})))
+
+    def record_error(self, e):
+        """끊김·제한 기록: 오류 종류, 그때까지의 사용량(최근 10분·60분·24시간 요청 수 등), 입력창 상태 (내용 없이)"""
+        try:
+            self._record_error(e)
+        except Exception as x:  # noqa: BLE001  기록이 실패해도 원래 오류를 그대로 알림
+            self.log("(끊김·제한 기록 실패: {})".format(x))
+
+    def _record_error(self, e):
+        if isinstance(e, RelayError):
+            kind = events.classify(str(e), status=e.status)
+        elif isinstance(e, ThreadReset):
+            kind = "reset_failed"
+        else:
+            kind = "internal"
+        st = self.stat or {}
+        ev = {"ev": "err", "kind": kind, "status": getattr(e, "status", None), "ms": int((time.time() - st.get("t0", time.time())) * 1000),
+              "new": st.get("new", False), "parts": st.get("parts", 0), "asks": st.get("asks", 0), "model": self.model_label,
+              "chat_q": getattr(self.link, "asked", None), "turns_left": getattr(self.link, "turns_left", None),
+              "msg": str(e)[:200]}
+        try:
+            ev["ctx"] = events.usage_context(EVENTS.read(time.time() - 86400))
+        except (OSError, ValueError):
+            pass
+        if kind in ("input", "send", "no_reply_start", "reply_not_done", "marker_missing"):
+            ui = getattr(self.link, "ui_state", None)
+            try:
+                ev["ui"] = ui() if ui else None
+            except Exception:  # noqa: BLE001  화면 상태를 못 읽어도 기록은 남김
+                ev["ui"] = None
+        EVENTS.write(ev)
 
     def _handle(self, body, force_new):
         self.model_label = copilot_model_for(body.get("model"), getattr(self.link, "cfg", None) or {})
@@ -1114,6 +1206,7 @@ class Relay:
                 self.fresh = was_fresh
             raise
         body_text, call, err = parse_reply(reply, tool_names)
+        self.note_reply(reply)
         if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
             raise PrivacyRefused(reply.get("text", ""), redo=not delta)
         retries, nudged, code_nudged, cont_nudged = 0, False, False, False
@@ -1123,30 +1216,37 @@ class Relay:
                 self.log("도구 블록 오류 -> 다시 요청: {}".format(err))
                 fix = ("방금 블록은 사용할 수 없었습니다: {}\n올바른 형식의 코드 블록 하나로 다시 적어 주세요 "
                        "(요청이 끝났다면 블록 없이 최종 답).").format(err)
+                self.note_nudge("format")
             elif (not nudged and not no_tools and REFUSAL_RE.search(body_text or "") and tool_names
                   and not tools_used_since_user(messages)):  # 도구를 쓴 뒤의 "확인할 수 없습니다" 는 결과에 대한 보통 답
                 self.log("Copilot 이 실행을 거절 -> 설명 후 다시 요청")
                 fix, nudged = REFUSAL_NUDGE, True
+                self.note_nudge("refusal")
             elif (not code_nudged and not no_tools and "write" in tool_names and PROGRAM_FENCE_RE.search(body_text or "")
                   and wants_files_but_none_written(messages)):
                 self.log("Copilot 이 파일을 만들지 않고 코드만 보여 줌 -> write 블록으로 다시 요청")
                 fix, code_nudged = CODE_NUDGE, True
+                self.note_nudge("code")
             elif not cont_nudged and not no_tools and tool_names and UNFINISHED_RE.search(body_text or ""):
                 self.log("Copilot 이 일을 마치지 않고 멈춤 -> 이어서 하도록 다시 요청")
                 fix, cont_nudged = CONTINUE_NUDGE, True
+                self.note_nudge("continue")
             else:
                 break
             retries += 1
             set_phase("다시 부탁하는 중")
             reply = self.ask_again(fix)
             body_text, call, err = parse_reply(reply, tool_names)
+            self.note_reply(reply)
             if call is None and privacy_refusal(reply):
                 raise PrivacyRefused(reply.get("text", ""), redo=not delta)
         if call and repeated_calls(messages, call) >= LOOP_LIMIT:
             count = repeated_calls(messages, call)
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
+            self.note_nudge("loop")
             reply = self.ask_again(LOOP_NUDGE.format(name=call["name"], count=count))
             body_text, call, err = parse_reply(reply, tool_names)
+            self.note_reply(reply)
             if call is None and privacy_refusal(reply):
                 raise PrivacyRefused(reply.get("text", ""), redo=not delta)
             if call and repeated_calls(messages, call) >= LOOP_LIMIT:
@@ -1510,6 +1610,7 @@ def main():
                     help="Copilot 메시지 하나의 최대 글자 수 (넘으면 나눠 보냄. 기본: 설정의 max_chars)")
     ap.add_argument("--tool-result-chars", type=int, default=None, help="도구 결과 하나를 보낼 최대 글자 수 (기본: 설정의 tool_result_chars)")
     ap.add_argument("--chats", default="", help="중계 서버가 만든 Copilot 대화 기록 파일 (기본: ~/.pi/agent/copilot-chats.json)")
+    ap.add_argument("--events", default="", help="끊김·제한 기록 파일 (기본: ~/.pi/agent/relay-events.jsonl. 중계 서버마다 따로)")
     args = ap.parse_args()
     if not sys.stdout.isatty():  # 로그 파일로 보낼 때는 UTF-8 (Git Bash 에서 tail 로 읽기 좋게)
         try:
@@ -1550,6 +1651,14 @@ def main():
     relay.log("중계 서버 시작: http://{}:{}/v1  (버전 {}, 브라우저 원격 디버깅 포트 {}, 메시지 최대 {}자, 설정 {}{})".format(
         args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.max_chars, args.config if os.path.exists(args.config) else "기본값",
         " + 내 설정 {}개 ({}: {})".format(len(user["keys"]), user["path"], ", ".join(user["keys"])) if user["keys"] else ""))
+    # 끊김·제한 기록 (내용 없이, 이 PC 의 파일에만). 끄려면 내 설정 파일에 "collect_events": false
+    global EVENTS
+    EVENTS = events.EventLog(args.events or os.path.join(bridge.agent_dir(), "relay-events.jsonl"),
+                             svc=cfg.get("service_name") or "Copilot", enabled=cfg.get("collect_events", True))
+    EVENTS.write({"ev": "start", "ver": RELAY_VERSION, "port": args.port, "stream": bool(cfg.get("use_stream")),
+                  "stable": cfg.get("stable_seconds"), "busy_lines": len(cfg.get("reply_busy_lines") or []),
+                  "max_chars": args.max_chars, "q_per_chat": cfg.get("max_questions_per_chat"),
+                  "q_per_min": cfg.get("max_questions_per_minute"), "tabs": max_tabs})
     try:
         server.serve_forever()
     except KeyboardInterrupt:

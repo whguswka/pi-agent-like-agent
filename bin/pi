@@ -113,7 +113,8 @@ pi_relay_autostart() {
   # 사내AI 탭은 사내AI 모델을 처음 고를 때 연다. 내 설정은 ~/.pi/agent/inhouse.json (Copilot 의 내 설정 파일과 따로)
   if grep -q "127.0.0.1:8766" "$agent/models.json" 2>/dev/null && [ -f "$PI_HOME/copilot/inhouse.json" ]; then
     pi_relay_start 8766 "$agent/inhouse-relay.log" "$agent/inhouse.json" "사내AI 중계 서버" \
-      --config "$(pi_native_path "$PI_HOME/copilot/inhouse.json")" --chats "$(pi_native_path "$agent/inhouse-chats.json")"
+      --config "$(pi_native_path "$PI_HOME/copilot/inhouse.json")" --chats "$(pi_native_path "$agent/inhouse-chats.json")" \
+      --events "$(pi_native_path "$agent/inhouse-events.jsonl")"
   fi
   return 0
 }

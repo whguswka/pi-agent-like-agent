@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
     "model_toggle_buttons": [],  # 메뉴가 아니라 화면의 단추로 고르는 모델 이름 (사내AI: ["안전모드", "성능모드"])
     "service_name": "Copilot",  # 안내·로그에 쓰는 이름 (사내AI 중계 서버는 "사내AI")
     "extra_rules": [],  # 새 대화의 첫 메시지(진행 방식)에 덧붙일 규칙 (사내AI: 자기 도구로 직접 실행하지 말 것)
+    "collect_events": True,  # 끊김·제한 기록 (내용 없이 횟수·시간만, 이 PC 의 파일에만. diag.py --limits 로 요약)
     "open_tab_if_missing": False,  # 전용 창에 이 서비스의 탭이 없으면 새로 연다 (사내AI)
     # 끝난 대화 삭제: 중계 서버가 만든 대화(copilot-chats.json 에 기록)만 왼쪽 목록에서 '… > 삭제 > 확인' 으로 지운다
     "delete_finished_chats": True,
@@ -661,6 +662,7 @@ class Copilot:
         self.thread_url = None
         self.on_tick = None  # 오래 기다리는 동안 부를 콜백 (없어도 됨)
         self.turns_left = None  # Copilot 이 알려주는 이 대화의 남은 질문 수
+        self.last_throttling = None  # WebSocket 답의 throttling 숫자 (끊김·제한 기록에 함께 남김)
         self.stream_ok = False  # WebSocket 으로 답을 받은 적이 있으면 True
         try:
             tab.call("Emulation.setFocusEmulationEnabled", {"enabled": True})  # 뒤쪽 탭이어도 포커스가 있는 것처럼
@@ -708,6 +710,7 @@ class Copilot:
 
     def use_stream_reply(self, got):
         thr = got.get("throttling") or {}
+        self.last_throttling = {k: v for k, v in thr.items() if isinstance(v, (int, float, bool))} if isinstance(thr, dict) else None
         mx, num = thr.get("maxNumUserMessagesInConversation"), thr.get("numUserMessagesInConversation")
         if isinstance(mx, int) and isinstance(num, int):
             self.turns_left = mx - num
@@ -1006,7 +1009,9 @@ class Copilot:
             self.q(cfg["stop_button_pattern"]), self.q(cfg["thread_limit_pattern"]))
         start = time.time()
         base, level, last_len, last_change, limit_seen, base_limit = None, None, None, time.time(), False, None
-        busy_logged = False
+        busy_logged, busy_from, first_ms, how = False, None, None, "dom"
+        wait = lambda h: {"how": h, "ms": int((time.time() - start) * 1000), "first_ms": first_ms,  # noqa: E731
+                          "busy_ms": int((time.time() - busy_from) * 1000) if busy_from else 0, "thr": self.last_throttling}
         while True:
             now = time.time()
             if now - start > cfg["reply_timeout_seconds"]:
@@ -1014,7 +1019,7 @@ class Copilot:
             self.tick()
             got = self.stream_reply(marker)
             if got:
-                return self.use_stream_reply(got)
+                return dict(self.use_stream_reply(got), _wait=wait("stream"))
             st = self.js(probe)
             if st is None:
                 if now - start > 30:
@@ -1044,6 +1049,7 @@ class Copilot:
                     continue
                 last_len, last_change = levels[level], now
                 self.last_level = level
+                first_ms = int((now - start) * 1000)
             cur = levels[level] if level < len(levels) else 0
             if cur != last_len:
                 last_len, last_change = cur, now
@@ -1057,9 +1063,11 @@ class Copilot:
                         sel_in, self.q(marker), level, sel_reply, noise)), busy):
                     if not busy_logged:
                         log("  (Copilot 이 아직 답을 만드는 중이라 더 기다립니다)")
-                        busy_logged = True
+                        busy_logged, busy_from, how = True, now, "dom-busy"
                     time.sleep(1.0)
                     continue
+                if busy_from and now - last_change >= float(cfg.get("reply_busy_max_seconds") or 0):
+                    how = "dom-busycap"  # 진행 중 줄이 보이는데 글이 오래 그대로라 그냥 읽음
                 break
             time.sleep(0.5)
         if self.stream_ok:  # 화면은 끝났는데 WebSocket 최종 답이 아직이면 조금 더 기다린다
@@ -1068,9 +1076,10 @@ class Copilot:
                 self.js("1")  # 이벤트 수거
                 got = self.stream_reply(marker)
                 if got:
-                    return self.use_stream_reply(got)
+                    return dict(self.use_stream_reply(got), _wait=wait("stream-late"))
                 time.sleep(0.5)
             log("  (WebSocket 답을 못 찾아 화면에서 읽습니다)")
+            how = "dom-fallback" if how == "dom" else how
         reply = self.js("""(async () => { const B = window.__piBridge; const input = B.findInput(%s);
             const els = B.replyEls(%s, %d, %s, input) || [];
             const text = B.textOf(els, %s); const code_blocks = await B.codeBlocks(els);
@@ -1091,6 +1100,7 @@ class Copilot:
             reply[k] = unmangle_copilot_text(strip_ui_noise(reply.get(k), cfg["ui_noise_words"]))
         for c in reply.get("code_blocks") or []:
             c["text"] = unmangle_copilot_text(c.get("text"))
+        reply["_wait"] = wait(how)
         return reply
 
     def check_same_thread(self):

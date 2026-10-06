@@ -626,6 +626,20 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 
 전체 표: [copilot/README-copilot.md 4장](copilot/README-copilot.md#4-문제-해결)
 
+### 11-1. 끊김·제한 기록 (2026-10-06.5 부터)
+Copilot·사내AI 가 중간에 끊기거나 사용량 제한에 걸리는 상황은 밖에서 재현할 수 없으므로, 중계 서버가 요청마다 어떻게 끝났는지를 기록합니다.
+한 주쯤 쓴 뒤 아래 요약을 찍어 보내 주면 다음 판을 고치는 데 씁니다.
+```bash
+python ~/tools/pi/copilot/diag.py --limits
+```
+- 요약에 나오는 것: 요청 수와 걸린 시간, 답이 끝난 방법(원문·화면·처리 중 기다림), 다시 부탁한 까닭(형식·실행 거절·코드만·멈춤·반복), 대화를 새로 연 까닭(대화 한도 등), 오류 종류별 횟수,
+  사용량 제한이 걸린 시각과 그 직전의 사용량(최근 60분·24시간 요청 수와 글자 수, 오늘 첫 요청부터 지난 시간)과 다음 성공까지 걸린 시간. `/doctor` 에도 한 줄로 나옵니다.
+- **내용은 남기지 않습니다**: 요청·답의 글, 파일 내용, 명령, 도구 결과는 없고 시각·글자 수·횟수·종류·모델 이름만 남깁니다.
+  (오류에는 서비스·중계 서버의 안내 문구를 200자까지 남기지만 이 PC 안에서만 보며 요약에는 나오지 않습니다.)
+- 이 PC 의 파일에만 씁니다 (`~/.pi/agent/relay-events.jsonl`, 사내AI 는 `inhouse-events.jsonl`, 4MB 를 넘으면 `.1` 로 돌림). 어디로도 보내지 않으며 지워도 됩니다.
+  끄려면 내 설정 파일(`~/.pi/agent/bridge.json`, 사내AI 는 `inhouse.json`)에 `"collect_events": false`.
+- 기간을 바꾸려면 `--days 3` 처럼 (기본 7일).
+
 ## 12. Jupyter 용 pi (사내 vLLM, 보류)
 사내 vLLM 서비스가 열리면 쓸 구성입니다. Kubeflow JupyterLab 터미널에 pi 를 설치하고 vLLM 을 바로 씁니다 (Copilot·브라우저 불필요).
 zip 을 JupyterLab 파일 브라우저로 홈에 올린 뒤 터미널에서:
