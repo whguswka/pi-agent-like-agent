@@ -1115,7 +1115,7 @@ class Relay:
             raise
         body_text, call, err = parse_reply(reply, tool_names)
         if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
-            raise PrivacyRefused(reply.get("text", ""), redo=new_thread)
+            raise PrivacyRefused(reply.get("text", ""), redo=not delta)
         retries, nudged, code_nudged, cont_nudged = 0, False, False, False
         no_tools = bool(NO_TOOLS_RE.search(last_user_text(messages)))
         while call is None and retries < 2:
@@ -1141,14 +1141,14 @@ class Relay:
             reply = self.ask_again(fix)
             body_text, call, err = parse_reply(reply, tool_names)
             if call is None and privacy_refusal(reply):
-                raise PrivacyRefused(reply.get("text", ""), redo=new_thread)
+                raise PrivacyRefused(reply.get("text", ""), redo=not delta)
         if call and repeated_calls(messages, call) >= LOOP_LIMIT:
             count = repeated_calls(messages, call)
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
             reply = self.ask_again(LOOP_NUDGE.format(name=call["name"], count=count))
             body_text, call, err = parse_reply(reply, tool_names)
             if call is None and privacy_refusal(reply):
-                raise PrivacyRefused(reply.get("text", ""), redo=new_thread)
+                raise PrivacyRefused(reply.get("text", ""), redo=not delta)
             if call and repeated_calls(messages, call) >= LOOP_LIMIT:
                 self.log("반복이 계속됨 -> 이 요청을 멈춤")
                 body_text, call = LOOP_STOP.format(name=call["name"]), None

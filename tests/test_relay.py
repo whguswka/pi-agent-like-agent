@@ -854,6 +854,17 @@ _a = _quiet(lambda: _rp.handle({"messages": _msgs, "tools": tools}))
 check("다시 요청하면: 같은 대화(new_thread=False)에 지침·요청을 처음부터, 보낸 내용은 처음과 똑같음 (덧붙인 글 없음)",
       _lkp.sent_log[1]["new_thread"] is False and _nomark(_lkp.sent_log[1]["parts"]) == _nomark(_lkp.sent_log[0]["parts"])
       and _a.get("content") == "다시 받은 답", (_lkp.sent_log[1]["new_thread"], _a))
+_lk2 = FakeLink([_REFUSALS[0], _REFUSALS[0], "세 번째 답"])  # 처음부터 다시 보낸 것도 거절 -> 그다음도 같은 대화에 처음부터
+_r2r = relay.Relay(A(), _lk2)
+for _i in range(2):
+    try:
+        _quiet(lambda: _r2r.handle({"messages": _msgs, "tools": tools}))
+    except relay.RelayError:
+        pass
+_a2r = _quiet(lambda: _r2r.handle({"messages": _msgs, "tools": tools}))
+check("처음부터 다시 보낸 것도 거절되면 그다음 요청도 같은 대화에 처음부터 (새 대화로 넘어가지 않음)",
+      [x["new_thread"] for x in _lk2.sent_log] == [True, False, False] and relay.PROTOCOL_TAG in _lk2.sent_log[2]["parts"][0]
+      and _a2r.get("content") == "세 번째 답", [x["new_thread"] for x in _lk2.sent_log])
 _lkd = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "cat a.csv"}}\n```', _REFUSALS[1], "정리했습니다"])
 _rd = relay.Relay(A(), _lkd)
 _u = {"role": "user", "content": "a.csv 요약해줘"}
