@@ -61,6 +61,9 @@ DEFAULT_CONFIG = {
     "copilot_models": {},  # pi 모델 id -> 화면 이름. 표에 없는 id 는 id 자체를 화면 이름으로 씀
     "model_button_selector": "",  # 모델 메뉴 버튼 (비우면 자동: 메뉴가 달린 버튼 중 이름이 아래 이름으로 시작하는 것)
     "model_button_names": ["자동", "빠른 응답", "깊이 생각하기", "Auto", "Quick response", "Think deeper", "GPT", "Claude"],
+    "model_toggle_buttons": [],  # 메뉴가 아니라 화면의 단추로 고르는 모델 이름 (사내AI: ["안전모드", "성능모드"])
+    "service_name": "Copilot",  # 안내·로그에 쓰는 이름 (사내AI 중계 서버는 "사내AI")
+    "open_tab_if_missing": False,  # 전용 창에 이 서비스의 탭이 없으면 새로 연다 (사내AI)
     # 끝난 대화 삭제: 중계 서버가 만든 대화(copilot-chats.json 에 기록)만 왼쪽 목록에서 '… > 삭제 > 확인' 으로 지운다
     "delete_finished_chats": True,
     "chat_item_selector": "",  # 왼쪽 채팅 목록 항목 (비우면 자동: 대화 주소로 가는 링크)
@@ -88,8 +91,22 @@ def conversation_id(url):
     return m.group(1) if m else None
 
 
+SERVICE = "Copilot"  # 이 프로세스가 다루는 서비스 이름. 사내AI 중계 서버(service_name "사내AI")는 로그·오류 문구의 'Copilot' 을 바꿔 씀
+
+
+def set_service(name):
+    global SERVICE
+    SERVICE = name or "Copilot"
+
+
+def service_text(s):
+    """로그·오류 문구의 'Copilot' 을 이 프로세스의 서비스 이름으로 (중계 서버 하나는 서비스 하나만 다룸)"""
+    s = str(s)
+    return s.replace("Copilot", SERVICE) if SERVICE != "Copilot" else s
+
+
 def log(*a):
-    print(time.strftime("%H:%M:%S"), *a, flush=True)
+    print(time.strftime("%H:%M:%S"), *[service_text(x) if isinstance(x, (str, Exception)) else x for x in a], flush=True)
 
 
 LINKIFY_RE = re.compile(r'(https?://[^\s"&<]+)&quot;\1"</a>')
@@ -758,16 +775,21 @@ class Copilot:
         self.wait_input(30)
         sel = self.q(self.cfg["input_selector"])
         line = "pi 입력 한도 확인 0123456789 abcdefghij ABCDEFGHIJ\n"
+        field = self.js("(() => { const el = window.__piBridge.findInput(%s); return !!el && /^(TEXTAREA|INPUT)$/.test(el.tagName); })()"
+                        % sel)
         out = []
         try:
             for size in sizes:
                 text = (line * (size // len(line) + 1))[:size]
                 want = len(re.sub(r"\s+", "", text))
                 self.clear_input(sel)
-                self.js("""(() => { const el = window.__piBridge.findInput(%s); el.focus();
-                    const dt = new DataTransfer(); dt.setData('text/plain', %s);
-                    el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); })()""" % (
-                    sel, self.q(text)))
+                if field:  # 일반 입력칸(사내AI 등)은 send() 처럼 한 번에 친다
+                    self.tab.call("Input.insertText", {"text": text}, timeout=60)
+                else:
+                    self.js("""(() => { const el = window.__piBridge.findInput(%s); el.focus();
+                        const dt = new DataTransfer(); dt.setData('text/plain', %s);
+                        el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); })()""" % (
+                        sel, self.q(text)))
                 got = self.wait_stable(sel, want)
                 info = self.js("""(() => { const B = window.__piBridge; const inp = B.findInput(%s);
                     const custom = %s; const re = new RegExp(%s, 'i');
@@ -819,21 +841,29 @@ class Copilot:
             raise BridgeError("Copilot 입력창을 찾지 못했습니다")
         want = len(re.sub(r"\s+", "", text))
         got = 0
+        # 일반 입력칸(textarea, 사내AI 등): 붙여넣기 이벤트로는 글이 들어가지 않고, Shift+Enter 키로는 줄바꿈이 생기지 않는다
+        # (실제: 줄이 모두 붙어 한 줄로 가서 코드 블록이 깨짐) -> 글 전체를 한 번에 친다 (줄바꿈 그대로)
+        field = self.js("(() => { const el = window.__piBridge.findInput(%s); return !!el && /^(TEXTAREA|INPUT)$/.test(el.tagName); })()"
+                        % sel)
         # 넣기: 붙여넣기 이벤트 (여러 줄·코드 블록이 그대로 들어감. 한 글자씩 치면 줄바꿈이 '보내기'로 처리됨)
         # 넣기 전마다 Copilot 이 앞 답을 마무리했는지(입력창이 열리고 포커스가 들어갔는지) 확인한다.
         # 긴 글은 편집기가 처리하는 데 시간이 걸리므로 다 찰 때까지 기다리고, 덜 들어가면 지우고 한 번 더
         for attempt in (1, 2):
             self.wait_ready(sel)
             self.clear_input(sel)
-            self.js("""(() => { const el = window.__piBridge.findInput(%s); el.focus();
-                const dt = new DataTransfer(); dt.setData('text/plain', %s);
-                el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); })()""" % (
-                sel, self.q(text)))
+            if field:
+                self.tab.call("Input.insertText", {"text": text}, timeout=60)
+            else:
+                self.js("""(() => { const el = window.__piBridge.findInput(%s); el.focus();
+                    const dt = new DataTransfer(); dt.setData('text/plain', %s);
+                    el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true})); })()""" % (
+                    sel, self.q(text)))
             got = self.wait_filled(sel, want)
             if got >= want * 0.9:
                 break
-            log("  (붙여넣기가 덜 들어감 {}/{}자{} -> {})".format(got, want, self.state_note(self.input_state(sel)),
-                                                         "다시 붙여넣기" if attempt == 1 else "줄 단위 입력"))
+            log("  ({} 덜 들어감 {}/{}자{} -> {})".format("입력이" if field else "붙여넣기가", got, want,
+                                                    self.state_note(self.input_state(sel)),
+                                                    "다시 넣기" if attempt == 1 else "줄 단위 입력"))
         if got < want * 0.9:  # 붙여넣기를 처리하지 않는 입력창: 줄 단위 입력 + Shift+Enter
             # 포커스가 입력창에 없으면 치지 않는다 (친 글이 사라지고, 나중에 포커스가 돌아온 뒤의 줄만 들어가 끝부분만 남음)
             if not self.wait_ready(sel):
@@ -843,8 +873,11 @@ class Copilot:
                                   "같은 요청을 다시 보내 주세요.".format(self.state_note(st), got, len(text)))
             self.clear_input(sel)
             for i, line in enumerate(text.split("\n")):
-                if i:
-                    self.key("Enter", "Enter", 13, modifiers=8)
+                if i:  # 줄바꿈: 일반 입력칸은 줄바꿈 글자를 그대로, 편집기(Copilot)는 Shift+Enter
+                    if field:
+                        self.tab.call("Input.insertText", {"text": "\n"}, timeout=60)
+                    else:
+                        self.key("Enter", "Enter", 13, modifiers=8)
                 if line:
                     self.tab.call("Input.insertText", {"text": line}, timeout=60)
             got = self.wait_filled(sel, want)
@@ -1073,7 +1106,19 @@ class Copilot:
 
     def select_model(self, label):
         """모델 메뉴에서 label(화면에 보이는 이름)을 고른다 -> (성공 여부, 설명)
-        맨 위 항목(자동·빠른 응답·깊이 생각하기 등)에서 찾고, 없으면 하위 메뉴(GPT ›, Claude › 등)를 차례로 열어 찾는다"""
+        맨 위 항목(자동·빠른 응답·깊이 생각하기 등)에서 찾고, 없으면 하위 메뉴(GPT ›, Claude › 등)를 차례로 열어 찾는다.
+        메뉴 대신 화면에 단추로 있는 모델(model_toggle_buttons: 사내AI 의 안전모드·성능모드)은 그 단추를 누른다"""
+        if label in (self.cfg.get("model_toggle_buttons") or []):
+            b = self.js("""(() => { const B = window.__piBridge; const want = %s;
+                const b = [...document.querySelectorAll('button, [role="button"], [role="tab"], [role="radio"]')]
+                    .find(e => B.visible(e) && (e.innerText || e.textContent || '').trim() === want);
+                if (!b) return null; b.scrollIntoView({block: 'nearest'}); const r = b.getBoundingClientRect();
+                return {x: r.left + r.width / 2, y: r.top + r.height / 2}; })()""" % self.q(label))
+            if not b:
+                return False, "'{}' 단추를 찾지 못했습니다".format(label)
+            self.mouse(b)
+            time.sleep(0.5)
+            return True, "'{}' 단추를 누름".format(label)
         st = self.model_state(label)
         if not st.get("found"):
             return False, "모델 메뉴 버튼을 찾지 못했습니다 (bridge.json 의 model_button_selector 확인)"
@@ -1263,6 +1308,48 @@ def main_print_shell(path):
     return 0
 
 
+# 예전 판들이 내놓은 copilot/bridge.json 의 값 가운데 지금 판과 다른 것 ('표.항목' 은 표(dict) 안의 항목).
+# 이전 판 폴더의 bridge.json 이 이 값이면 사용자가 고친 것이 아니라 판이 바뀌며 달라진 것이다.
+# bridge.json 의 값을 바꾸는 판마다 바꾸기 전 값을 여기에 더하고 BRIDGE_JSON_SHA256 을 새 파일의 값으로 (tests/test_config.py 가 확인)
+SHIPPED_OLD_VALUES = {
+    "first_reply_timeout_seconds": [180],
+    "copilot_model": ["GPT 6.0 Sol"],
+    "copilot_models.gpt-6.0-sol": ["GPT 6.0 Sol"],
+    "copilot_models.gpt-5.6-sol-think": ["GPT 5.6 Sol 깊이 생각하기"],
+    "copilot_models.gpt-5.6-sol-fast": ["GPT 5.6 Sol 빠른 응답"],
+}
+BRIDGE_JSON_SHA256 = "afa7ee75ef540308023606902095430e39f804deebe5ebf46c4f0b2e23b58f18"
+
+
+def edited_keys(old_path, new_path):
+    """이전 판의 저장소 bridge.json(old)에서 사용자가 직접 고친 것으로 보이는 항목: 새 판과 값이 다르고, 예전 판이 내놓은 값도 아닌 것.
+    (update.sh 와 수동 작업 절차 3-2: 직접 고친 항목은 내 설정 파일로 옮기라고 알림)"""
+    old, new = read_config_file(old_path) or {}, read_config_file(new_path) or {}
+    out = []
+    for k, v in old.items():
+        n = new.get(k)
+        if isinstance(v, dict) and isinstance(n, dict):
+            out += ["{}.{}".format(k, s) for s, sv in v.items() if sv != n.get(s) and sv not in SHIPPED_OLD_VALUES.get(k + "." + s, [])]
+        elif v != n and v not in SHIPPED_OLD_VALUES.get(k, []):
+            out.append(k)
+    return out
+
+
 if __name__ == "__main__":  # python bridge.py --shell-config  (bin/pi 가 부름)
     if sys.argv[1:2] == ["--shell-config"]:
         sys.exit(main_print_shell(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge.json")))
+    # python bridge.py --edited-keys <이전 판 bridge.json> [새 판 bridge.json]  (update.sh, 수동 작업 절차 3-2)
+    if sys.argv[1:2] == ["--edited-keys"] and len(sys.argv) >= 3:
+        for s in (sys.stdout, sys.stderr):
+            try:
+                s.reconfigure(encoding="utf-8", errors="replace")
+            except AttributeError:
+                pass
+        try:
+            keys = edited_keys(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else
+                               os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge.json"))
+        except ConfigError as e:
+            print("확인하지 못함: {}".format(e))
+            sys.exit(1)
+        print(", ".join(keys) if keys else "고친 항목 없음")
+        sys.exit(0)

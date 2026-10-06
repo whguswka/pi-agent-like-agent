@@ -11,11 +11,19 @@
  *    앞 대화를 요약하는 동안(/compact, 자동 요약)에도 보여 준다. 요약 요청도 Copilot 새 대화로 가서 몇 분 걸릴 수 있다.
  * 3) 요청마다 이 pi 의 세션 값(X-Pi-Session)을 실어 보낸다. 중계 서버에서 max_tabs 를 2 이상으로 두면
  *    pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 쓴다 (1 이면 무시).
+ * 사내AI 모델(provider inhouse)은 두 번째 중계 서버(8766)를 쓰므로, 상태는 지금 모델의 중계 서버에 묻고 세션 끝은 둘 다에 알린다.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
+const INHOUSE_SERVER = (process.env.PI_INHOUSE_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
+// 지금 모델의 중계 서버 (models.json 의 baseUrl 이 이 PC 의 중계 서버면 그 주소, 아니면 Copilot 중계 서버)와 화면 이름
+const serverOf = (ctx: any): string => {
+	const m = String(ctx?.model?.baseUrl || "").match(/^(https?:\/\/(?:127\.0\.0\.1|localhost):\d+)\/v1\/?$/);
+	return m ? m[1] : SERVER;
+};
+const nameOf = (ctx: any): string => (ctx?.model?.provider === "inhouse" ? "사내AI" : "Copilot");
 // 이 pi 의 세션 값 (jupyter.ts 와 같은 값을 쓰도록 globalThis 에 한 번만 만듦)
 const SESSION: string = ((globalThis as any).__piSession ||=
 	process.env.PI_COPILOT_SESSION || `${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
@@ -40,14 +48,16 @@ export default function (pi: ExtensionAPI) {
 	const start = (ctx: any) => {
 		if (timer || !ctx?.hasUI) return;
 		const fg = (t: string) => (ctx.ui.theme?.fg ? ctx.ui.theme.fg("muted", t) : t);
+		const server = serverOf(ctx);
+		const name = nameOf(ctx);
 		let asking = false;
 		timer = setInterval(async () => {
 			if (asking) return;
 			asking = true;
 			try {
-				const st: any = await (await fetch(`${SERVER}/status?session=${encodeURIComponent(SESSION)}`, { signal: AbortSignal.timeout(800) })).json();
+				const st: any = await (await fetch(`${server}/status?session=${encodeURIComponent(SESSION)}`, { signal: AbortSignal.timeout(800) })).json();
 				if (timer && st.busy && st.phase) {
-					ctx.ui.setStatus("copilot", fg(`Copilot: ${st.phase} ${Math.floor(st.seconds)}초`));
+					ctx.ui.setStatus("copilot", fg(`${name}: ${st.phase} ${Math.floor(st.seconds)}초`));
 					shown = true;
 				} else if (shown) {
 					ctx.ui.setStatus("copilot", undefined);
@@ -86,15 +96,16 @@ export default function (pi: ExtensionAPI) {
 		running = compacting = false;
 		stop(ctx);
 		if (event?.reason === "reload") return;
-		try {
-			await fetch(SERVER + "/v1/session/end", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ reason: event?.reason || "", session: SESSION }),
-				signal: AbortSignal.timeout(1500),
-			});
-		} catch {
-			// 중계 서버가 꺼져 있음: 다음에 새 대화를 열 때 정리된다
-		}
+		// 두 중계 서버(Copilot, 사내AI)에 모두 알린다. 꺼져 있으면 다음에 새 대화를 열 때 정리된다
+		await Promise.allSettled(
+			[SERVER, INHOUSE_SERVER].map((s) =>
+				fetch(s + "/v1/session/end", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ reason: event?.reason || "", session: SESSION }),
+					signal: AbortSignal.timeout(1500),
+				}),
+			),
+		);
 	});
 }

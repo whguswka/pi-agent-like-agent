@@ -248,6 +248,30 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 - Copilot 이 메뉴의 **모델 이름을 바꾸면** 그 모델을 고르지 못하고 '자동' 으로 답합니다. 띄어쓰기·`-`·버전 끝의 `.0` 만 다른 이름(`GPT 6.0 Sol` 과 `GPT-6 Sol`)은 같은 이름으로 보고,
   그 밖에는 내 설정 파일의 `copilot_models` 에 새 이름을 적습니다 ([수동 작업 절차 6장](docs/수동-작업-절차.md#6-필요할-때-한-번-하는-설정)의 '모델 이름이 바뀌었을 때').
 
+### 4-1. 사내AI 모델 (2026-10-06.3 부터)
+사내 웹 AI 채팅(이 문서에서는 '사내AI')도 pi 의 모델로 고를 수 있습니다. Copilot 사용량 제한에 걸렸을 때 등에 씁니다.
+사내AI 의 주소는 저장소에 두지 않으므로, 처음 한 번 내 설정 파일 `~/.pi/agent/inhouse.json` 에 적습니다 (주소는 배포 담당이 알려 줌):
+```json
+{"copilot_url_contains": "<주소의 호스트 이름>", "copilot_new_chat_url": "<새 대화 주소>", "ui_noise_words": ["<답 아래 단추 글>"]}
+```
+- `ui_noise_words`: 답 아래에 있는 단추의 글(공유하기 등)이 답 끝에 섞여 나오면 그 글을 적습니다.
+- 고친 뒤에는 `curl -s -X POST http://127.0.0.1:8766/shutdown` 으로 사내AI 중계 서버를 끄면 다음 요청 때 새 설정으로 켜집니다 (pi 를 다시 실행).
+
+
+| pi 모델 id | 사내AI 화면 | |
+|---|---|---|
+| `inhouse-gemma4` | 안전모드 (Gemma 4) | 개인정보·중요정보가 들어가는 작업은 이쪽 (사내AI 안내) |
+| `inhouse-sonnet` | 성능모드 (Claude Sonnet) | 개인정보·중요정보를 넣지 않는 작업만 |
+
+- `/model` 에서 고릅니다. 처음 고르면 전용 창에 사내AI 탭을 열고, 고른 모드의 단추를 눌러 둔 뒤 질문합니다. 로그인이 필요하면 그 탭에서 로그인한 뒤 같은 요청을 다시 보내세요.
+- pi 는 파일 내용과 명령 결과를 그대로 보냅니다. 모드를 고를 때 위 안내를 지켜 주세요.
+- 사내AI 는 두 번째 중계 서버(포트 8766, 로그 `~/.pi/agent/inhouse-relay.log`)가 맡습니다. pi 를 실행하면 Copilot 중계 서버와 함께 켜집니다.
+- Copilot 모델과 오가면 다음 질문은 그쪽의 새 대화로 이어 가므로 1~2분 걸립니다. 사내AI 대화는 자동으로 지우지 않으니 가끔 직접 정리하세요.
+- 모드(안전·성능)는 작업 도중보다 시작할 때 고르세요. 사내AI 화면에서 대화 도중 모드를 바꿀 때의 동작(새 대화가 열리는지 등)은 아직 실제로 확인하지 못했습니다.
+- 입력창의 id 처럼 화면을 열 때마다 바뀔 수 있는 값은 `input_selector` 에 적지 마세요 (비워 두면 중계 서버가 찾음).
+- 확인: pi 가 일하지 않을 때 `python ~/tools/pi/copilot/diag.py --inhouse --send` (사내AI 에 새 대화로 시험 질문 하나를 보내 답과 명령 읽기를 확인).
+- 사내AI 설정을 바꿀 때는 `~/.pi/agent/inhouse.json` 에 적습니다 (Copilot 의 내 설정 파일과 따로). 항목은 `copilot/inhouse.json` 과 같습니다.
+
 ## 5. 실행 위치 바꾸기: PC 와 Jupyter 노트북
 pi 와 Copilot 은 PC 에서 돌고, **명령 실행과 파일 작업(도구 4개: bash, read, write, edit)만** Kubeflow 노트북에서 하게 할 수 있습니다. 노트북에는 아무것도 설치하지 않습니다.
 
@@ -563,6 +587,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
   ```bash
   curl -s -X POST http://127.0.0.1:8765/shutdown
   ```
+  사내AI 설정(`~/.pi/agent/inhouse.json`)을 고쳤으면 사내AI 중계 서버를 끕니다: `curl -s -X POST http://127.0.0.1:8766/shutdown`
   (`browser`, `auto_start_browser`, `jupyter_url`, `default_mode` 는 `pi` 를 실행할 때마다 읽고, `guard` 로 시작하는 항목과 `notify_after_seconds` 는 고치면 바로 적용됩니다.)
 - JSON 파일에 Windows 경로를 쓸 때는 `/` 로 씁니다 (`"C:/Users/..."`). `\` 를 하나만 쓰면 JSON 오류가 납니다.
 - 중계 서버 항목 전체: [copilot/README-copilot.md 3장](copilot/README-copilot.md#3-설정-copilotbridgejson-중계-서버-옵션) (`guard`·`notify_after_seconds`·`default_mode` 는 위 표)
@@ -582,6 +607,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | JupyterLab 로그인이 풀림 (jupyter 모드) | 전용 창의 JupyterLab 탭에서 다시 로그인한 뒤 `/jupyter` |
 | 업데이트가 `이미 같은 판` 으로 멈춤 | 받은 zip 이 새 판인지 확인 ([9장](#9-새-버전으로-바꾸기)) |
 | `429 Copilot 사용량 제한에 걸렸습니다` | 계정 단위의 일시 제한입니다. 기다렸다가 같은 요청을 다시 하면 이어서 진행합니다. 자주 걸리면 `max_questions_per_minute` |
+| 요청마다 로그에 `앞 답을 마무리하는 동안 n초 기다림, Copilot 이 답하는 중` (`grep -c "앞 답을 마무리하는 동안" ~/.pi/agent/copilot-relay.log` 가 요청 수와 비슷함) | 화면의 다른 단추를 '응답 중지' 로 잘못 알아보는 것일 수 있습니다 (그때마다 5초 늦어짐). 전용 창 화면을 찍어 보내 주세요 |
 | `입력창에 글자가 다 들어가지 않았습니다` / `Copilot 입력창이 글을 받지 않습니다` | 2026-10-06.2 부터는 Copilot 이 앞 답을 마무리할 때까지 기다렸다 보냅니다. 그래도 나면 `이어서 해줘` 로 다시 보내고, 반복되면 전용 창 화면과 `tail -30 ~/.pi/agent/copilot-relay.log` 를 보내 주세요. pi 가 일하는 동안에는 전용 창 안을 클릭하지 마세요 |
 | 전용 창의 모델 버튼이 고른 모델이 아니라 `자동` (로그에 `Copilot 모델 선택 실패`) | Copilot 이 모델 이름을 바꾼 것입니다. [수동 작업 절차 6장](docs/수동-작업-절차.md#6-필요할-때-한-번-하는-설정)의 '모델 이름이 바뀌었을 때' |
 | 오래 쓰다 보면 Copilot 이 멈추거나 형식을 틀림 | 대화가 너무 길어진 탓입니다. `/new` 로 새 세션을 시작하세요 (필요한 맥락은 AGENTS.md 나 메모 파일로) |

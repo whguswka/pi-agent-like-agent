@@ -1,0 +1,25 @@
+{
+  "_설명": "사내AI(사내 웹 AI 채팅) 중계 서버 설정. pi 에서 사내AI 모델(inhouse-sonnet, inhouse-gemma4)을 고르면 두 번째 중계 서버(포트 8766)가 이 설정으로 전용 창의 사내AI 탭을 조작합니다. 비워 둔 항목은 bridge.py 기본값",
+  "_주소": "사내AI 의 주소는 저장소에 두지 않습니다. 내 설정 파일 ~/.pi/agent/inhouse.json 에 copilot_url_contains(주소의 호스트 이름)와 copilot_new_chat_url(새 대화 주소)을 적으세요 (업데이트해도 남음)",
+  "service_name": "사내AI",
+  "copilot_url_contains": "",
+  "copilot_new_chat_url": "",
+  "open_tab_if_missing": true,
+  "use_stream": false,
+  "stable_seconds": 4.0,
+  "first_reply_timeout_seconds": 300,
+  "reply_timeout_seconds": 900,
+  "max_questions_per_chat": 100,
+  "_모델": "pi 모델 id -> 사내AI 화면의 모드 단추 이름 (성능모드: Claude Sonnet, 안전모드: Gemma 4. 개인정보·중요정보는 안전모드)",
+  "copilot_model": "",
+  "copilot_models": {
+    "inhouse-sonnet": "성능모드",
+    "inhouse-gemma4": "안전모드"
+  },
+  "model_toggle_buttons": ["안전모드", "성능모드"],
+  "_대화삭제": "사내AI 대화 목록에서 지우기는 아직 하지 않습니다 (필요하면 직접 정리)",
+  "delete_finished_chats": false,
+  "_화면문구": "답 아래 단추 글처럼 답에 섞여 읽히는 화면 문구는 내 설정 파일의 ui_noise_words 에 적습니다",
+  "ui_noise_words": ["복사"],
+  "ui_noise_selectors": []
+}

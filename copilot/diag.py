@@ -11,6 +11,7 @@
          python diag.py --delete-test   (+ 시험 대화를 하나 만들어 '… > 삭제 > 확인' 으로 지워 봄. 다른 대화는 건드리지 않음)
          python diag.py --report    (한 화면 상태 요약: 버전·중계 서버·전용 창·설정·최근 로그. 아무것도 바꾸지 않음)
          python diag.py --input-limit   (+ 입력창이 한 번에 받는 글자 수 확인. 붙여 넣어 보기만 하고 보내지 않음)
+         python diag.py --inhouse --send   (위 확인을 사내AI 탭으로: 사내AI 중계 서버와 같은 설정 copilot/inhouse.json)
 """
 import argparse
 import base64
@@ -167,6 +168,13 @@ def report(cfg):
             " / 사용량 제한 " + h["copilot_throttled_at"] if h.get("copilot_throttled_at") else ""))
     except (OSError, ValueError):
         show("중계 서버", "꺼져 있음 (pi 를 실행하면 자동으로 켜짐)")
+    try:  # 사내AI 중계 서버 (models.json 에 사내AI 모델이 있으면 pi 가 함께 켬)
+        h = get("http://127.0.0.1:8766/health")
+        ver = h.get("version", "예전 판")
+        show("사내AI 중계 서버", "실행 중 (버전 {}{}) / 대화 메시지 {}".format(
+            ver, ", 코드와 다름 -> pi 를 실행하면 새로 켜짐" if ver != relay.RELAY_VERSION else "", h.get("thread_messages")))
+    except (OSError, ValueError):
+        pass
     try:
         browser = get("http://127.0.0.1:{}/json/version".format(cfg["cdp_port"])).get("Browser", "?")
         tabs = bridge.list_tabs(cfg["cdp_port"])
@@ -235,9 +243,18 @@ def main():
     ap.add_argument("--delete-test", action="store_true", help="시험 대화를 만들어 삭제해 봄")
     ap.add_argument("--report", action="store_true", help="한 화면 상태 요약 (읽기만 함)")
     ap.add_argument("--input-limit", action="store_true", help="입력창이 한 번에 받는 글자 수 확인 (보내지 않음)")
+    ap.add_argument("--inhouse", action="store_true", help="사내AI 탭을 확인 (copilot/inhouse.json + 내 설정 ~/.pi/agent/inhouse.json)")
     args = ap.parse_args()
     try:
-        cfg = bridge.load_config(args.config)
+        if args.inhouse:  # 사내AI 중계 서버(8766)와 같은 설정
+            cfg = bridge.load_config(os.path.join(HERE, "inhouse.json"), os.path.join(bridge.agent_dir(), "inhouse.json"))
+            bridge.set_service(cfg.get("service_name"))
+            if not cfg.get("copilot_url_contains"):  # 비어 있으면 아무 탭(Copilot 탭 등)이나 잡으므로 멈춤
+                print("사내AI 주소가 없습니다. ~/.pi/agent/inhouse.json 에 copilot_url_contains(주소의 호스트 이름)와 "
+                      "copilot_new_chat_url(새 대화 주소)을 적으세요 (README 4-1).")
+                return 1
+        else:
+            cfg = bridge.load_config(args.config)
     except bridge.ConfigError as e:
         if not args.report:
             print("설정 파일 오류: {}".format(e))

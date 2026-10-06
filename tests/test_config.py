@@ -151,15 +151,20 @@ else:
 
 shutil.rmtree(tmp, ignore_errors=True)
 
-# 판 내기 확인: 저장소 copilot/bridge.json 을 바꾸면 update.sh 의 SHIPPED 에 그 sha256 을 넣어야 함
-# (넣지 않으면 다음 업데이트 때 키트가 바꾼 값을 '직접 고친 항목' 으로 잘못 알림)
+# 판 내기 확인: 저장소 copilot/bridge.json 의 값을 바꾸면 바꾸기 전 값을 bridge.SHIPPED_OLD_VALUES 에 더하고
+# bridge.BRIDGE_JSON_SHA256 을 새로 적어야 함 (빠뜨리면 다음 업데이트 때 키트가 바꾼 값을 '직접 고친 항목' 으로 잘못 알림)
 import hashlib  # noqa: E402
-import re  # noqa: E402
 with open(os.path.join(ROOT, "copilot", "bridge.json"), "rb") as f:
     _h = hashlib.sha256(f.read()).hexdigest()
-with open(os.path.join(ROOT, "update.sh"), encoding="utf-8") as f:
-    _shipped = set(re.findall(r'^\s*"([0-9a-f]{64})",', f.read(), flags=re.M))
-check("판 내기: 지금 copilot/bridge.json 의 sha256 이 update.sh 의 SHIPPED 에 있음", _h in _shipped, (_h, len(_shipped)))
+check("판 내기: copilot/bridge.json 을 바꿨으면 bridge.SHIPPED_OLD_VALUES·BRIDGE_JSON_SHA256 도 (지금 sha256 이 같음)",
+      _h == bridge.BRIDGE_JSON_SHA256, _h)
+# 직접 고친 항목 찾기 (update.sh, 수동 작업 절차 3-2): 예전 판이 내놓은 값은 고친 것으로 보지 않음
+_old = os.path.join(tempfile.mkdtemp(), "old-bridge.json")
+write(_old, {"copilot_model": "GPT 6.0 Sol", "copilot_models": {"gpt-6.0-sol": "GPT 6.0 Sol", "gpt-6.0-sol-x": "내가 넣음"},
+             "first_reply_timeout_seconds": 180, "max_questions_per_minute": 2, "_설명": "무시"})
+check("직접 고친 항목: 예전 판 값(모델 이름 등)은 빼고 고친 것만",
+      bridge.edited_keys(_old, os.path.join(ROOT, "copilot", "bridge.json")) == ["copilot_models.gpt-6.0-sol-x", "max_questions_per_minute"],
+      bridge.edited_keys(_old, os.path.join(ROOT, "copilot", "bridge.json")))
 check("판 내기: CHANGELOG.md 에 지금 판(VERSION) 항목", "\n## " + open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
       in open(os.path.join(ROOT, "CHANGELOG.md"), encoding="utf-8").read())
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))

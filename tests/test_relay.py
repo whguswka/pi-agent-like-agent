@@ -382,6 +382,41 @@ check("메뉴에서 고르기: 'GPT-5.6 Sol' 처럼 여럿에 걸리면 고르�
 check("저장소 설정의 모델 이름이 지금 화면 이름 (2026-10)", relay.copilot_model_for("gpt-6.0-sol", relay.bridge.load_config(
       os.path.join(os.path.dirname(relay.__file__), "bridge.json"), None)) == "GPT-6 Sol")
 
+# 사내AI (두 번째 중계 서버, copilot/inhouse.json): 모드 단추, 화면 단추 글, 서비스 이름
+_kc = relay.bridge.load_config(os.path.join(os.path.dirname(relay.__file__), "inhouse.json"), None)
+check("inhouse.json: pi 모델 id -> 모드 단추", relay.copilot_model_for("inhouse-sonnet", _kc) == "성능모드"
+      and relay.copilot_model_for("inhouse-gemma4", _kc) == "안전모드" and _kc["model_toggle_buttons"] == ["안전모드", "성능모드"])
+check("inhouse.json: 화면에서 읽기 (스트림 아님), 대화 삭제 안 함, 탭이 없으면 엶, 주소는 저장소에 없음 (내 설정 파일에)",
+      _kc["use_stream"] is False and _kc["delete_finished_chats"] is False and _kc["open_tab_if_missing"] is True
+      and _kc["copilot_url_contains"] == "" and _kc["copilot_new_chat_url"] == "")
+check("답에 섞인 화면 단추 줄을 지움 (내 설정의 ui_noise_words)", relay.bridge.strip_ui_noise(
+      'json{"tool": "x"}\n자료 검색 전체 대화 공유하기', ["자료 검색", "전체 대화 공유하기"]) == 'json{"tool": "x"}')
+# 주소가 비어 있으면 아무 탭이나 고르지 않고 알림 (빈 글자는 모든 주소에 들어 있으므로 Copilot 탭을 잡을 수 있음)
+_lk = relay.CopilotLink(dict(_kc, cdp_port=1), None)
+try:
+    _lk.connect()
+    _msg = ""
+except relay.RelayError as _e:
+    _msg = str(_e)
+check("사내AI 주소를 적지 않으면 탭을 찾지 않고 알림", "주소" in _msg and "inhouse.json" in _msg, _msg)
+relay.bridge.set_service("사내AI")
+_svc = relay.bridge.service_text("Copilot 처리 실패: Copilot 입력창이 글을 받지 않습니다")
+relay.bridge.set_service(None)
+check("서비스 이름: 사내AI 중계 서버는 문구의 Copilot 을 사내AI 로 (Copilot 중계 서버는 그대로)",
+      _svc == "사내AI 처리 실패: 사내AI 입력창이 글을 받지 않습니다" and relay.bridge.service_text("Copilot 오류") == "Copilot 오류", _svc)
+# 코드 블록 없이 글 속에 온 JSON 도구 블록 (사내AI 화면에서 읽은 답: 'json' 표시가 붙거나 인라인 코드)
+_T = {"bash", "read", "write", "edit"}
+_b, _c, _e = relay.parse_reply({"text": 'json{"tool": "bash", "arguments": {"command": "echo diag-ok \\"quoted\\""}}'}, _T)
+check("글 속 JSON 도구 블록: 'json' 이 붙어 있어도", _c and _c["arguments"]["command"] == 'echo diag-ok "quoted"' and _b == "", (_b, _c, _e))
+_b, _c, _e = relay.parse_reply({"text": '파일을 읽겠습니다. {"tool": "read", "arguments": {"path": "a {b}.txt"}} 그 뒤 진행'}, _T)
+check("글 속 JSON 도구 블록: 문장 사이, 문자열 안의 괄호", _c and _c["arguments"]["path"] == "a {b}.txt"
+      and _b == "파일을 읽겠습니다.\n\n그 뒤 진행", (_b, _c, _e))
+_b, _c, _e = relay.parse_reply({"text": 'json{"tool": "write", "arguments": {"path": "a.py", "content": "x = 1\\n"}}'}, _T)
+check("글 속 JSON 도구 블록: write 는 코드 블록으로 다시 부탁", _c is None and "코드 블록" in (_e or ""), (_c, _e))
+_b, _c, _e = relay.parse_reply({"text": '예: {"tool": "bash", "arguments": {"command": "ls"}}',
+                                "code_blocks": [{"lang": "text", "text": "hello"}]}, _T)
+check("코드 블록이 따로 있으면 글 속 JSON 은 도구로 보지 않음", _c is None, (_c, _e))
+
 # 끝난 대화 정리: 중계 서버가 만든 대화만 기록해 두고 그것만 지움
 import tempfile  # noqa: E402
 _tmp = tempfile.mkdtemp()

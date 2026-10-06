@@ -53,6 +53,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 - jupyter 모드에서 폴더는 노트북 홈 기준입니다. `'~/work/myproject'` 처럼 따옴표로 감싸도 됩니다.
 - jupyter 모드에서 pi 의 `!명령` 도 노트북에서 실행됩니다. 단 `/local` 로 다른 PC 폴더를 골라도 `!명령` 은 pi 를 시작한 폴더에서 실행됩니다.
 - `pi -p "..."` (한 번 묻기)는 키보드 입력을 기다리지 않습니다 (`< /dev/null` 불필요). 실행 중 `Ctrl+C` 로 멈출 수 있습니다.
+- **사내AI 중계 서버:** pi 에서 사내AI 모델(`inhouse-sonnet`, `inhouse-gemma4`)을 고르면 같은 relay.py 를 `--config copilot/inhouse.json --port 8766` 으로 띄운 두 번째 중계 서버가 전용 창의 사내AI 탭을 조작합니다 (bin/pi 가 함께 켬, 로그 `~/.pi/agent/inhouse-relay.log`, 내 설정 `~/.pi/agent/inhouse.json`). 사내AI 입력창은 일반 textarea 라 글을 한 번에 쳐 넣고(줄바꿈 그대로), 답은 화면에서 읽습니다 (`use_stream` false).
 - Copilot 은 대화 하나에 질문 수 한도(시험 당시 600개)가 있습니다. 이 한도나 `max_questions_per_chat` 에 닿으면 중계 서버가 새 채팅을 열고, 지침과 최근 대화(오래된 것은 한 줄 요약)를 다시 넣은 뒤 이어서 작업합니다.
 - 계정 사용량 제한: 시험에서는 30분 동안 질문 약 145개를 보냈을 때 "현재 요청이 너무 많아 일시적으로 응답할 수 없습니다" 가 나왔고, 약 1시간 동안 막혔습니다 (새 채팅을 열어도 같음).
   이런 제한이 있으면 `max_questions_per_minute` 를 2 정도로 두세요. 조금 느려지는 대신 막히지 않습니다.
@@ -77,6 +78,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `model_button_selector` | 모델 메뉴 버튼을 자동으로 못 찾을 때 CSS 선택자 (`diag.py --model` 이 버튼 HTML 을 보여 줌) |
 | `model_button_names` | 모델 메뉴 버튼을 알아보는 이름 (버튼 글자가 이 중 하나로 시작). 기본: 자동, 빠른 응답, 깊이 생각하기, GPT, Claude 등 |
 | `delete_finished_chats` | 끝난 세션의 Copilot 대화 삭제 (기본 true). 중계 서버가 만든 대화만 지움 |
+| `service_name`, `model_toggle_buttons`, `open_tab_if_missing` | 사내AI 중계 서버용 (`copilot/inhouse.json`): 안내·로그에 쓸 이름, 메뉴 대신 화면 단추로 고르는 모델(안전모드·성능모드), 탭이 없으면 전용 창에 새로 열기 |
 | `chat_item_selector` | 왼쪽 채팅 목록 항목을 자동으로 못 찾을 때 CSS 선택자 (`diag.py --chats` 참고) |
 | `chat_more_pattern` / `delete_menu_pattern` / `delete_confirm_pattern` | 대화의 '…' 버튼 이름 / 메뉴의 '삭제' / 확인 창의 '삭제' 를 알아보는 정규식 (화면 문구가 바뀌면 조정) |
 | `stable_seconds` | 화면에서 읽을 때 답이 이 시간 동안 안 바뀌면 끝난 것으로 봄 |

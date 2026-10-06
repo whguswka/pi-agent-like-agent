@@ -36,7 +36,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-06.2"
+RELAY_VERSION = "2026-10-06.3"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -576,7 +576,47 @@ def parse_reply(reply, tool_names):
         if call:
             return "", call, None
         first_err = first_err or err
+    # 코드 블록이 하나도 없고 글 속에 JSON 도구 블록이 있을 때 (사내AI 등 화면에서 읽은 답: 인라인 코드나
+    # 'json' 표시가 붙은 채로 읽힘. 예: 'json{"tool": "bash", ...}'). 파일 내용(write·edit)은 기호가 바뀌었을 수 있어 다시 부탁
+    if not blocks and not first_err:
+        span = find_tool_json(st)
+        if span:
+            call, err = parse_block(st[span[0]:span[1]], "json", tool_names)
+            if call and call["name"] in ("write", "edit"):
+                call, err = None, ("파일 내용이 코드 블록(```) 밖에 있어 일부 기호가 바뀔 수 있습니다. "
+                                   "같은 내용을 ```json 코드 블록 안에 넣어 다시 주세요")
+            if call:
+                head = re.sub(r"(?i)\bjson\s*$", "", st[:span[0]]).strip()
+                return "\n\n".join(p for p in (head, st[span[1]:].strip()) if p), call, None
+            first_err = err
     return st, None, first_err
+
+
+TOOL_JSON_RE = re.compile(r'\{\s*"tool"\s*:')
+
+
+def find_tool_json(text):
+    """글 속 JSON 도구 블록 {"tool": ...} 의 (시작, 끝). 괄호 짝을 세되 문자열 안의 괄호는 세지 않는다. 없으면 None"""
+    for m in TOOL_JSON_RE.finditer(text):
+        depth, in_str, esc = 0, False, False
+        for i in range(m.start(), len(text)):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return m.start(), i + 1
+    return None
 
 
 def leading_reads(reply, tool_names):
@@ -723,6 +763,10 @@ class CopilotLink:
         self.bucket = bucket if bucket is not None else {"lock": threading.Lock()}
 
     def connect(self):
+        if not self.cfg.get("copilot_url_contains"):  # 빈 글자는 모든 주소에 들어 있어 아무 탭(Copilot 탭 등)이나 잡게 됨
+            raise RelayError(503, "{} 의 주소가 설정되지 않았습니다. 내 설정 파일(사내AI 는 ~/.pi/agent/inhouse.json)에 "
+                                  "copilot_url_contains(주소의 호스트 이름)와 copilot_new_chat_url(새 대화 주소)을 적고 "
+                                  "중계 서버를 다시 켜세요.".format(self.cfg.get("service_name") or "Copilot"))
         with TAB_LOCK:
             try:
                 tabs = bridge.list_tabs(self.cfg["cdp_port"])
@@ -731,11 +775,20 @@ class CopilotLink:
             cop = [t for t in tabs if self.cfg["copilot_url_contains"] in t.get("url", "")]
             if self.claims is not None:
                 cop = self.pick_tab(tabs, cop)
+            name = self.cfg.get("service_name") or "Copilot"
+            if not cop and self.cfg.get("open_tab_if_missing") and self.cfg.get("copilot_new_chat_url"):
+                # 사내AI 등: 처음 고르면 전용 창에 탭을 새로 연다 (로그인이 필요하면 그 창에서 로그인한 뒤 다시 요청)
+                try:
+                    cop = [bridge.open_window(self.cfg["cdp_port"], self.cfg["copilot_new_chat_url"])]
+                    bridge.log("{} 탭이 없어 전용 창에 새로 열었습니다".format(name))
+                    time.sleep(3)
+                except bridge.BridgeError as e:
+                    raise RelayError(503, "{} 탭을 열지 못했습니다: {}".format(name, e))
         if not cop:
-            raise RelayError(503, "Copilot 탭을 찾지 못했습니다. start-chrome.cmd(또는 start-edge.cmd)로 연 전용 창에서 {} 에 로그인해 열어 두세요.".format(
-                self.cfg["copilot_url_contains"]))
+            raise RelayError(503, "{} 탭을 찾지 못했습니다. start-chrome.cmd(또는 start-edge.cmd)로 연 전용 창에서 {} 에 로그인해 열어 두세요.".format(
+                name, self.cfg["copilot_url_contains"]))
         self.cop = bridge.Copilot(bridge.Tab(cop[0]), self.cfg)
-        bridge.log("Copilot 탭 연결: {}".format(cop[0].get("url", "")[:90]))
+        bridge.log("{} 탭 연결: {}".format(name, cop[0].get("url", "")[:90]))
 
     def pick_tab(self, tabs, cop):
         """창이 여러 개일 때 (connect 가 TAB_LOCK 을 잡고 부름): 이 창이 쓰던 탭 > 아무 창도 안 쓰는 Copilot 탭 > 새 창을 열어서
@@ -889,7 +942,7 @@ class Relay:
         self.requests = 0  # 받은 요청 수 (세션 끝 알림 뒤, 정리하기 전에 새 세션의 요청이 먼저 들어왔는지 보려고)
 
     def log(self, *a):
-        print(time.strftime("%H:%M:%S"), *a, flush=True)
+        bridge.log(*a)
 
     def ask(self, parts, new_thread):
         self.log("요청 (새 대화={}, 조각 {}개, {}자{})".format(new_thread, len(parts), sum(len(p) for p in parts),
@@ -1323,11 +1376,11 @@ def make_handler(relay, jup, cfg, lanes=None):
                 if e.status != 429:  # 사용량 제한이면 지금 대화를 그대로 둔다
                     relay.reset()
                 relay.log("오류:", e)
-                return self.send_json(e.status, {"error": {"message": str(e), "type": "copilot_relay_error"}})
+                return self.send_json(e.status, {"error": {"message": bridge.service_text(e), "type": "copilot_relay_error"}})
             except ThreadReset as e:
                 relay.reset()
                 relay.log("오류: 새 대화로도 보내지 못했습니다:", e)
-                return self.send_json(503, {"error": {"message": "Copilot 에 보내지 못했습니다: {}".format(e),
+                return self.send_json(503, {"error": {"message": bridge.service_text("Copilot 에 보내지 못했습니다: {}".format(e)),
                                                       "type": "copilot_relay_error"}})
             except Exception as e:  # noqa: BLE001
                 relay.reset()
@@ -1401,6 +1454,7 @@ def main():
     except bridge.ConfigError as e:
         print(time.strftime("%H:%M:%S"), "설정 파일 오류 - 중계 서버를 켜지 않습니다:", e, flush=True)
         sys.exit(2)
+    bridge.set_service(cfg.get("service_name"))
     # 메시지 크기: 실행 옵션 > 환경변수 PI_COPILOT_MAX_CHARS > 설정 (bridge.json, 내 설정 파일)
     if args.max_chars is None:
         args.max_chars = int(os.environ.get("PI_COPILOT_MAX_CHARS") or cfg.get("max_chars") or 10000)

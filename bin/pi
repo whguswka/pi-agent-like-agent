@@ -36,24 +36,25 @@ if [ -n "$PI_JUPYTER" ]; then
 fi
 
 # 중계 서버 자동 시작 (브리지 pi): 설정(models.json)이 중계 서버 주소를 쓰는데 꺼져 있으면 백그라운드로 켠다
-pi_port_open() { (exec 3<>/dev/tcp/127.0.0.1/8765) 2>/dev/null; }
-# 실행 중인 중계 서버가 이 코드와 버전이 다르면(새 코드로 바꾼 뒤) 끈다. 우리 중계 서버가 아니면 건드리지 않음
+#  (8765: Copilot 중계 서버, 8766: 사내AI 중계 서버 - models.json 에 사내AI 모델이 있을 때)
+pi_port_open() { (exec 3<>"/dev/tcp/127.0.0.1/${1:-8765}") 2>/dev/null; }
+# 실행 중인 중계 서버가 이 코드와 버전이 다르면(새 코드로 바꾼 뒤) 끈다. 우리 중계 서버가 아니면 건드리지 않음 (인자: relay.py, 포트)
 pi_relay_stop_old() {
-  local want h pid i
+  local want h pid i port="${2:-8765}"
   command -v curl >/dev/null 2>&1 || return 0
   want="$(sed -n 's/^RELAY_VERSION = "\(.*\)".*/\1/p' "$1")"
   [ -n "$want" ] || return 0
-  h="$(curl -s -m 3 http://127.0.0.1:8765/health 2>/dev/null)"
+  h="$(curl -s -m 3 "http://127.0.0.1:$port/health" 2>/dev/null)"
   case "$h" in *'"server": "ok"'*) ;; *) return 0 ;; esac
   case "$h" in *"\"version\": \"$want\""*) return 0 ;; esac
-  echo "[pi] 중계 서버를 새 코드로 다시 켭니다" >&2
-  curl -s -m 3 -X POST http://127.0.0.1:8765/shutdown >/dev/null 2>&1
-  for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open || return 0; sleep 0.3; done
+  echo "[pi] 중계 서버$([ "$port" = 8765 ] || echo "($port)")를 새 코드로 다시 켭니다" >&2
+  curl -s -m 3 -X POST "http://127.0.0.1:$port/shutdown" >/dev/null 2>&1
+  for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open "$port" || return 0; sleep 0.3; done
   # 예전 중계 서버(/shutdown 없음): 그 포트에서 대기 중인 프로세스를 끈다 (Windows)
   case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
-    pid="$(netstat -ano 2>/dev/null | awk '$2 ~ /^127\.0\.0\.1:8765$/ && $3 ~ /:0$/ {print $5; exit}')"
+    pid="$(netstat -ano 2>/dev/null | awk -v a="127.0.0.1:$port" '$2 == a && $3 ~ /:0$/ {print $5; exit}')"
     [ -n "$pid" ] && taskkill //F //PID "$pid" >/dev/null 2>&1
-    for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open || return 0; sleep 0.3; done ;;
+    for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open "$port" || return 0; sleep 0.3; done ;;
   esac
 }
 # Copilot 전용 브라우저 창이 꺼져 있으면 띄운다 (bridge.json: browser chrome|edge, auto_start_browser, jupyter_url, cdp_port)
@@ -77,7 +78,7 @@ pi_browser_autostart() {
   echo "[pi] Copilot 전용 창을 띄우지 못했습니다. copilot/start-chrome.cmd 를 직접 실행해 보세요." >&2
 }
 pi_relay_autostart() {
-  local agent="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" py a i log script="$PI_HOME/copilot/relay.py"
+  local agent="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" a script="$PI_HOME/copilot/relay.py"
   for a in "$@"; do case "$a" in -v|--version|-h|--help) return 0 ;; esac; done  # 버전/도움말만 볼 때는 켜지 않음
   grep -q "127.0.0.1:8765" "$agent/models.json" 2>/dev/null || return 0
   [ -f "$script" ] || return 0
@@ -86,22 +87,38 @@ pi_relay_autostart() {
     exit 1
   fi
   pi_browser_autostart
-  pi_port_open && pi_relay_stop_old "$script"
-  pi_port_open && return 0  # 이미 실행 중 (같은 버전)
-  py="$(pi_find_python)" || { echo "[pi] 중계 서버를 켤 Python 을 찾지 못했습니다. PI_PYTHON=/python/경로 로 지정하세요." >&2; return 0; }
-  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) script="$(cygpath -w "$script")" ;; esac
-  log="$agent/copilot-relay.log"
   mkdir -p "$agent"
+  pi_relay_start 8765 "$agent/copilot-relay.log" "" "중계 서버"
+  # 사내AI 중계 서버: models.json 에 사내AI 모델이 있으면 같은 코드를 사내AI 설정(copilot/inhouse.json)으로 하나 더 켠다.
+  # 사내AI 탭은 사내AI 모델을 처음 고를 때 연다. 내 설정은 ~/.pi/agent/inhouse.json (Copilot 의 내 설정 파일과 따로)
+  if grep -q "127.0.0.1:8766" "$agent/models.json" 2>/dev/null && [ -f "$PI_HOME/copilot/inhouse.json" ]; then
+    pi_relay_start 8766 "$agent/inhouse-relay.log" "$agent/inhouse.json" "사내AI 중계 서버" \
+      --config "$(pi_native_path "$PI_HOME/copilot/inhouse.json")" --chats "$(pi_native_path "$agent/inhouse-chats.json")"
+  fi
+  return 0
+}
+# 중계 서버 하나 켜기 (인자: 포트, 로그 파일, 내 설정 파일(비우면 기본), 이름, relay.py 에 더 넘길 인자...)
+pi_relay_start() {
+  local port="$1" log="$2" ucfg="$3" name="$4" script="$PI_HOME/copilot/relay.py" agent="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" py i
+  shift 4
+  pi_port_open "$port" && pi_relay_stop_old "$script" "$port"
+  pi_port_open "$port" && return 0  # 이미 실행 중 (같은 버전)
+  py="$(pi_find_python)" || { echo "[pi] $name를 켤 Python 을 찾지 못했습니다. PI_PYTHON=/python/경로 로 지정하세요." >&2; return 0; }
   # 로그가 5MB 를 넘으면 하나 전 것(.1)으로 돌려 둔다 (중계 서버를 켤 때만: 켜져 있는 동안은 파일을 쓰는 중)
   [ -f "$log" ] && [ "$(wc -c < "$log")" -gt 5242880 ] 2>/dev/null && mv -f "$log" "$log.1" 2>/dev/null
   # pi 설정 폴더에서 켠다: Windows 는 실행 중인 프로그램이 있는 폴더를 지우거나 이름을 바꿀 수 없음 (작업 폴더가 잠기지 않게)
-  (cd "$agent" && nohup "$py" "$script" >> "$log" 2>&1 < /dev/null &)
-  for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open && break; sleep 0.5; done
-  if ! pi_port_open; then
-    echo "[pi] 중계 서버를 켜지 못했습니다. 로그($log) 끝부분:" >&2
+  if [ -n "$ucfg" ]; then
+    (cd "$agent" && PI_COPILOT_USER_CONFIG="$(pi_native_path "$ucfg")" nohup "$py" "$(pi_native_path "$script")" --port "$port" "$@" \
+       >> "$log" 2>&1 < /dev/null &)
+  else
+    (cd "$agent" && nohup "$py" "$(pi_native_path "$script")" --port "$port" "$@" >> "$log" 2>&1 < /dev/null &)
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do pi_port_open "$port" && break; sleep 0.5; done
+  if ! pi_port_open "$port"; then
+    echo "[pi] $name를 켜지 못했습니다. 로그($log) 끝부분:" >&2
     tail -n 3 "$log" 2>/dev/null | sed 's/^/     /' >&2
   fi
-  [ -n "$PI_DEBUG" ] && echo "[pi] 중계 서버 시작 (로그: $log)" >&2
+  [ -n "$PI_DEBUG" ] && echo "[pi] $name 시작 (로그: $log)" >&2
   return 0
 }
 pi_relay_autostart "$@"

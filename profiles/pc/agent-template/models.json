@@ -46,6 +46,29 @@
           "maxTokens": 16000
         }
       ]
+    },
+    "inhouse": {
+      "baseUrl": "http://127.0.0.1:8766/v1",
+      "api": "openai-completions",
+      "apiKey": "inhouse-relay",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "inhouse-sonnet",
+          "name": "사내AI 성능모드 (Claude Sonnet)",
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        },
+        {
+          "id": "inhouse-gemma4",
+          "name": "사내AI 안전모드 (Gemma 4)",
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        }
+      ]
     }
   }
 }
