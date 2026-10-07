@@ -225,12 +225,11 @@ def privacy_refusal(reply):
 
 
 class PrivacyRefused(Exception):
-    """서비스가 개인정보·민감 정보 확인으로 답하지 않음. part/total: 나눠 보낸 메시지에서 거절한 조각 (마지막 조각이면 None)
-    redo: 다음 요청 때 같은 대화에 지침과 기록을 처음부터 다시 보내야 함 (보내지 못한 조각이 있거나 새 대화의 첫 메시지)"""
+    """서비스가 개인정보·민감 정보 확인으로 답하지 않음. part/total: 나눠 보낸 메시지에서 거절한 조각 (마지막 조각이면 None)"""
 
-    def __init__(self, text, part=None, total=None, redo=True):
+    def __init__(self, text, part=None, total=None):
         super().__init__(text)
-        self.text, self.part, self.total, self.redo = text, part, total, redo
+        self.text, self.part, self.total = text, part, total
 
 
 # pi 가 맥락 한도에 닿아 앞 대화를 요약할 때(compaction, /compact) 보내는 요청: 대화 전체가 메시지 하나(<conversation>)에 들어 있다.
@@ -1021,15 +1020,14 @@ class Relay:
 
     def refused(self, e):
         """서비스가 개인정보·민감 정보 확인으로 답하지 않음 -> 다시 부탁하지 않고 멈춰서 그 답을 그대로 pi 에 알린다 (오류 422).
-        지금 대화는 그대로 두고 다음 요청도 이 대화에 보낸다. 보내지 못한 조각이 있거나 새 대화의 첫 메시지였으면
-        다음 요청 때 지침과 기록을 처음부터 다시 (빠진 지침 없이 이어 가도록)"""
+        방금 거절당한 글을 같은 대화에 다시 보내지 않는다 (재전송해도 또 거절되거나 응답이 없어 멈춤).
+        다음 요청은 새 대화로 깨끗하게 시작한다 (내용을 줄였으면 되고, 그대로면 다시 바로 422)."""
         name = (getattr(self.link, "cfg", None) or {}).get("service_name") or "Copilot"
         where = " (긴 메시지 {}/{})".format(e.part, e.total) if e.part else ""
         rest = " 나머지 {}개 조각은 보내지 않았습니다.".format(e.total - e.part) if e.part and e.total and e.total > e.part else ""
-        self.log("{}: 개인정보·민감 정보 확인으로 답하지 않음{} -> 멈춤".format(name, where))
-        self.fresh = False
-        if e.redo:
-            self.redo_same_chat = True
+        self.log("{}: 개인정보·민감 정보 확인으로 답하지 않음{} -> 멈춤 (다시 보내지 않음)".format(name, where))
+        self.fresh = True  # 다음 요청은 새 대화로 (거절당한 대화에 같은 글을 다시 밀어 넣지 않음)
+        self.redo_same_chat = False
         return RelayError(REFUSED_STATUS, "{}: 개인정보·민감 정보 확인으로 답하지 않았습니다{}. 답: «{}»{}".format(
             name, where, norm(e.text)[:300], rest))
 
@@ -1216,7 +1214,7 @@ class Relay:
         body_text, call, err = parse_reply(reply, tool_names)
         self.note_reply(reply)
         if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
-            raise PrivacyRefused(reply.get("text", ""), redo=not delta)
+            raise PrivacyRefused(reply.get("text", ""))
         retries, nudged, code_nudged, cont_nudged = 0, False, False, False
         no_tools = bool(NO_TOOLS_RE.search(last_user_text(messages)))
         while call is None and retries < 2:
@@ -1247,7 +1245,7 @@ class Relay:
             body_text, call, err = parse_reply(reply, tool_names)
             self.note_reply(reply)
             if call is None and privacy_refusal(reply):
-                raise PrivacyRefused(reply.get("text", ""), redo=not delta)
+                raise PrivacyRefused(reply.get("text", ""))
         if call and repeated_calls(messages, call) >= LOOP_LIMIT:
             count = repeated_calls(messages, call)
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
@@ -1256,7 +1254,7 @@ class Relay:
             body_text, call, err = parse_reply(reply, tool_names)
             self.note_reply(reply)
             if call is None and privacy_refusal(reply):
-                raise PrivacyRefused(reply.get("text", ""), redo=not delta)
+                raise PrivacyRefused(reply.get("text", ""))
             if call and repeated_calls(messages, call) >= LOOP_LIMIT:
                 self.log("반복이 계속됨 -> 이 요청을 멈춤")
                 body_text, call = LOOP_STOP.format(name=call["name"]), None
@@ -1548,7 +1546,7 @@ def make_handler(relay, jup, cfg, lanes=None):
             try:
                 msg = relay.handle(body)
             except RelayError as e:
-                if e.status not in (429, REFUSED_STATUS):  # 사용량 제한·개인정보 확인이면 지금 대화를 그대로 둔다
+                if e.status != 429:  # 사용량 제한이면 지금 대화를 그대로 둔다 (풀린 뒤 이어서). 개인정보 거절은 refused() 가 새 대화로 정리함
                     relay.reset()
                 relay.log("오류:", e)
                 return self.send_json(e.status, {"error": {"message": bridge.service_text(e), "type": "copilot_relay_error"}})

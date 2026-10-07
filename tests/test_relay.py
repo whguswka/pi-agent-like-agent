@@ -853,12 +853,11 @@ except relay.RelayError as _e:
     _st, _em = _e.status, str(_e)
 check("새 대화의 첫 메시지 거절: 422 + 받은 답 그대로 + 다시 부탁하지 않음", _st == 422 and "공유하지 않는" in _em and len(_lkp.sent_log) == 1,
       (_st, _em, len(_lkp.sent_log)))
-check("거절 뒤: 지금 대화를 그대로 두고 다음 요청은 같은 대화에 처음부터", _rp.fresh is False and _rp.redo_same_chat is True)
+check("거절 뒤: 방금 거절당한 글을 다시 보내지 않도록 다음 요청은 새 대화로", _rp.fresh is True and _rp.redo_same_chat is False)
 _a = _quiet(lambda: _rp.handle({"messages": _msgs, "tools": tools}))
-check("다시 요청하면: 같은 대화(new_thread=False)에 지침·요청을 처음부터, 보낸 내용은 처음과 똑같음 (덧붙인 글 없음)",
-      _lkp.sent_log[1]["new_thread"] is False and _nomark(_lkp.sent_log[1]["parts"]) == _nomark(_lkp.sent_log[0]["parts"])
-      and _a.get("content") == "다시 받은 답", (_lkp.sent_log[1]["new_thread"], _a))
-_lk2 = FakeLink([_REFUSALS[0], _REFUSALS[0], "세 번째 답"])  # 처음부터 다시 보낸 것도 거절 -> 그다음도 같은 대화에 처음부터
+check("다시 요청하면: 새 대화로 보냄 (거절당한 대화에 같은 블록을 다시 밀어 넣지 않음)",
+      _lkp.sent_log[1]["new_thread"] is True and _a.get("content") == "다시 받은 답", (_lkp.sent_log[1]["new_thread"], _a))
+_lk2 = FakeLink([_REFUSALS[0], _REFUSALS[0], "세 번째 답"])  # 거절이 이어져도 매번 새 대화로 깨끗하게 (한 대화에 재전송해서 멈추지 않음)
 _r2r = relay.Relay(A(), _lk2)
 for _i in range(2):
     try:
@@ -866,9 +865,9 @@ for _i in range(2):
     except relay.RelayError:
         pass
 _a2r = _quiet(lambda: _r2r.handle({"messages": _msgs, "tools": tools}))
-check("처음부터 다시 보낸 것도 거절되면 그다음 요청도 같은 대화에 처음부터 (새 대화로 넘어가지 않음)",
-      [x["new_thread"] for x in _lk2.sent_log] == [True, False, False] and relay.PROTOCOL_TAG in _lk2.sent_log[2]["parts"][0]
-      and _a2r.get("content") == "세 번째 답", [x["new_thread"] for x in _lk2.sent_log])
+check("거절이 이어져도 매번 새 대화로 (거절당한 대화에 재전송하지 않음)",
+      [x["new_thread"] for x in _lk2.sent_log] == [True, True, True] and _a2r.get("content") == "세 번째 답",
+      [x["new_thread"] for x in _lk2.sent_log])
 _lkd = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "cat a.csv"}}\n```', _REFUSALS[1], "정리했습니다"])
 _rd = relay.Relay(A(), _lkd)
 _u = {"role": "user", "content": "a.csv 요약해줘"}
@@ -880,9 +879,8 @@ try:
 except relay.RelayError as _e:
     _st = _e.status
 _a3 = _quiet(lambda: _rd.handle({"messages": _m2, "tools": tools}))
-check("이어 가던 대화에서 거절: 422, 다음 요청은 같은 대화에 새 부분만 똑같이 다시", _st == 422 and _lkd.sent_log[2]["new_thread"] is False
-      and _nomark(_lkd.sent_log[2]["parts"]) == _nomark(_lkd.sent_log[1]["parts"]) and _a3.get("content") == "정리했습니다",
-      (_st, _lkd.sent_log[2]))
+check("이어 가던 대화에서 거절: 422, 다음 요청은 새 대화로 (거절당한 대화에 재전송 안 함)",
+      _st == 422 and _lkd.sent_log[2]["new_thread"] is True and _a3.get("content") == "정리했습니다", (_st, _lkd.sent_log[2]))
 
 
 class _CopParts:  # 조각마다 답을 돌려주는 가짜 화면 (CopilotLink.request 시험용)
@@ -911,11 +909,12 @@ try:
 except relay.PrivacyRefused as _e:
     _pr = _e
 check("나눠 보낸 중간 조각이 거절되면 멈춤 (나머지 조각은 보내지 않음)", _pr is not None and (_pr.part, _pr.total) == (1, 2)
-      and len(_lp.cop.sent) == 1 and _pr.redo, (_pr and (_pr.part, _pr.total), len(_lp.cop.sent)))
+      and len(_lp.cop.sent) == 1, (_pr and (_pr.part, _pr.total), len(_lp.cop.sent)))
 _rq = relay.Relay(A(), _lp)
 _err = _quiet(lambda: _rq.refused(_pr))
-check("거절 알림: 몇째 조각인지 + 받은 답 + 나머지 조각을 보내지 않았다는 것만", _err.status == 422 and str(_err).startswith("사내AI: ")
-      and "(긴 메시지 1/2)" in str(_err) and "나머지 1개 조각은 보내지 않았습니다" in str(_err) and _rq.redo_same_chat, str(_err))
+check("거절 알림: 몇째 조각인지 + 받은 답 + 나머지 조각을 보내지 않았다는 것만 + 다음은 새 대화", _err.status == 422
+      and str(_err).startswith("사내AI: ") and "(긴 메시지 1/2)" in str(_err) and "나머지 1개 조각은 보내지 않았습니다" in str(_err)
+      and _rq.fresh is True and _rq.redo_same_chat is False, str(_err))
 _lp.cop = _CopParts(["OK", "끝"])
 check("중간 조각에 OK 면 다음 조각까지 보냄", (_quiet(lambda: _lp.request(_parts, True)) or {}).get("text") == "끝" and len(_lp.cop.sent) == 2)
 # HTTP: 422 로 알리고 대화는 지우지 않음 + /health 에 켠 시각과 일하는 중인지
@@ -933,7 +932,7 @@ except _ue.HTTPError as _e:
     _code = _e.code
 _h5 = _json.loads(_ur.urlopen(_b5 + "/health", timeout=5).read())
 _srv5.shutdown()
-check("HTTP: 422, 대화는 그대로 (다음 요청도 이 대화)", _code == 422 and _rh.fresh is False and _rh.redo_same_chat, (_code, _rh.fresh))
+check("HTTP: 422, 다음 요청은 새 대화로", _code == 422 and _rh.fresh is True and _rh.redo_same_chat is False, (_code, _rh.fresh))
 check("/health: 켠 시각(started)과 일하는 중(busy) (bin/pi 가 바뀐 설정을 알아보고 다시 켤 때 씀)",
       "started" in _h5 and _h5.get("busy") is False, _h5)
 
