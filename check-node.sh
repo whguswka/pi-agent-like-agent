@@ -15,7 +15,7 @@ if n="$(pi_find_node)"; then
 else
   echo "== 결과: 사용 가능한 Node 없음 (20.15 이상 필요)"
   echo "   해결 (아래 중 하나만 있으면 됩니다):"
-  echo "    - pip install --user nodejs-wheel-binaries==24.19.0   (Node.js 공식 바이너리 패키지)"
+  echo "    - pip install --user nodejs-wheel-binaries==24.16.0   (Node.js 공식 바이너리 패키지)"
   echo "    - pip install --user playwright                       (1.46 이상. 내장 Node 사용, 브라우저 설치 불필요)"
   echo "    - (Windows) VS Code 데스크톱 1.93 이상                 (내장 Node 사용)"
   echo "      portable VS Code 라면 그 폴더의 Code.exe 경로를 ~/.bashrc 에 한 번 적기 (경로는 / 로, 새 Git Bash 창부터 적용):"

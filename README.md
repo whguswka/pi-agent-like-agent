@@ -73,9 +73,9 @@ bash ~/tools/pi/check-node.sh
 - `결과: 사용 가능` 또는 `결과: 호환 모드로 사용 가능` 이면 다음으로 넘어갑니다. VS Code 내장 Node 는 보통 호환 모드이며, 그대로 쓰면 됩니다.
 - `사용 가능한 Node 없음` 이면 화면에 나온 방법 중 하나를 준비합니다. 보통은:
   ```bash
-  pip install --user nodejs-wheel-binaries==24.19.0
+  pip install --user nodejs-wheel-binaries==24.16.0
   ```
-  (`pip` 를 찾지 못하면 `python -m pip install --user nodejs-wheel-binaries==24.19.0`)
+  (`pip` 를 찾지 못하면 `python -m pip install --user nodejs-wheel-binaries==24.16.0`)
 - 자세한 내용(portable VS Code, 호환 모드, Node 를 찾는 순서): [docs/설치.md](docs/설치.md#1-nodejs-확인)
 
 ### 2-3. 설치
@@ -645,7 +645,7 @@ python ~/tools/pi/copilot/diag.py --limits
 zip 을 JupyterLab 파일 브라우저로 홈에 올린 뒤 터미널에서:
 ```bash
 mkdir -p ~/tools && python -m zipfile -e ~/pi-agent-like-agent-main.zip ~/tools/ && mv ~/tools/pi-agent-like-agent-main ~/tools/pi
-bash ~/tools/pi/check-node.sh                         # Node 가 없으면: pip install --user nodejs-wheel-binaries==24.19.0
+bash ~/tools/pi/check-node.sh                         # Node 가 없으면: pip install --user nodejs-wheel-binaries==24.16.0
 bash ~/tools/pi/install.sh jupyter
 ```
 - 반드시 **홈(PVC) 아래**에 두고, pip 에는 **`--user`** 를 붙이세요. 그래야 파드를 재시작해도 남습니다.
@@ -667,7 +667,7 @@ bash ~/tools/pi/install.sh jupyter
 
 **의존성**
 - 저장소 밖에서 받아야 하는 것은 **PyPI 패키지뿐**입니다 ([requirements.txt](requirements.txt)).
-  - `nodejs-wheel-binaries==24.19.0`: Node.js 실행환경. Node 20.15 이상(또는 VS Code 1.93 이상)이 이미 있으면 필요 없음
+  - `nodejs-wheel-binaries==24.16.0`: Node.js 실행환경. Node 20.15 이상(또는 VS Code 1.93 이상)이 이미 있으면 필요 없음
   - (선택) `ripgrep==14.1.0`: pi 의 grep 도구용
 - pi 가 쓰는 JavaScript 라이브러리(chord, typebox, jiti)는 `runtime/node_modules/` 에 원본 그대로 들어 있습니다.
 - Copilot 중계기(`copilot/`)는 파이썬 표준 라이브러리만 씁니다.
