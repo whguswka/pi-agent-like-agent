@@ -1415,12 +1415,12 @@ def main_print_shell(path):
 # bridge.json 의 값을 바꾸는 판마다 바꾸기 전 값을 여기에 더하고 BRIDGE_JSON_SHA256 을 새 파일의 값으로 (tests/test_config.py 가 확인)
 SHIPPED_OLD_VALUES = {
     "first_reply_timeout_seconds": [180],
-    "copilot_model": ["GPT 6.0 Sol"],
-    "copilot_models.gpt-6.0-sol": ["GPT 6.0 Sol"],
+    "copilot_model": ["GPT 6.0 Sol", "GPT-6 Sol"],
+    "copilot_models.gpt-6.0-sol": ["GPT 6.0 Sol", "GPT-6 Sol"],
     "copilot_models.gpt-5.6-sol-think": ["GPT 5.6 Sol 깊이 생각하기"],
     "copilot_models.gpt-5.6-sol-fast": ["GPT 5.6 Sol 빠른 응답"],
 }
-BRIDGE_JSON_SHA256 = "afa7ee75ef540308023606902095430e39f804deebe5ebf46c4f0b2e23b58f18"
+BRIDGE_JSON_SHA256 = "039d7415171ef8cb0efae685e42d0557ebe11782cd49b7f779e09c79b2ecfbdc"
 
 
 def edited_keys(old_path, new_path):

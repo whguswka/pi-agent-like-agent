@@ -379,8 +379,15 @@ check("메뉴에서 고르기: 새 이름 그대로", (_pick(_menu, "GPT-6 Sol")
       and (_pick(_menu, "GPT 5.6 Sol 깊이 생각하기") or {}).get("title") == "GPT-5.6 Sol 깊이 생각하기")
 check("메뉴에서 고르기: 'GPT-5.6 Sol' 처럼 여럿에 걸리면 고르지 않음", _pick(_menu, "GPT-5.6 Sol") is None
       and _pick(_menu, "GPT-7 Sol") is None)
-check("저장소 설정의 모델 이름이 지금 화면 이름 (2026-10)", relay.copilot_model_for("gpt-6.0-sol", relay.bridge.load_config(
-      os.path.join(os.path.dirname(relay.__file__), "bridge.json"), None)) == "GPT-6 Sol")
+_repo_cfg = relay.bridge.load_config(os.path.join(os.path.dirname(relay.__file__), "bridge.json"), None)
+check("저장소 설정의 모델 이름이 지금 화면 이름 (2026-10-13)", relay.copilot_model_for("gpt-6.0-sol", _repo_cfg) == "GPT-6.1 Sol"
+      and relay.copilot_model_for("claude-sonnet-5.5", _repo_cfg) == "Sonnet 5.5" and relay.copilot_model_for("claude-opus-5.5", _repo_cfg) == "Opus 5.5")
+# 2026-10-13 메뉴: Claude › Sonnet 5 · Sonnet 5.5 · Opus 5.5, GPT › GPT-5.6 Sol 빠른 응답 · 깊이 생각하기 · GPT-6.1 Sol
+_menu13 = [{"title": t, "text": t} for t in ("Sonnet 5", "Sonnet 5.5", "Opus 5.5")]
+check("메뉴에서 고르기: 'Sonnet 5' 와 'Sonnet 5.5' 를 헷갈리지 않음", (_pick(_menu13, "Sonnet 5") or {}).get("title") == "Sonnet 5"
+      and (_pick(_menu13, "Sonnet 5.5") or {}).get("title") == "Sonnet 5.5")
+check("모델 이름 비교: 'GPT-6 Sol' 과 'GPT-6.1 Sol' 은 다른 모델 (그래서 이름을 바꿔 적어야 함)", _mk("GPT-6 Sol") != _mk("GPT-6.1 Sol")
+      and _pick([{"title": "GPT-6.1 Sol", "text": "GPT-6.1 Sol"}], "GPT-6 Sol") is None)
 
 # 사내AI (두 번째 중계 서버, copilot/inhouse.json): 모드 단추, 화면 단추 글, 서비스 이름
 _kc = relay.bridge.load_config(os.path.join(os.path.dirname(relay.__file__), "inhouse.json"), None)

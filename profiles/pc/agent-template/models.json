@@ -11,7 +11,7 @@
       "models": [
         {
           "id": "gpt-6.0-sol",
-          "name": "GPT-6 Sol (Copilot)",
+          "name": "GPT-6.1 Sol (Copilot)",
           "contextWindow": 1000000,
           "maxTokens": 16000
         },
@@ -28,14 +28,20 @@
           "maxTokens": 16000
         },
         {
-          "id": "claude-sonnet-4.5",
-          "name": "Claude Sonnet 4.5 (Copilot)",
+          "id": "claude-sonnet-5.5",
+          "name": "Claude Sonnet 5.5 (Copilot)",
           "contextWindow": 1000000,
           "maxTokens": 16000
         },
         {
-          "id": "claude-opus",
-          "name": "Claude Opus (Copilot)",
+          "id": "claude-sonnet-5",
+          "name": "Claude Sonnet 5 (Copilot)",
+          "contextWindow": 1000000,
+          "maxTokens": 16000
+        },
+        {
+          "id": "claude-opus-5.5",
+          "name": "Claude Opus 5.5 (Copilot)",
           "contextWindow": 1000000,
           "maxTokens": 16000
         },

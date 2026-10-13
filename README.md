@@ -111,7 +111,7 @@ python ~/tools/pi/copilot/diag.py --report
 |---|---|
 | (없음) | 전용 창, Copilot 탭, 입력창 |
 | `--send` | + 시험 질문 하나를 새 대화로 보내고 답 읽기 |
-| `--model` | + 모델 메뉴 항목 읽기, 기본 모델 고르기 (`--model "GPT-6 Sol"` 처럼 이름 지정 가능) |
+| `--model` | + 모델 메뉴 항목 읽기, 기본 모델 고르기 (`--model "GPT-6.1 Sol"` 처럼 이름 지정 가능) |
 | `--chats` | + 왼쪽 채팅 목록 찾기 |
 | `--delete-test` | + 시험 대화를 하나 만들어 지워 보기 (다른 대화는 건드리지 않음) |
 | `--jupyter` | + JupyterLab 터미널에서 시험 명령 실행 ([5장](#5-실행-위치-바꾸기-pc-와-jupyter-노트북)을 쓸 때) |
@@ -227,11 +227,12 @@ pi 의 모델 목록에 Copilot 모델이 들어 있습니다. 모델을 고르�
 
 | pi 모델 id | Copilot 화면의 모델 |
 |---|---|
-| `gpt-6.0-sol` (기본) | GPT › GPT-6 Sol |
+| `gpt-6.0-sol` (기본) | GPT › GPT-6.1 Sol (id 는 예전 이름 그대로) |
 | `gpt-5.6-sol-think` | GPT › GPT-5.6 Sol 깊이 생각하기 |
 | `gpt-5.6-sol-fast` | GPT › GPT-5.6 Sol 빠른 응답 |
-| `claude-sonnet-4.5` | Claude › Sonnet 4.5 |
-| `claude-opus` | Claude › Opus |
+| `claude-sonnet-5.5` | Claude › Sonnet 5.5 |
+| `claude-sonnet-5` | Claude › Sonnet 5 |
+| `claude-opus-5.5` | Claude › Opus 5.5 (메뉴에서 흐리게 보이면 계정에서 못 쓰는 모델일 수 있음) |
 | `copilot` | `bridge.json` 의 `copilot_model` (비우면 화면에 선택된 모델 그대로) |
 
 ```bash
@@ -239,7 +240,7 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 ```
 - pi 화면에서는 `/model`(또는 `Ctrl+L`)로 고르고, `Ctrl+P` 로 다음 모델로 바꿉니다. 바꾸면 다음 질문부터 같은 Copilot 대화에서 모델만 바뀝니다.
 - 고른 모델은 그 세션에만 기록됩니다. 새 세션의 기본 모델로 삼으려면 `/model` 목록에서 `Ctrl+S` 를 누르거나 `~/.pi/agent/settings.json` 의 `defaultModel` 을 바꿉니다.
-- **깊이 생각하기**는 답마다 생각하는 시간이 붙어 느립니다. pi 는 작업 하나에 Copilot 과 여러 번 주고받으므로 평소에는 GPT-6 Sol 을 권합니다.
+- **깊이 생각하기**는 답마다 생각하는 시간이 붙어 느립니다. pi 는 작업 하나에 Copilot 과 여러 번 주고받으므로 평소에는 GPT-6.1 Sol 을 권합니다.
 - Copilot 메뉴에 새 모델이 생기면 `~/.pi/agent/models.json` 의 `models` 에 한 줄 추가합니다. `id` 는 **Copilot 화면의 모델 이름 그대로** 씁니다.
   ```json
   { "id": "새 모델 이름", "name": "새 모델 (Copilot)", "contextWindow": 1000000, "maxTokens": 16000 }
