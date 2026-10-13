@@ -154,6 +154,8 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
   CLI="$(cygpath -w "$CLI")"; URL_BASE="file:///$(cygpath -m "$PI_HOME")" ;;
 *) URL_BASE="file://$PI_HOME" ;;
 esac
+# VS Code 터미널에서는 fullscreen 화면으로 (kit-config.sh 의 pi_tui_args: 직접 --tui-mode 를 줬거나 settings.json 에 tuiMode 가 있으면 그대로)
+if [ -t 0 ] && [ -t 1 ]; then _tui="$(pi_tui_args "$@")"; [ -n "$_tui" ] && set -- "$@" $_tui; fi
 ARGS=()
 RELAY=
 # VS Code 계열 편집기 내장 Node: Node 모드로 실행하고, 하위 프로세스에는 환경변수가 상속되지 않도록 preload 에서 제거

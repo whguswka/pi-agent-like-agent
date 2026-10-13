@@ -153,6 +153,7 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 | pi 가 고친 파일 되돌리기 | `/undo` (마지막 요청), `/undo 2` (마지막 두 요청) — 아래 3-5 |
 | 앞으로도 지킬 것 기억시키기 | `/remember 커밋 메시지는 한국어로` (지침 파일 AGENTS.md 에 적음, [6장 메모리](#메모리)) |
 | 도구 출력 펼치기·접기 | `Ctrl+O` |
+| VS Code 터미널에서 지난 대화 보기 | VS Code 터미널에서는 대화 기록을 pi 화면 안에서 스크롤하는 fullscreen 화면으로 켭니다. 마우스 휠·`PageUp`/`PageDown` 으로 스크롤, 끌어서 고르면 복사, `Ctrl+F` 찾기. 예전 화면으로 쓰려면 `pi --tui-mode regular` (늘 그렇게 하려면 `/settings` 의 TUI mode) |
 | 모델 고르기 / 다음 모델로 | `/model` 또는 `Ctrl+L` / `Ctrl+P` |
 | 지침·스킬을 고친 뒤 다시 읽기 | `/reload` |
 | 자주 하는 일 | 기본 명령 `/init` `/handoff` `/review` `/test` `/commit` `/explain` ([6장](#6-지침-스킬-메모리)) |
@@ -616,6 +617,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 |---|---|
 | `pi: command not found` | 새 Git Bash 창을 여세요. 그래도 안 되면 `bash ~/tools/pi/install.sh pc` 를 다시 실행 (Git Bash 창이 읽는 파일에 PATH 를 넣음). 지금 창에서 바로 쓰려면 `export PATH="$HOME/tools/pi/bin:$PATH"` |
 | Node 를 찾지 못했다는 메시지 | `bash ~/tools/pi/check-node.sh` 결과대로 준비 ([2-2](#2-2-nodejs-확인)) |
+| VS Code 터미널에서 일하는 동안 스크롤이 위로 감겼다가 다시 내려옴 | 대화가 길 때 기본(regular) 화면이 대화 전체를 다시 출력하는 것입니다. 이 판부터 VS Code 터미널에서는 fullscreen 화면으로 켭니다 (cmd·PowerShell 의 `pi.cmd` 는 `pi.cmd --tui-mode fullscreen`). 원인 기록: `PI_TUI_DEBUG_REDRAW=1 pi` 뒤 `tail ~/.pi/agent/pi-tui-debug.log` |
 | 시작 화면에 `Warning: fd not found` / `ripgrep not found` | 무시해도 됩니다. 기본 도구(명령 실행, 파일 읽기·쓰기·고치기)는 이 둘 없이 동작하고, 입력창의 `@` 파일 목록도 fd 없이 나옵니다 |
 | `브라우저 원격 디버깅 포트(9222)에 연결할 수 없습니다` | 전용 창이 꺼져 있습니다. `pi` 를 다시 실행하면 다시 띄웁니다 (또는 `start-chrome.cmd`). 평소 쓰는 Chrome 창으로는 연결되지 않습니다 |
 | `Copilot 탭을 찾지 못했습니다` | 전용 창에 Copilot 탭이 열려 있고 로그인돼 있는지 확인 |

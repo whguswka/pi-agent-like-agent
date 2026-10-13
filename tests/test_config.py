@@ -149,6 +149,26 @@ else:
     rc, out, err = sh('pi_cfg_load; pi_cfg browser; pi_cfg cdp_port', "{}", python="/no/such/python")
     check("내 설정에 없으면 저장소 값 (직접 읽기)", out.split("\n") == ["chrome", "9222"], (out, err))
 
+    # pi_tui_args: VS Code 터미널에서는 fullscreen 화면 (긴 대화를 다시 그릴 때 스크롤이 감겼다 내려오는 것 방지)
+    def tui(args, settings=None, term="vscode"):
+        p = os.path.join(agent, "settings.json")
+        if settings is None:
+            if os.path.exists(p):
+                os.remove(p)
+        else:
+            write(p, settings)
+        env = dict(os.environ, PI_HOME=ROOT.replace("\\", "/"), PI_CODING_AGENT_DIR=agent.replace("\\", "/"), TERM_PROGRAM=term)
+        r = subprocess.run([bash, "-c", '. "$PI_HOME/bin/find-node.sh"; . "$PI_HOME/bin/kit-config.sh"; pi_tui_args "$@"', "x"] + args,
+                           capture_output=True, env=env)
+        return r.stdout.decode("utf-8", "replace").strip()
+    check("VS Code 터미널: fullscreen 화면 (jupyter 모드·이어서 하기도)", tui([]) == "--tui-mode fullscreen"
+          and tui(["--jupyter", "work/a", "-c"]) == "--tui-mode fullscreen" and tui([], {"defaultModel": "m"}) == "--tui-mode fullscreen")
+    check("다른 터미널은 그대로", tui([], term="mintty") == "" and tui([], term="") == "")
+    check("직접 --tui-mode 를 주면 그대로", tui(["--tui-mode", "regular"]) == "" and tui(["--tui-mode=regular"]) == "")
+    check("settings.json 에 tuiMode 가 있으면 그대로 (/settings 로 고른 값)", tui([], {"tuiMode": "regular"}) == "")
+    check("대화형이 아니면 더하지 않음 (-p, --mode rpc 등)",
+          all(tui([a]) == "" for a in ["-p", "--print", "--mode", "--list-models", "-v", "--version", "-h", "--help", "--export"]))
+
 shutil.rmtree(tmp, ignore_errors=True)
 
 # 판 내기 확인: 저장소 copilot/bridge.json 의 값을 바꾸면 바꾸기 전 값을 bridge.SHIPPED_OLD_VALUES 에 더하고
