@@ -10,7 +10,7 @@
       },
       "models": [
         {
-          "id": "gpt-6.0-sol",
+          "id": "gpt-6.1-sol",
           "name": "GPT-6.1 Sol (Copilot)",
           "contextWindow": 1000000,
           "maxTokens": 16000

@@ -380,8 +380,12 @@ check("메뉴에서 고르기: 새 이름 그대로", (_pick(_menu, "GPT-6 Sol")
 check("메뉴에서 고르기: 'GPT-5.6 Sol' 처럼 여럿에 걸리면 고르지 않음", _pick(_menu, "GPT-5.6 Sol") is None
       and _pick(_menu, "GPT-7 Sol") is None)
 _repo_cfg = relay.bridge.load_config(os.path.join(os.path.dirname(relay.__file__), "bridge.json"), None)
-check("저장소 설정의 모델 이름이 지금 화면 이름 (2026-10-13)", relay.copilot_model_for("gpt-6.0-sol", _repo_cfg) == "GPT-6.1 Sol"
+check("저장소 설정의 모델 이름이 지금 화면 이름 (2026-10-13)", relay.copilot_model_for("gpt-6.1-sol", _repo_cfg) == "GPT-6.1 Sol"
       and relay.copilot_model_for("claude-sonnet-5.5", _repo_cfg) == "Sonnet 5.5" and relay.copilot_model_for("claude-opus-5.5", _repo_cfg) == "Opus 5.5")
+check("예전 기본 모델 id gpt-6.0-sol 도 같은 모델 (지난 세션·바꾸기 전 settings.json)", relay.copilot_model_for("gpt-6.0-sol", _repo_cfg) == "GPT-6.1 Sol")
+_tpl = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(relay.__file__))), "profiles", "pc", "agent-template", "settings.json"), encoding="utf-8"))
+check("기본 모델 id 가 화면 이름과 맞음 (pi 화면 아래 상태줄은 id 를 보여 줌)", _tpl["defaultModel"] == "gpt-6.1-sol"
+      and _mk(_tpl["defaultModel"]) == _mk("GPT-6.1 Sol"))
 # 2026-10-13 메뉴: Claude › Sonnet 5 · Sonnet 5.5 · Opus 5.5, GPT › GPT-5.6 Sol 빠른 응답 · 깊이 생각하기 · GPT-6.1 Sol
 _menu13 = [{"title": t, "text": t} for t in ("Sonnet 5", "Sonnet 5.5", "Opus 5.5")]
 check("메뉴에서 고르기: 'Sonnet 5' 와 'Sonnet 5.5' 를 헷갈리지 않음", (_pick(_menu13, "Sonnet 5") or {}).get("title") == "Sonnet 5"

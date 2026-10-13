@@ -227,7 +227,7 @@ pi 의 모델 목록에 Copilot 모델이 들어 있습니다. 모델을 고르�
 
 | pi 모델 id | Copilot 화면의 모델 |
 |---|---|
-| `gpt-6.0-sol` (기본) | GPT › GPT-6.1 Sol (id 는 예전 이름 그대로) |
+| `gpt-6.1-sol` (기본) | GPT › GPT-6.1 Sol |
 | `gpt-5.6-sol-think` | GPT › GPT-5.6 Sol 깊이 생각하기 |
 | `gpt-5.6-sol-fast` | GPT › GPT-5.6 Sol 빠른 응답 |
 | `claude-sonnet-5.5` | Claude › Sonnet 5.5 |
@@ -240,8 +240,10 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 ```
 - pi 화면에서는 `/model`(또는 `Ctrl+L`)로 고르고, `Ctrl+P` 로 다음 모델로 바꿉니다. 바꾸면 다음 질문부터 같은 Copilot 대화에서 모델만 바뀝니다.
 - 고른 모델은 그 세션에만 기록됩니다. 새 세션의 기본 모델로 삼으려면 `/model` 목록에서 `Ctrl+S` 를 누르거나 `~/.pi/agent/settings.json` 의 `defaultModel` 을 바꿉니다.
+- pi 화면 아래 상태줄에는 모델 **id** 가 보입니다. 2026-10-06.5 까지의 기본 모델 id `gpt-6.0-sol` 도 같은 모델(GPT-6.1 Sol)을 고르지만,
+  업데이트는 `models.json` 의 예전 항목과 `settings.json` 의 `defaultModel` 을 바꾸지 않으므로 `/model` 에서 `gpt-6.1-sol` 을 고른 뒤 `Ctrl+S` 로 기본 모델을 바꾸세요.
 - **깊이 생각하기**는 답마다 생각하는 시간이 붙어 느립니다. pi 는 작업 하나에 Copilot 과 여러 번 주고받으므로 평소에는 GPT-6.1 Sol 을 권합니다.
-- Copilot 메뉴에 새 모델이 생기면 `~/.pi/agent/models.json` 의 `models` 에 한 줄 추가합니다. `id` 는 **Copilot 화면의 모델 이름 그대로** 씁니다.
+- Copilot 메뉴에 새 모델이 생기면 `~/.pi/agent/models.json` 의 `models` 에 한 줄 추가합니다. `id` 는 **Copilot 화면의 모델 이름 그대로** 씁니다 (띄어쓰기·`-`·대소문자는 무시하고 비교).
   ```json
   { "id": "새 모델 이름", "name": "새 모델 (Copilot)", "contextWindow": 1000000, "maxTokens": 16000 }
   ```
