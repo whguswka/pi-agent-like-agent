@@ -137,6 +137,7 @@ PREAMBLE = """[{tag}]
 <파일 전체 내용>
 ```
    파일 내용에 ``` 가 들어 있으면 바깥 블록은 ````text 로 열고 ```` 로 닫아 주세요 (backtick 4개).
+   여러 줄 글을 받는 다른 도구도 같은 방식으로 `@tool <도구> 이름=값` 줄 다음에 글을 이어 쓰면 됩니다.
 4. 요청이 끝났으면 코드 블록 없이 결과를 정리해서 답해 주세요.
 - JSON 은 올바른 형식이어야 합니다 (문자열 안 줄바꿈은 \\n, 따옴표는 \\").
 - 한 번에 블록 하나만 써 주세요.{multi_read}
@@ -511,8 +512,31 @@ def repair_json(s):
     return "".join(out)
 
 
+# '@tool <도구> 이름=값' 형식에서 둘째 줄부터의 여러 줄 글을 받는 인자 (도구 정의의 인자 이름으로 정함: bash 의 command,
+# write 의 content, 확장 도구의 text 등). 그중 파일 내용처럼 기호가 바뀌면 안 되는 인자는 코드 블록 밖이면 다시 부탁한다
+REST_PARAMS = ("command", "content", "text")
+CONTENT_PARAMS = ("content", "text")
+
+
+def tool_table(tools):
+    """요청의 도구 목록 -> {도구 이름: 둘째 줄부터의 글을 넣을 인자 이름 (없으면 None)}"""
+    table = {}
+    for t in tools or []:
+        f = t.get("function") or t
+        props = (f.get("parameters") or {}).get("properties") or {}
+        table[f.get("name")] = next((p for p in REST_PARAMS if (props.get(p) or {}).get("type") == "string"), None)
+    return table
+
+
+def rest_param(tool_names, name):
+    """둘째 줄부터의 글을 넣을 인자. 도구 목록이 이름만 있는 set 이면 bash 의 command, write 의 content"""
+    if isinstance(tool_names, dict):
+        return tool_names.get(name)
+    return {"bash": "command", "write": "content"}.get(name)
+
+
 def parse_block(text, lang, tool_names):
-    """코드 블록 하나 -> (call dict | None, 오류 문자열 | None)"""
+    """코드 블록 하나 -> (call dict | None, 오류 문자열 | None). tool_names: tool_table() 의 표 (또는 이름 set)"""
     s = (text or "").strip("\n")
     # 렌더링된 화면에서 읽으면 첫 줄에 언어 이름(json, text 등)만 있는 경우가 있음
     first = s.split("\n", 1)[0].strip().lower()
@@ -526,17 +550,22 @@ def parse_block(text, lang, tool_names):
             return None, "형식 예시의 경로({})를 그대로 쓰셨습니다. 실제 파일 경로를 넣어 주세요".format(path)
         content = st[m.end():]
         return {"name": "write", "arguments": {"path": path, "content": content.rstrip("\n") + "\n"}}, None
-    # Copilot 이 write 형식을 흉내 내 다른 도구도 '@tool read path=a.py' 처럼 쓰는 경우 (긴 대화에서 실제로 나옴)
-    #  첫 줄의 키=값을 인자로, bash 는 둘째 줄부터를 command 로
+    # '@tool <도구> 이름=값' 형식: Copilot 이 write 형식을 흉내 내 다른 도구도 '@tool read path=a.py' 처럼 쓰는 경우(긴 대화에서
+    #  실제로 나옴)와, 여러 줄 글을 받는 도구(bash 의 명령, 확장 도구의 내용)를 이스케이프 없이 쓰는 경우.
+    #  첫 줄의 이름=값을 인자로, 둘째 줄부터는 그 도구의 여러 줄 글 인자(rest_param)로
     m = re.match(r"@tool[ \t]+(\w+)([^\n]*)\n?", st)
     if m and m.group(1) in tool_names:
-        name, rest = m.group(1), st[m.end():].strip()
+        name = m.group(1)
         args = {k: v.strip("\"'") for k, v in re.findall(r"(\w+)=(\"[^\"]*\"|'[^']*'|\S+)", m.group(2))}
         args = {k: int(v) if v.isdigit() and k in ("offset", "limit", "timeout") else v for k, v in args.items()}
-        if name == "bash" and "command" not in args and rest:
-            args["command"] = rest
+        # 형식 예시(<경로> 등)를 그대로 옮겨 적은 것은 첫 줄의 값만 본다 (명령·내용에는 '<<' 같은 기호가 있을 수 있음)
         if any("<" in str(v) for v in args.values()):
             return None, "형식 예시의 값({})을 그대로 쓰셨습니다. 실제 값을 넣어 주세요".format(args)
+        rp = rest_param(tool_names, name)
+        rest = st[m.end():]
+        rest = rest.strip() if rp == "command" else rest.strip("\n").rstrip() + "\n"
+        if rp and rp not in args and rest.strip():
+            args[rp] = rest
         if args:
             return {"name": name, "arguments": args}, None
         return None, "'@tool {}' 형식에서 인자를 찾지 못했습니다. json 블록으로 주세요".format(name)
@@ -606,7 +635,7 @@ def parse_reply(reply, tool_names):
         blank = re.compile(r"\n[ \t\r]*\n").search(st, m.start())
         end = blank.start() if blank else len(st)
         call, err = parse_block(st[m.start():end], "", tool_names)
-        if call and call["name"] == "write":
+        if call and (call["name"] == "write" or rest_param(tool_names, call["name"]) in CONTENT_PARAMS):
             call, err = None, ("파일 내용이 코드 블록(```) 밖에 있어 일부 기호가 바뀔 수 있습니다. "
                                "같은 내용을 ```text 코드 블록 안에 넣어 다시 주세요")
         if call:
@@ -623,7 +652,7 @@ def parse_reply(reply, tool_names):
         span = find_tool_json(st)
         if span:
             call, err = parse_block(st[span[0]:span[1]], "json", tool_names)
-            if call and call["name"] in ("write", "edit"):
+            if call and (call["name"] in ("write", "edit") or rest_param(tool_names, call["name"]) in CONTENT_PARAMS):
                 call, err = None, ("파일 내용이 코드 블록(```) 밖에 있어 일부 기호가 바뀔 수 있습니다. "
                                    "같은 내용을 ```json 코드 블록 안에 넣어 다시 주세요")
             if call:
@@ -1185,7 +1214,7 @@ class Relay:
             self.log("pi 의 요약 요청(compaction)이 길어 대화 가운데를 줄여 보냅니다")
             messages = short
         tools = body.get("tools") or []
-        tool_names = {(t.get("function") or t).get("name") for t in tools}
+        tool_names = tool_table(tools)  # 이름 -> '@tool' 형식에서 여러 줄 글을 받는 인자
         fps = [fingerprint(m) for m in messages]
         names = self.renderer.tool_names_by_id(messages)
         n = len(self.sent)

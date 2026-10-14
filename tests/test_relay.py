@@ -1091,5 +1091,31 @@ check("도구 결과 줄이기: 6000자 안, 줄인 자리에 다시 보는 방�
       and _cut.endswith("Full output: C:/tmp/pi-bash-x.log]") and _cut.startswith("A" * 3600), len(_cut))
 check("도구 결과 줄이기: 한도 안이면 그대로", relay.truncate_middle("짧은 결과", 6000) == "짧은 결과")
 
+# '@tool <도구> 이름=값' + 여러 줄 글: 도구 정의의 인자(command·content·text)로 (확장 도구도 이스케이프 없이)
+_tools = [{"type": "function", "function": {"name": n, "parameters": {"type": "object", "properties": p}}} for n, p in (
+    ("bash", {"command": {"type": "string"}, "timeout": {"type": "number"}}),
+    ("write", {"path": {"type": "string"}, "content": {"type": "string"}}),
+    ("read", {"path": {"type": "string"}, "offset": {"type": "number"}}),
+    ("wiki_write", {"op": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"}}),
+)]
+_tt = relay.tool_table(_tools)
+check("도구 표: 여러 줄 글을 받는 인자", _tt == {"bash": "command", "write": "content", "read": None, "wiki_write": "text"}, _tt)
+_wb = '@tool wiki_write op=ingest title="회의 요약 정리"\n=== pages/a.md\n---\ntitle: A\n---\nx < y 이고 <b>굵게</b>\n'
+_c, _e = relay.parse_block(_wb, "text", _tt)
+check("@tool 형식: 첫 줄의 이름=값(따옴표 안 띄어쓰기) + 둘째 줄부터는 text, 내용의 '<' 는 그대로",
+      _c == {"name": "wiki_write", "arguments": {"op": "ingest", "title": "회의 요약 정리",
+                                                "text": "=== pages/a.md\n---\ntitle: A\n---\nx < y 이고 <b>굵게</b>\n"}}, (_c, _e))
+_c, _e = relay.parse_block("@tool bash\npython - <<'EOF'\nprint(1)\nEOF", "text", _tt)
+check("@tool bash: heredoc('<<')이 든 명령도 받음 (예전에는 형식 예시로 잘못 알고 거절)",
+      _c == {"name": "bash", "arguments": {"command": "python - <<'EOF'\nprint(1)\nEOF"}}, (_c, _e))
+_c, _e = relay.parse_block("@tool read path=<파일 경로>", "text", _tt)
+check("@tool 형식: 첫 줄에 형식 예시(<…>)를 그대로 쓰면 거절", _c is None and "형식 예시" in (_e or ""), (_c, _e))
+_body, _c, _e = relay.parse_reply({"text": _wb}, _tt)
+check("내용을 받는 도구가 코드 블록 밖이면 다시 부탁 (기호가 바뀔 수 있음)", _c is None and "코드 블록" in (_e or ""), (_c, _e))
+_body, _c, _e = relay.parse_reply({"text": "남기겠습니다.\n```text\n" + _wb + "```\n"}, _tt)
+check("코드 블록 안이면 그대로", _c and _c["name"] == "wiki_write" and _c["arguments"]["title"] == "회의 요약 정리", (_c, _e))
+_c, _e = relay.parse_block("@tool bash\nls -la", "text", {"bash", "read"})
+check("이름만 있는 도구 목록(set)도 예전처럼 bash 는 command", _c == {"name": "bash", "arguments": {"command": "ls -la"}}, (_c, _e))
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)
