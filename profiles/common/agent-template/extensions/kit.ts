@@ -58,6 +58,7 @@ function helpLines(): string[] {
 		`       내 스킬: ${A}/skills/<이름>/SKILL.md (skill-creator 에게 "○○ 스킬 만들어줘")`,
 		`       내 hook: ${A}/extensions/my-<이름>.ts (hook-creator 에게 "○○할 때 △△하는 hook 만들어줘")`,
 		` 지침  ${A}/AGENTS.md (공통), 프로젝트 폴더의 AGENTS.md (/init 으로 초안) · /remember <내용> 한 줄 더하기`,
+		" 위키  /wiki (상태) · /wiki init 으로 만들기 · ingest <raw/ 파일> · ask <질문> · save · lint (Obsidian 으로 보기)",
 	];
 	if (bridge) {
 		lines.push(

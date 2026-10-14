@@ -121,7 +121,7 @@ echo "[update] 설정 반영: bash $PI_HOME/install.sh $PROFILE"
 echo
 bash "$PI_HOME/install.sh" "$PROFILE" || echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 판: $OLD)" >&2
 # 예전 판으로 되돌린 경우 그 판의 install.sh 는 새 판에만 있던 확장을 치우지 못하므로 여기서도 (키트가 낸 적 있는 이름만, 옮겨 둠)
-KIT_EXT="copilot-session.ts jupyter.ts guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts lib/shell.ts lib/relay.ts lib/paths.ts"
+KIT_EXT="copilot-session.ts jupyter.ts guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
 for f in $KIT_EXT; do
   [ -e "$AGENT_DIR/extensions/$f" ] || continue
   { [ -e "$PI_HOME/profiles/common/agent-template/extensions/$f" ] || [ -e "$PI_HOME/profiles/$PROFILE/agent-template/extensions/$f" ]; } && continue

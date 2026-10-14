@@ -31,7 +31,7 @@ for T in "$PI_HOME/profiles/common/agent-template" "$TEMPLATE"; do
 done
 # 이 판에 없는 키트 확장은 치운다 (pi 는 extensions 의 .ts 를 모두 불러오므로 이름이 바뀌거나 빠진 확장이 남으면 함께 돎).
 #  키트가 낸 적이 있는 이름만 (직접 만든 확장은 그대로). 지우지 않고 extensions.removed/ 로 옮김. 확장을 새로 내면 이 목록에 더할 것
-KIT_EXT="copilot-session.ts jupyter.ts guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts lib/shell.ts lib/relay.ts lib/paths.ts"
+KIT_EXT="copilot-session.ts jupyter.ts guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
 for f in $KIT_EXT; do
   [ -e "$AGENT_DIR/extensions/$f" ] || continue
   { [ -e "$PI_HOME/profiles/common/agent-template/extensions/$f" ] || [ -e "$TEMPLATE/extensions/$f" ]; } && continue
