@@ -15,7 +15,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -32,6 +32,13 @@ export interface Config {
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 export const configFile = () => join(agentDir(), "wiki.json");
 export const defaultDir = (name: string) => join(homedir(), "pi-wiki", name);
+/** /wiki init 에 준 폴더: ~ 는 홈, 상대 경로는 지금 폴더 기준 (설정에는 전체 경로로 남김). 비었으면 "" */
+export function wikiDir(arg: string, cwd = process.cwd()): string {
+	const s = arg.trim().replace(/^["']|["']$/g, "");
+	if (!s) return "";
+	if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) return join(homedir(), s.slice(1));
+	return isAbsolute(s) ? s : resolve(cwd, s);
+}
 export const slash = (p: string) => p.replace(/\\/g, "/");
 /** 중계 서버(Copilot·사내AI)로 쓰는 설정인지 (models.json 에 127.0.0.1:8765·8766). 그때만 wiki_write 설명에 중계 서버의 '@tool' 글 형식을 적는다
  *  (API 로 바로 쓰는 모델은 보통의 도구 호출을 쓴다. 그 형식을 보면 도구를 부르지 않고 글로만 쓸 수 있음) */
@@ -774,14 +781,14 @@ export default function (pi: ExtensionAPI) {
 			const notify = (m: string, level = "info") => ctx.ui.notify(m, level);
 			if (sub === "init") {
 				const name = rest[0] || "모델운영";
-				const root = rest.slice(1).join(" ").trim() || cfg.wikis[name] || defaultDir(name);
+				const root = wikiDir(rest.slice(1).join(" ")) || cfg.wikis[name] || defaultDir(name);
 				const made = await locked(() => initWiki(root, name));
 				cfg.wikis[name] = slash(root);
 				cfg.active = name;
 				writeConfig(cfg);
 				applyTools(true);
 				status(ctx);
-				return notify(`위키 '${name}' 를 켰습니다: ${slash(root)}${made.length ? ` (만듦: ${made.join(", ")})` : ""}. Obsidian 에서 이 폴더를 보관소(vault)로 열면 됩니다`);
+				return notify(`위키 '${name}' 를 켰습니다: ${slash(root)}${made.length ? ` (만듦: ${made.join(", ")})` : ""}. Obsidian 같은 마크다운 편집기로 이 폴더를 열어 보면 됩니다 (Obsidian 은 보관소(vault)로 열기)`);
 			}
 			if (sub === "use") {
 				if (!cfg.wikis[arg]) return notify(`등록되지 않은 위키입니다: ${arg || "(이름 없음)"}. 있는 위키: ${Object.keys(cfg.wikis).join(", ") || "없음"}`, "warning");

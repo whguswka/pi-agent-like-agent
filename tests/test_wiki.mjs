@@ -1,8 +1,8 @@
 // LLM 위키(profiles/common/agent-template/extensions/wiki.ts) 단위 테스트
 // 사용법: node tests/test_wiki.mjs   (저장소의 runtime/node_modules/jiti 로 .ts 를, typebox 는 pi 처럼 runtime 의 것으로)
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "../runtime/node_modules/jiti/lib/jiti.mjs";
 
@@ -127,6 +127,10 @@ writeFileSync(mj, '{"providers": {"vllm": {"baseUrl": "http://10.0.0.5:8000/v1"}
 const viaApi = w.isBridge(mj);
 writeFileSync(mj, '{"providers": {"inhouse": {"baseUrl": "http://127.0.0.1:8766/v1"}}}');
 check("중계 서버 설정일 때만 '@tool' 글 형식 안내 (API 모델·models.json 없음은 아님)", !viaApi && w.isBridge(mj) && !w.isBridge(join(tmp, "없음.json")));
+check("/wiki init 의 폴더: ~ 는 홈, 상대 경로는 지금 폴더 기준, 전체 경로는 그대로, 비면 \"\"",
+	w.wikiDir("~/위키/가") === join(homedir(), "위키/가") && w.wikiDir(" ~ ") === join(homedir(), "") && w.wikiDir("rel/나", tmp) === resolve(tmp, "rel/나")
+	&& w.wikiDir(tmp) === tmp && w.wikiDir(`"${tmp}"`) === tmp && w.wikiDir("  ") === "",
+	[w.wikiDir("~/위키/가"), w.wikiDir("rel/나", tmp)]);
 
 // 규모: 500쪽
 const big = join(tmp, "큰위키");
