@@ -33,6 +33,15 @@ const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi",
 export const configFile = () => join(agentDir(), "wiki.json");
 export const defaultDir = (name: string) => join(homedir(), "pi-wiki", name);
 export const slash = (p: string) => p.replace(/\\/g, "/");
+/** 중계 서버(Copilot·사내AI)로 쓰는 설정인지 (models.json 에 127.0.0.1:8765·8766). 그때만 wiki_write 설명에 중계 서버의 '@tool' 글 형식을 적는다
+ *  (API 로 바로 쓰는 모델은 보통의 도구 호출을 쓴다. 그 형식을 보면 도구를 부르지 않고 글로만 쓸 수 있음) */
+export function isBridge(file = join(agentDir(), "models.json")): boolean {
+	try {
+		return /127\.0\.0\.1:876[56]/.test(readFileSync(file, "utf8"));
+	} catch {
+		return false;
+	}
+}
 
 export function readConfig(file = configFile()): Config {
 	try {
@@ -736,8 +745,8 @@ export default function (pi: ExtensionAPI) {
 		label: "위키 쓰기",
 		description:
 			"위키 페이지 쓰기 (pages/ 아래만, 여러 페이지를 한 번에). text 에 페이지마다 '=== pages/<분류>/<제목>.md' 줄, 이어서 머리말(--- title / summary / type / sources ---)과 본문. " +
-			"링크는 [[페이지 제목]]. 목록(index.md)과 기록(log.md)은 자동. op(ingest·query·lint·note)와 title 은 기록에 남는다. " +
-			"이스케이프 없이 ```text 블록에 '@tool wiki_write op=ingest title=\"제목\"' 줄 다음에 text 를 이어 써도 된다",
+			"링크는 [[페이지 제목]]. 목록(index.md)과 기록(log.md)은 자동. op(ingest·query·lint·note)와 title 은 기록에 남는다." +
+			(isBridge() ? " 이스케이프 없이 ```text 블록에 '@tool wiki_write op=ingest title=\"제목\"' 줄 다음에 text 를 이어 써도 된다" : ""),
 		parameters: Type.Object({
 			text: Type.String({ description: "'=== pages/<분류>/<제목>.md' 줄로 나눈 페이지들 (머리말 포함)" }),
 			op: Type.Optional(Type.String({ description: "ingest | query | lint | note" })),

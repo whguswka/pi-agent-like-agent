@@ -122,6 +122,11 @@ w.writeConfig({ wikis: { 모델운영: root }, active: "모델운영", auto: "as
 check("설정 읽고 쓰기", JSON.stringify(w.readConfig(cf)) === JSON.stringify({ wikis: { 모델운영: root }, active: "모델운영", auto: "ask" }));
 writeFileSync(cf, "{ 틀린 JSON");
 check("설정 파일이 틀리면 꺼진 상태로", w.readConfig(cf).active === "" && w.readConfig(cf).auto === "write");
+const mj = join(tmp, "models.json");
+writeFileSync(mj, '{"providers": {"vllm": {"baseUrl": "http://10.0.0.5:8000/v1"}}}');
+const viaApi = w.isBridge(mj);
+writeFileSync(mj, '{"providers": {"inhouse": {"baseUrl": "http://127.0.0.1:8766/v1"}}}');
+check("중계 서버 설정일 때만 '@tool' 글 형식 안내 (API 모델·models.json 없음은 아님)", !viaApi && w.isBridge(mj) && !w.isBridge(join(tmp, "없음.json")));
 
 // 규모: 500쪽
 const big = join(tmp, "큰위키");

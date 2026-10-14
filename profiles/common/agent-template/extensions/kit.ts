@@ -217,7 +217,9 @@ export default function (pi: ExtensionAPI) {
 		return ctx.reload();
 	}
 	pi.registerCommand("doctor", {
-		description: "상태 요약 (판 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그). 문제가 생기면 이 화면을 찍어 보내 주세요",
+		description: isBridge()
+			? "상태 요약 (판 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그). 문제가 생기면 이 화면을 찍어 보내 주세요"
+			: "상태 요약 (판 번호, pi 폴더, Node). 문제가 생기면 이 화면을 찍어 보내 주세요",
 		handler: async (_args, ctx) => {
 			if (shown === "doctor") return show(ctx, "doctor", undefined);
 			ctx.ui.notify("상태를 확인하는 중입니다 (몇 초 걸림)...", "info");
