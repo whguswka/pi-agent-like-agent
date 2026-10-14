@@ -23,6 +23,13 @@ check("머리말이 없으면 ok=false, 본문 그대로", !w.parseFrontmatter("
 check("파일 이름: 못 쓰는 문자는 띄어쓰기로", w.pageName('A/B: "C" #1 [x]?') === "A B C 1 x");
 check("링크: [[이름]], [[이름|글]], [[이름#제목]], ![[그림]]",
 	JSON.stringify(w.wikilinks("[[가]] [[나|보일 글]] [[다#절]] ![[그림.png]] `x`")) === JSON.stringify(["가", "나", "다", "그림.png"]), w.wikilinks("[[가]] [[나|보일 글]] [[다#절]] ![[그림.png]]"));
+const q = w.quoteMeta("---\ntitle: 메모리 지표\nsummary: 지표: 정의와 기준값 #1\ntype: metric\nsources: [raw/a.md]\n---\n본문 summary: x\n");
+check("Obsidian 용 따옴표: ': '·' #' 이 든 summary 만, 목록·본문은 그대로",
+	q === "---\ntitle: 메모리 지표\nsummary: '지표: 정의와 기준값 #1'\ntype: metric\nsources: [raw/a.md]\n---\n본문 summary: x\n", q);
+check("따옴표: ' 가 들어 있으면 \"...\" 로, 이미 따옴표면 그대로, 풀면 원래 글",
+	w.parseFrontmatter(w.quoteMeta("---\ntitle: 운영: 'A' 모델\nsummary: \"이미: 따옴표\"\n---\n")).meta.title === "운영: 'A' 모델"
+	&& w.quoteMeta("---\nsummary: \"이미: 따옴표\"\n---\n").includes("summary: \"이미: 따옴표\"")
+	&& w.parseFrontmatter("---\nsummary: '지표: 기준 ''A'''\n---\n").meta.summary === "지표: 기준 'A'");
 const b = w.splitBundle("=== pages/model/A.md\n---\ntitle: A\n---\n본문 A\n\n=== pages/data/B.md\n---\ntitle: B\n---\nB\n");
 check("여러 페이지 나누기: '=== 경로' 줄", b.length === 2 && b[0].path === "pages/model/A.md" && b[0].content.startsWith("---\ntitle: A") && b[1].content.endsWith("B\n"), b);
 check("쓸 수 있는 곳: pages/ 아래 .md 만",
@@ -52,6 +59,9 @@ let r = w.applyWrite(root, "모델운영", [
 check("여러 페이지를 한 번에 씀", r.written.length === 2 && existsSync(join(root, "pages/model/수요 예측 모델.md")), r);
 check("새 페이지는 파일 이름을 제목과 같게", existsSync(join(root, "pages/metric/메모리 지표.md")) && !existsSync(join(root, "pages/metric/memory.md")) && r.warnings.some((x) => x.includes("제목과 같게")), r);
 check("updated 를 적음", read(join(root, "pages/metric/메모리 지표.md")).includes("updated: 2026-10-14"));
+const rq = w.applyWrite(root, "모델운영", `=== pages/metric/오차 지표.md\n---\ntitle: 오차 지표\nsummary: 지표: MAPE 기준 10% #주간\ntype: metric\n---\n본문\n`, "note", "", "2026-10-14");
+check("쓸 때 summary 를 따옴표로 (Obsidian 이 머리말을 버리지 않게), 목록에는 원래 글",
+	read(join(root, "pages/metric/오차 지표.md")).includes("summary: '지표: MAPE 기준 10% #주간'") && read(join(root, "index.md")).includes("- [[오차 지표]] — 지표: MAPE 기준 10% #주간"), rq);
 let index = read(join(root, "index.md"));
 check("목록: 분류 순서와 이름표, [[링크]] — 요약", index.indexOf("## 개요") < index.indexOf("## 모델") && index.indexOf("## 모델") < index.indexOf("## 지표")
 	&& index.includes("- [[수요 예측 모델]] — 수요 예측 모델 요약") && index.includes("- [[메모리 지표]] — 메모리 지표 요약"), index);

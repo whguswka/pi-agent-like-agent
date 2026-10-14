@@ -55,7 +55,19 @@ export function writeConfig(c: Config, file = configFile()) {
 // ---------------------------------------------------------------------------
 
 export type Meta = Record<string, string | string[]>;
-const unquote = (s: string) => s.trim().replace(/^(["'])(.*)\1$/, "$2");
+/** YAML 따옴표 풀기: '...' (안의 '' 는 '), "..." (JSON 과 같은 이스케이프) */
+const unquote = (s: string) => {
+	const t = s.trim();
+	if (/^'.*'$/.test(t)) return t.slice(1, -1).replace(/''/g, "'");
+	if (/^".*"$/.test(t)) {
+		try {
+			return JSON.parse(t);
+		} catch {
+			return t.slice(1, -1);
+		}
+	}
+	return t;
+};
 const str = (v: unknown) => (Array.isArray(v) ? v.join(", ") : typeof v === "string" ? v : "");
 const list = (v: unknown): string[] => (Array.isArray(v) ? v : typeof v === "string" && v ? [v] : []);
 
@@ -373,6 +385,18 @@ export function checkWritePath(path: string): string | null {
 	return null;
 }
 
+/** Obsidian(엄격한 YAML)이 머리말을 받도록: title·summary 값에 ': '·' #' 이 있거나 특수 문자로 시작하면 따옴표로 감싼다 */
+export function quoteMeta(content: string): string {
+	const m = /^(﻿?---[ \t]*\r?\n)([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))/.exec(content);
+	if (!m) return content;
+	const head = m[2].replace(/^(title|summary)[ \t]*:[ \t]*(.*?)[ \t]*$/gm, (all: string, k: string, v: string) => {
+		if (!v || /^'.*'$|^".*"$/.test(v)) return all;
+		if (!/: |:$|\s#|^[[\]{}#&*!|>'"%@`,]|^[-?:](\s|$)/.test(v)) return all;
+		return `${k}: ${v.includes("'") ? JSON.stringify(v) : `'${v}'`}`;
+	});
+	return m[1] + head + m[3] + content.slice(m[0].length);
+}
+
 /** 머리말의 updated 를 오늘로 (없으면 닫는 --- 앞에 넣음) */
 export function stampUpdated(content: string, date: string): string {
 	const m = /^(﻿?---[ \t]*\r?\n)([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))/.exec(content);
@@ -434,7 +458,7 @@ export function applyWrite(root: string, name: string, text: string, op = "note"
 		}
 		backup(root, rel, date);
 		mkdirSync(dirname(join(root, rel)), { recursive: true });
-		writeFileSync(join(root, rel), stampUpdated(it.content, date));
+		writeFileSync(join(root, rel), stampUpdated(quoteMeta(it.content), date));
 		res.written.push(rel);
 		res.names.push(baseOf(rel));
 		pages = loadPages(root);
