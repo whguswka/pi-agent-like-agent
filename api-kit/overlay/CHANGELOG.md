@@ -6,7 +6,7 @@
 ## 2026-10-15.1
 Kubeflow 노트북(code-server·VS Code 웹) 전용으로 바꿨습니다. 바탕: pi-agent-like-agent 2026-10-14.2 와 그 뒤의 공용 확장 수정(fcc4324, 8299a37).
 - 설치는 노트북 터미널에서 `bash ~/tools/pi/install.sh` 하나 (PC 의 설정, cmd·PowerShell 실행기, VS Code 데스크톱의 내장 Node 로 돌리는 부분을 뺌).
-- Node 는 code-server 에 든 것(`/usr/lib/code-server/lib/node`)을 먼저 찾아 씁니다. `check-node.sh` 가 Node 를 못 찾으면 노트북 안의 흔한 곳에서 찾은 node 를 보여 줍니다.
+- Node 를 따로 설치하지 않아도 code-server 에 든 것(`/usr/lib/code-server/lib/node`)을 찾아 씁니다. `check-node.sh` 가 Node 를 못 찾으면 노트북 안의 흔한 곳에서 찾은 node 를 보여 줍니다.
 - code-server 터미널에서 다르게 쓰는 키(`Ctrl+P`·`Ctrl+J`·`Ctrl+W`, `Shift+Enter` 줄바꿈 설정)를 README 3-3 에 적었습니다.
 - `update.sh`: zip 을 풀 프로그램이 없으면 GitHub 의 `tar.gz` 도 받습니다.
 - LLM 위키: `/wiki init 이름 ~/폴더` 의 `~` 를 홈으로 (전에는 지금 폴더 안에 `~` 폴더를 만들었음).
