@@ -43,7 +43,7 @@ MSG_KINDS = {"throttle", "privacy", "login", "config", "browser", "tab", "no_rep
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-13.1"
+RELAY_VERSION = "2026-10-14.1"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -326,13 +326,18 @@ def render_tools(tools):
     return "\n".join(lines) if lines else "(no tools)"
 
 
+# 도구 결과를 줄인 자리에 적는 안내: 모델이 잘린 내용이 필요하면 좁혀서 다시 보게 한다
+OMIT_HINT = "필요한 부분은 grep·sed -n·tail 로 좁혀 다시 실행하거나, 파일이면 read 의 offset·limit 으로 나눠 읽으세요"
+
+
 def truncate_middle(text, limit):
+    """limit 자를 넘으면 앞(60%)과 끝만 남기고 가운데를 줄인다 (pi 가 결과 끝에 붙이는 'Full output: 파일' 안내는 남음)"""
     if len(text) <= limit:
         return text
     head = int(limit * 0.6)
-    tail = max(0, limit - head - 60)
+    tail = max(0, limit - head - len(OMIT_HINT) - 30)
     omitted = len(text) - head - tail
-    return text[:head] + "\n...[{} chars omitted]...\n".format(omitted) + (text[-tail:] if tail else "")
+    return text[:head] + "\n...[{}자 생략: {}]...\n".format(omitted, OMIT_HINT) + (text[-tail:] if tail else "")
 
 
 class Renderer:

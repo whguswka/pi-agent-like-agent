@@ -589,6 +589,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | `max_questions_per_minute` | `0` | 분당 질문 수 제한 (0 이면 끔) |
 | `max_questions_per_chat` | `100` | 이만큼 질문하면 새 대화로 넘어감 |
 | `max_chars` | `10000` | Copilot 메시지 하나의 최대 글자 수. 넘으면 나눠 보내고 조각마다 왕복이 한 번 더 듭니다 (`diag.py --input-limit` 로 확인) |
+| `tool_result_chars` | `6000` | 명령 결과·파일 내용 하나를 Copilot 에 보낼 최대 글자 수. 넘으면 앞·끝만 남기고 가운데를 줄인 뒤 그 자리에 다시 보는 방법을 적음 (pi 도 명령 결과는 끝 50KB 만 넘기고 전체는 `Full output:` 파일로). 늘리려면 `max_chars` 보다 작게 (예: 8000) |
 | `max_tabs` | `1` | 2 이상이면 pi 를 여러 개 동시에 쓸 때 pi 마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶, [8장](#8-주의할-점)) |
 | `multi_read` | `false` | `true` 면 Copilot 이 파일 읽기(read)를 여러 개 한 번에 요청할 수 있음 (왕복 줄이기, 시험 기능). 고치기·명령 실행은 그대로 하나씩 |
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 |
@@ -617,7 +618,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 |---|---|
 | `pi: command not found` | 새 Git Bash 창을 여세요. 그래도 안 되면 `bash ~/tools/pi/install.sh pc` 를 다시 실행 (Git Bash 창이 읽는 파일에 PATH 를 넣음). 지금 창에서 바로 쓰려면 `export PATH="$HOME/tools/pi/bin:$PATH"` |
 | Node 를 찾지 못했다는 메시지 | `bash ~/tools/pi/check-node.sh` 결과대로 준비 ([2-2](#2-2-nodejs-확인)) |
-| VS Code 터미널에서 일하는 동안 스크롤이 위로 감겼다가 다시 내려옴 | 대화가 길 때 기본(regular) 화면이 대화 전체를 다시 출력하는 것입니다. 이 판부터 VS Code 터미널에서는 fullscreen 화면으로 켭니다 (cmd·PowerShell 의 `pi.cmd` 는 `pi.cmd --tui-mode fullscreen`). 원인 기록: `PI_TUI_DEBUG_REDRAW=1 pi` 뒤 `tail ~/.pi/agent/pi-tui-debug.log` |
+| VS Code 터미널에서 일하는 동안 스크롤이 위로 감겼다가 다시 내려옴 | 대화가 길 때 기본(regular) 화면이 대화 전체를 다시 출력하는 것입니다. 2026-10-14.1 부터 VS Code 터미널에서는 fullscreen 화면으로 켭니다 (cmd·PowerShell 의 `pi.cmd` 는 `pi.cmd --tui-mode fullscreen`). 원인 기록: `PI_TUI_DEBUG_REDRAW=1 pi` 뒤 `tail ~/.pi/agent/pi-tui-debug.log` |
 | 시작 화면에 `Warning: fd not found` / `ripgrep not found` | 무시해도 됩니다. 기본 도구(명령 실행, 파일 읽기·쓰기·고치기)는 이 둘 없이 동작하고, 입력창의 `@` 파일 목록도 fd 없이 나옵니다 |
 | `브라우저 원격 디버깅 포트(9222)에 연결할 수 없습니다` | 전용 창이 꺼져 있습니다. `pi` 를 다시 실행하면 다시 띄웁니다 (또는 `start-chrome.cmd`). 평소 쓰는 Chrome 창으로는 연결되지 않습니다 |
 | `Copilot 탭을 찾지 못했습니다` | 전용 창에 Copilot 탭이 열려 있고 로그인돼 있는지 확인 |

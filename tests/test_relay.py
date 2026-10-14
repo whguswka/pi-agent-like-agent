@@ -1083,5 +1083,13 @@ check("4MB(시험은 500바이트)를 넘으면 하나 전 것(.1)으로 돌림,
 check("답 모양: ``` 짝이 안 맞으면 표시 (열린 채 끝남)", _E.reply_shape("```python\nprint(1)\n")["odd_fences"]
       and not _E.reply_shape("```\nx\n```")["odd_fences"])
 
+# 도구 결과 줄이기 (tool_result_chars): 한도 안으로, 줄인 자리에 다시 보는 방법, 끝의 pi 안내(Full output)는 남김
+_long = "A" * 5000 + "MIDDLE" + "B" * 5000 + "\n\n[Showing lines 1-9 of 9 (50.0KB limit). Full output: C:/tmp/pi-bash-x.log]"
+_cut = relay.truncate_middle(_long, 6000)
+check("도구 결과 줄이기: 6000자 안, 줄인 자리에 다시 보는 방법, 끝의 Full output 안내는 남음",
+      len(_cut) <= 6000 and "자 생략: " in _cut and "offset·limit" in _cut and "MIDDLE" not in _cut
+      and _cut.endswith("Full output: C:/tmp/pi-bash-x.log]") and _cut.startswith("A" * 3600), len(_cut))
+check("도구 결과 줄이기: 한도 안이면 그대로", relay.truncate_middle("짧은 결과", 6000) == "짧은 결과")
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

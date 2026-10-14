@@ -7,6 +7,18 @@
 - **예전 판의 zip**(되돌리기 등)은 GitHub 저장소의 **Tags** 에서 받습니다. 판을 낸 커밋마다 `v<판 번호>` 태그가 있고, 그 판의 zip 은 같은 업데이트 명령으로 깝니다 (`Z=` 에 받은 파일 이름).
 - 판을 낸 뒤 문서만 고친 커밋은 판 번호를 올리지 않고, 다음 판에 함께 적습니다.
 
+## 2026-10-14.1 (중계 서버 2026-10-14.1)
+- **hook 만들기 스킬 `hook-creator`**: "명령 실행 전에 ○○ 막아줘", "작업이 끝나면 ○○ 기록해줘" 처럼 부탁하면 pi 의 hook(확장 파일 `~/.pi/agent/extensions/my-<이름>.ts`)을 만들고
+  `/reload` 로 적용하게 안내합니다 ([README 6장](README.md#hook-확장-파일)).
+  - 키트 설정으로 되는 일(위험 명령 확인 `guard_patterns`, 끝 알림 `notify_after_seconds`)이면 hook 대신 설정을 알려 줍니다.
+  - 예 6개(명령 기록, 파일 보호, 결과에 안내 덧붙이기, 팀 규칙 파일, 입력 바꾸기, 끝날 때 기록)는 `~/.pi/agent/skills/hook-creator/examples.md` 에 있습니다. `my-` 로 시작하는 확장은 업데이트해도 그대로 남습니다.
+- **VS Code 터미널에서는 fullscreen 화면**: 대화가 길면 기본 화면은 다시 그릴 때마다 대화 전체(수천 줄)를 다시 출력해서, VS Code 터미널에서는 일하는 동안 스크롤이 위로 감겼다 내려왔습니다.
+  이제 VS Code 터미널에서 `pi` 를 켜면 대화 기록을 pi 화면 안에서 스크롤하는 fullscreen 화면이 됩니다 (마우스 휠·`PageUp`/`PageDown`, 끌어서 고르면 복사, `Ctrl+F` 찾기).
+  - 직접 `--tui-mode` 를 주거나 `/settings` 에서 화면 방식을 고른 경우, Git Bash 창 등 다른 터미널은 그대로입니다. 예전 화면은 `pi --tui-mode regular`.
+- **잘린 명령 결과**: Copilot·사내AI 에 보내는 명령 결과·파일 내용이 `tool_result_chars`(6000자)를 넘어 가운데를 줄일 때, 그 자리에 다시 보는 방법(좁혀 다시 실행, read 의 offset·limit)을 적습니다.
+  예전에는 `...[N chars omitted]...` 만 적었습니다. 잘리는 곳과 늘리는 법은 [README 10장](README.md#10-설정)의 `tool_result_chars`.
+- 할 일: VS Code 용으로 `~/.bashrc` 에 `alias pi="pi --tui-mode fullscreen"` 줄을 넣었다면 지워도 됩니다 (그대로 둬도 같음).
+
 ## 2026-10-13.1 (중계 서버 2026-10-13.1)
 - **Copilot 모델 메뉴 이름 바뀜**: GPT › GPT-6.1 Sol, Claude › Sonnet 5 · Sonnet 5.5 · Opus 5.5 를 고릅니다 ([README 4장](README.md#4-모델-고르기)).
   - 기본 모델 id 를 `gpt-6.0-sol` 에서 `gpt-6.1-sol` 로 바꿨습니다. pi 화면 아래 상태줄에는 모델 이름이 아니라 id 가 보이기 때문입니다.
