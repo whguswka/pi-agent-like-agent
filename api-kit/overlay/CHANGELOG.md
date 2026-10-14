@@ -11,6 +11,8 @@ Kubeflow 노트북(code-server·VS Code 웹) 전용으로 바꿨습니다. 바�
 - `update.sh`: zip 을 풀 프로그램이 없으면 GitHub 의 `tar.gz` 도 받습니다.
 - LLM 위키: `/wiki init 이름 ~/폴더` 의 `~` 를 홈으로 (전에는 지금 폴더 안에 `~` 폴더를 만들었음).
 - 문서: 프록시가 있는 노트북에서 LLM 주소를 `no_proxy` 에 넣는 법, 클러스터 안 서비스 주소.
+- 확인한 환경: Kubeflow code-server 노트북 4.93.1 (VS Code 1.93, Node 20.15.1 호환 모드)과 4.121 (VS Code 1.121, Node 22.22.1).
+  설치·업데이트(zip, tar.gz), 새 터미널의 PATH, `/kit`·`/doctor`·위키·hook 을 가짜 LLM 서버로, code-server 터미널의 키(3-3)를 화면에서 확인했습니다. 실제 vLLM 으로는 돌려 보지 않았습니다.
 - 할 일: 2026-10-14.2 를 깔았다면 `bash ~/tools/pi/update.sh <새 zip>` 뒤 새 터미널. 설정(`models.json` 등)은 그대로입니다.
 
 ## 2026-10-14.2

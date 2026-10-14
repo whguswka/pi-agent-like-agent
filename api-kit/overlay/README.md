@@ -166,7 +166,9 @@ code-server(VS Code 웹)는 브라우저 안에서 돌기 때문에, 몇몇 키�
      "when": "terminalFocus"
    }
    ```
+- 저장한 뒤에도 `Shift+Enter` 가 바로 보내면 브라우저 탭을 새로 고칩니다 (브라우저의 새로 고침 단추. 켜 둔 pi 는 그대로 이어집니다).
 - 이 설정은 code-server 의 사용자 설정 폴더(홈 아래)에 남습니다. 그 뒤로 bash 같은 다른 프로그램에서 `Shift+Enter` 를 누르면 글자 몇 개가 들어갈 수 있습니다.
+- VS Code 1.109 이후 판(예: code-server 4.121)은 이 설정 없이도 `Shift+Enter` 로 줄이 바뀝니다.
 - 긴 지시는 파일에 적어 두고 `@파일` 로 보내도 됩니다.
 - VS Code 가 가져가는 키를 터미널로 보내려면 설정의 `terminal.integrated.sendKeybindingsToShell` 을 켭니다 (그동안 터미널 안에서는 VS Code 단축키가 듣지 않음). 브라우저가 가져가는 키(`Ctrl+W` 등)는 그래도 안 됩니다.
 
