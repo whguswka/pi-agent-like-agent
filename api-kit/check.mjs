@@ -57,7 +57,7 @@ for (const p of surface) {
 }
 // API 판은 Kubeflow 노트북(Linux) 전용: 사람이 읽는 글과 실행기·설치 스크립트에 Windows PC 안내가 없어야 함
 // (CHANGELOG 의 지난 판 항목, 원래 키트와 같은 Node 탐색 스크립트(find-node.sh 등)는 뺌)
-const WIN = /Git Bash|PowerShell|pi\.cmd|Code\.exe|cygpath|MINGW|winpty|C:\/|%LOCALAPPDATA%|install\.sh pc|Windows/;
+const WIN = /Git Bash|PowerShell|pi\.cmd|Code\.exe|cygpath|MINGW|winpty|\b[A-Z]:[\/\\]|%LOCALAPPDATA%|install\.sh pc|Windows|\/\/서버/;
 const winSurface = surface.filter((p) => /^(README\.md|docs\/.*\.md|skills\/|prompts\/|profiles\/|install\.sh|update\.sh|check-node\.sh|bin\/pi|bin\/kit-config\.sh)$|^(skills|prompts|profiles)\//.test(p));
 for (const p of winSurface)
 	read(p).split(/\r?\n/).forEach((l, i) => {

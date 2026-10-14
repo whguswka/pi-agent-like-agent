@@ -50,6 +50,9 @@
     "from": "Copilot·사내AI 의 보안·개인정보 확인을 피하거나 자동으로 넘기는 hook",
     "to": "LLM 서비스의 보안·개인정보 확인을 피하거나 자동으로 넘기는 hook" },
   { "file": "skills/hook-creator/examples.md",
+    "from": "const RULES_FILE = \"Z:/팀/pi/rules.md\";",
+    "to": "const RULES_FILE = \"/mnt/team/pi/rules.md\";" },
+  { "file": "skills/hook-creator/examples.md",
     "from": "(세션 도중에는 같은 글이므로 Copilot·사내AI 대화를 새로 열지 않는다. 파일을 고친 뒤에는 `/reload`).",
     "to": "(세션 도중에는 같은 글이므로 LLM 서버의 프롬프트 캐시를 깨지 않는다. 파일을 고친 뒤에는 `/reload`)." },
 
