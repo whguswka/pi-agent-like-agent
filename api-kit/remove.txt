@@ -7,4 +7,3 @@ tests/test_unmangle.py
 tests/test_config.py
 docs/vLLM-연결.md
 docs/LLM-위키-설계.md
-api-kit/

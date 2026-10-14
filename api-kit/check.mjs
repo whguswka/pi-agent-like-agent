@@ -32,6 +32,7 @@ for (const line of readFileSync(join(KIT, "remove.txt"), "utf8").split(/\r?\n/))
 	const p = line.trim();
 	if (p && !p.startsWith("#") && existsSync(join(root, p))) errors.push(`남아 있음: ${p}`);
 }
+if (existsSync(join(root, "api-kit"))) errors.push("남아 있음: api-kit/ (.gitattributes 의 export-ignore 확인)");
 
 // 2) 남은 중계 내용
 const TERMS = [
