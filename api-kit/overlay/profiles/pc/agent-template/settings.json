@@ -1,0 +1,5 @@
+{
+  "defaultProvider": "vllm",
+  "defaultModel": "vLLM-에-올린-모델-이름",
+  "enableInstallTelemetry": false
+}

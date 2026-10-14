@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# 설치·업데이트: bash install.sh <pc|jupyter>   (새 판으로 바꾼 뒤에도 다시 실행)
+#  실행권한 부여 + ~/.pi/agent 설정 템플릿 배치 (기존 설정은 유지하고 새 판에 추가된 항목만 넣음) + PATH 등록
+#   pc      : 업무 PC 의 Git Bash 에서 실행
+#   jupyter : Linux 터미널(Kubeflow JupyterLab, code-server 등)에서 실행
+#  LLM 은 둘 다 OpenAI 호환 API (vLLM, Ollama 등). 주소와 모델은 설치한 뒤 ~/.pi/agent/models.json 에 적는다
+set -e
+PI_HOME="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+PROFILE="${1:-}"
+case "$PROFILE" in
+  jupyter|pc) ;;
+  *) echo "사용법: bash install.sh <pc|jupyter>"
+     echo "  pc      : 업무 PC 의 Git Bash"
+     echo "  jupyter : Linux 터미널 (Kubeflow JupyterLab, code-server 등)"
+     exit 1 ;;
+esac
+TEMPLATE="$PI_HOME/profiles/$PROFILE/agent-template"
+chmod +x "$PI_HOME/bin/pi" "$PI_HOME/install.sh" "$PI_HOME/update.sh" "$PI_HOME/check-node.sh" 2>/dev/null || true
+AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+mkdir -p "$AGENT_DIR"
+# 설정 파일은 이미 있으면 유지, 확장(extensions/)은 프로그램이므로 항상 새 것으로
+#  profiles/common: 두 설정 공통 (위험 명령 확인 등), profiles/<설정>: 설정별
+for T in "$PI_HOME/profiles/common/agent-template" "$TEMPLATE"; do
+  [ -d "$T" ] || continue
+  ( cd "$T" && find . -type f | sed 's#^\./##' ) | while IFS= read -r f; do
+    case "$f" in
+      extensions/*) mkdir -p "$(dirname "$AGENT_DIR/$f")"; cp "$T/$f" "$AGENT_DIR/$f"; echo "설치: $AGENT_DIR/$f" ;;
+      *) if [ -e "$AGENT_DIR/$f" ]; then echo "유지: $AGENT_DIR/$f (이미 존재)"
+         else mkdir -p "$(dirname "$AGENT_DIR/$f")"; cp "$T/$f" "$AGENT_DIR/$f"; echo "생성: $AGENT_DIR/$f"; fi ;;
+    esac
+  done
+done
+# 이 판에 없는 키트 확장은 치운다 (pi 는 extensions 의 .ts 를 모두 불러오므로 이름이 바뀌거나 빠진 확장이 남으면 함께 돎).
+#  키트가 낸 적이 있는 이름만 (직접 만든 확장은 그대로). 지우지 않고 extensions.removed/ 로 옮김. 확장을 새로 내면 이 목록에 더할 것
+KIT_EXT="guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
+for f in $KIT_EXT; do
+  [ -e "$AGENT_DIR/extensions/$f" ] || continue
+  { [ -e "$PI_HOME/profiles/common/agent-template/extensions/$f" ] || [ -e "$TEMPLATE/extensions/$f" ]; } && continue
+  mkdir -p "$(dirname "$AGENT_DIR/extensions.removed/$f")" && mv -f "$AGENT_DIR/extensions/$f" "$AGENT_DIR/extensions.removed/$f" \
+    && echo "치움: $AGENT_DIR/extensions/$f (이 판에는 없는 확장 -> extensions.removed/)"
+done
+rmdir "$AGENT_DIR/extensions/lib" 2>/dev/null || true  # 비었으면 (set -e 라서 || true)
+# 이미 있던 설정 파일에는 새 판에 추가된 항목(새 모델 등)만 넣는다. 직접 고친 값과 직접 지운 항목은 그대로 (pi 가 쓰는 Node 로 실행)
+. "$PI_HOME/bin/find-node.sh"
+if PI_MERGE_NODE="$(pi_find_node 2>/dev/null)"; then
+  pi_node_exec "$PI_MERGE_NODE" "$PI_HOME/bin/merge-config.mjs" "$TEMPLATE" "$AGENT_DIR" "$PI_HOME" || echo "참고: 위 설정 파일을 확인해 주세요"
+else
+  echo "참고: Node 를 찾지 못해 기존 설정 파일에 새 항목을 넣지 못했습니다 (Node 를 준비한 뒤 install.sh 를 다시 실행하세요)"
+fi
+# Windows: Git 이 기본 경로가 아니면 settings.json 에 shellPath 지정
+#  - cmd/PowerShell 에서 실행할 때 쓰임 (Git Bash 안에서 실행하면 pi 가 PATH 의 bash.exe 를 찾으므로 없어도 됨)
+#  - Python 없이 처리하고, 실패해도 설치는 계속한다 (python 이 Windows 스토어 바로가기뿐인 PC 대비)
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  if [ ! -e "/c/Program Files/Git/bin/bash.exe" ] && ! grep -q '"shellPath"' "$AGENT_DIR/settings.json" 2>/dev/null; then
+    GIT_BASH="$(cygpath -m /)"; GIT_BASH="${GIT_BASH%/}/bin/bash.exe"  # Git 설치 폴더의 bin/bash.exe (슬래시 경로라 JSON 이스케이프 불필요)
+    [ -e "$GIT_BASH" ] || GIT_BASH="$(cygpath -m /usr/bin/bash.exe)"
+    if sed -i "0,/{/s#{#{\n  \"shellPath\": \"${GIT_BASH//&/\\&}\",#" "$AGENT_DIR/settings.json" 2>/dev/null; then
+      echo "shellPath=$GIT_BASH"
+    else
+      echo "참고: settings.json 에 shellPath 를 넣지 못했습니다 (Git Bash 에서 pi 를 실행하면 영향 없음)"
+    fi
+  fi;;
+esac
+PATH_LINE="export PATH=\"$PI_HOME/bin:\$PATH\""
+# 파일 끝에 PATH 한 줄 더하기 (마지막 줄에 줄바꿈이 없으면 먼저 넣음: 메모장으로 고친 파일이면 앞 줄에 붙어 둘 다 망가짐)
+add_rc_line() { [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ] && echo >> "$1"; echo "$2" >> "$1"; }
+add_path_line() { add_rc_line "$1" "$PATH_LINE"; }
+grep -qF "$PI_HOME/bin" "$HOME/.bashrc" 2>/dev/null || { add_path_line "$HOME/.bashrc"; echo "PATH 추가: ~/.bashrc"; }
+# Windows: 이 창에서만 export 한 PI_NODE(예: portable VS Code 의 Code.exe)로 설치했으면 ~/.bashrc 에도 적는다 (새 창에서도 쓰게).
+#  위에서 실제로 그 Node 를 골랐을 때만, ~/.bashrc 에 PI_NODE 줄이 아직 없을 때만
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  if [ -n "${PI_NODE:-}" ] && [ "${PI_MERGE_NODE:-}" = "$PI_NODE" ] && [[ "$PI_NODE" != *"'"* ]] \
+     && ! grep -q 'PI_NODE' "$HOME/.bashrc" 2>/dev/null; then
+    add_rc_line "$HOME/.bashrc" "export PI_NODE='$PI_NODE'"
+    echo "PI_NODE 고정: ~/.bashrc (export PI_NODE='$PI_NODE', 새 Git Bash 창에서도 이 Node 를 씀)"
+  fi ;;
+esac
+# 로그인 셸(Git Bash 창, JupyterLab 터미널)은 ~/.bash_profile, ~/.bash_login, ~/.profile 중 처음 있는 것만 읽는다
+LOGIN_RC=
+for f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do [ -e "$f" ] && { LOGIN_RC="$f"; break; }; done
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    # Windows Git Bash: 셋 다 없으면 Git 이 첫 창에서 만드는 것과 같은 ~/.bash_profile 을 미리 만든다 (빨간 경고 없이 ~/.bashrc 를 읽게)
+    # 이미 있는데 ~/.bashrc 를 읽지 않으면(conda init 등이 만든 경우) 거기에도 PATH 한 줄
+    if [ -z "$LOGIN_RC" ]; then
+      printf '%s\n' '# generated by Git for Windows' 'test -f ~/.profile && . ~/.profile' 'test -f ~/.bashrc && . ~/.bashrc' > "$HOME/.bash_profile"
+      echo "생성: ~/.bash_profile (Git Bash 창이 ~/.bashrc 를 읽도록)"
+    elif ! grep -q 'bashrc' "$LOGIN_RC" && ! grep -qF "$PI_HOME/bin" "$LOGIN_RC"; then
+      add_path_line "$LOGIN_RC"; echo "PATH 추가: $LOGIN_RC (이 파일이 ~/.bashrc 를 읽지 않아서)"
+    fi ;;
+  *)
+    # Linux: JupyterLab 터미널 등은 로그인 셸(bash -l)이라 ~/.bashrc 를 읽지 않는다 -> 로그인 셸이 읽는 파일(없으면 ~/.profile)에도
+    LOGIN_RC="${LOGIN_RC:-$HOME/.profile}"
+    grep -qF "$PI_HOME/bin" "$LOGIN_RC" 2>/dev/null || { add_path_line "$LOGIN_RC"; echo "PATH 추가: $LOGIN_RC (로그인 셸용)"; } ;;
+esac
+echo
+"$PI_HOME/check-node.sh" || true
+echo
+echo "설치 완료 (판 $(tr -d '\r\n' < "$PI_HOME/VERSION" 2>/dev/null || echo '?')). 새 터미널을 열고 'pi --version' 으로 확인하세요. (지금 터미널에서 바로 쓰려면: export PATH=\"$PI_HOME/bin:\$PATH\")"
+echo "사용법: $PI_HOME/README.md (GitHub 첫 페이지와 같은 내용)"
+if grep -q 'VLLM-서버-주소' "$AGENT_DIR/models.json" 2>/dev/null; then
+  echo "그 다음 LLM API 의 주소와 모델 이름을 $AGENT_DIR/models.json 에 적으세요 (baseUrl, apiKey, models 의 id)."
+  echo "  settings.json 의 defaultModel 도 같은 모델 id 로. 안내: $PI_HOME/docs/API-연결.md"
+fi

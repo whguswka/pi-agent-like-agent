@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# pi launcher (Linux: JupyterLab / code-server 터미널, Windows: Git Bash 공용)
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+PI_HOME="$(cd "$(dirname "$SELF")/.." && pwd)"
+. "$PI_HOME/bin/find-node.sh"
+. "$PI_HOME/bin/kit-config.sh"
+NODE="$(pi_find_node)" || {
+  echo "[pi] 사용할 수 있는 Node.js(20.15 이상)를 찾지 못했습니다. (진단: bash $PI_HOME/check-node.sh)" >&2
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) _ex="C:/경로/Code.exe" ;; *) _ex="/경로/bin/node" ;; esac
+  echo "     node 실행 파일(또는 VS Code 의 Code.exe) 경로를 ~/.bashrc 에 한 번 적으면 새 터미널부터 씁니다:" >&2
+  echo "       echo >> ~/.bashrc; echo 'export PI_NODE=\"$_ex\"' >> ~/.bashrc" >&2
+  exit 1
+}
+[ -n "$PI_DEBUG" ] && echo "[pi] node: $NODE ($(pi_node_exec "$NODE" -v | tr -d '\r'))" >&2
+export PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1
+# pi 확장(kit.ts: /kit, /doctor)이 판 번호·문서·진단 도구를 찾을 pi 폴더
+export PI_KIT_HOME="$(pi_native_path "$PI_HOME")"
+CLI="$PI_HOME/runtime/dist/bundle/cli.js"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  CLI="$(cygpath -w "$CLI")"; URL_BASE="file:///$(cygpath -m "$PI_HOME")" ;;
+*) URL_BASE="file://$PI_HOME" ;;
+esac
+# VS Code 터미널에서는 fullscreen 화면으로 (kit-config.sh 의 pi_tui_args: 직접 --tui-mode 를 줬거나 settings.json 에 tuiMode 가 있으면 그대로)
+if [ -t 0 ] && [ -t 1 ]; then _tui="$(pi_tui_args "$@")"; [ -n "$_tui" ] && set -- "$@" $_tui; fi
+ARGS=()
+RELAY=
+# VS Code 계열 편집기 내장 Node: Node 모드로 실행하고, 하위 프로세스에는 환경변수가 상속되지 않도록 preload 에서 제거
+if pi_is_electron "$NODE"; then
+  export ELECTRON_RUN_AS_NODE=1
+  ARGS+=(--import "$URL_BASE/compat/electron.mjs")
+  # Code.exe 는 GUI 프로그램이라 터미널을 직접 쓰지 못함 -> 대화형 화면(TUI)은 터미널<->파이프 중계로 실행
+  if [ -t 0 ] && [ -t 1 ]; then
+    RELAY=1
+    for a in "$@"; do case "$a" in -p|--print|--mode|--mode=*|--export|--list-models|-h|--help|-v|--version) RELAY= ;; esac; done
+  fi
+fi
+# Node 22.19 미만(20.x 등)이면 호환 레이어를 먼저 로드
+if ! pi_node_ok "$NODE"; then
+  ARGS+=(--import "$URL_BASE/compat/node20.mjs")
+  # cli.js 는 require(esm) 을 써서 Node 20.15~20.18 에서 실패 -> 실제 진입점 cli-runtime.js 를 직접 실행
+  CLI="${CLI%cli.js}cli-runtime.js"
+fi
+if [ -n "$RELAY" ]; then
+  . "$PI_HOME/bin/tty-relay.sh"
+  ARGS+=(--import "$URL_BASE/compat/tty-relay.mjs")
+  pi_tty_relay "$NODE" "${ARGS[@]}" "$CLI" "$@"
+  exit $?
+fi
+# 한 번 묻기(-p/--print): 터미널(키보드)을 입력으로 기다리지 않게 한다 (파이프로 넘긴 입력은 그대로 전달)
+for a in "$@"; do case "$a" in -p|--print) [ -t 0 ] && exec </dev/null; break ;; esac; done
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+  # 구형 mintty 창에서는 node 가 TTY 를 인식 못함 -> winpty 경유 (편집기 내장 Node 는 위의 중계를 쓰므로 제외)
+  if ! pi_is_electron "$NODE" && [ -t 0 ] && [ -t 1 ] && ! "$NODE" -e "process.exit(process.stdin.isTTY&&process.stdout.isTTY?0:1)"; then
+    command -v winpty >/dev/null 2>&1 && exec winpty "$NODE" "${ARGS[@]}" "$CLI" "$@"
+  fi;;
+esac
+if pi_is_electron "$NODE"; then
+  # Code.exe 는 GUI 프로그램이라 터미널의 Ctrl+C 를 받지 못함 -> 이 스크립트가 받아서 끝내 준다 (창을 닫을 때도)
+  "$NODE" "${ARGS[@]}" "$CLI" "$@" <&0 &
+  PI_CHILD=$!
+  trap 'kill "$PI_CHILD" 2>/dev/null' INT TERM HUP
+  wait "$PI_CHILD"; rc=$?
+  while kill -0 "$PI_CHILD" 2>/dev/null; do wait "$PI_CHILD"; rc=$?; done
+  exit "$rc"
+fi
+exec "$NODE" "${ARGS[@]}" "$CLI" "$@"
