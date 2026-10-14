@@ -55,6 +55,15 @@ for (const p of surface) {
 		for (const [re, name] of TERMS) if (re.test(l)) errors.push(`${name}: ${p}:${i + 1}: ${l.trim().slice(0, 140)}`);
 	});
 }
+// API 판은 Kubeflow 노트북(Linux) 전용: 사람이 읽는 글과 실행기·설치 스크립트에 Windows PC 안내가 없어야 함
+// (CHANGELOG 의 지난 판 항목, 원래 키트와 같은 Node 탐색 스크립트(find-node.sh 등)는 뺌)
+const WIN = /Git Bash|PowerShell|pi\.cmd|Code\.exe|cygpath|MINGW|winpty|C:\/|%LOCALAPPDATA%|install\.sh pc|Windows/;
+const winSurface = surface.filter((p) => /^(README\.md|docs\/.*\.md|skills\/|prompts\/|profiles\/|install\.sh|update\.sh|check-node\.sh|bin\/pi|bin\/kit-config\.sh)$|^(skills|prompts|profiles)\//.test(p));
+for (const p of winSurface)
+	read(p).split(/\r?\n/).forEach((l, i) => {
+		if (WIN.test(l)) errors.push(`Windows PC 안내: ${p}:${i + 1}: ${l.trim().slice(0, 140)}`);
+	});
+for (const p of ["bin/pi", "install.sh", "update.sh", "check-node.sh"]) if (!existsSync(join(root, p))) errors.push(`없음: ${p}`);
 
 // 3) 확장
 const SHARED_EXT = ["files.ts", "guard.ts", "kit.ts", "memory.ts", "modes.ts", "notify.ts", "undo.ts", "wiki.ts", "lib/paths.ts", "lib/relay.ts", "lib/shell.ts"];

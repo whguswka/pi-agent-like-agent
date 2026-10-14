@@ -1,17 +1,22 @@
 # LLM API 연결 (models.json)
 
 pi 는 **OpenAI 호환 API**(`/v1/chat/completions`)로 LLM 을 씁니다. vLLM, Ollama, 사내 LLM 게이트웨이처럼 같은 형식이면 됩니다.
-[README 2장](../README.md#2-설치)의 설치를 마친 뒤 이 문서대로 `~/.pi/agent/models.json` 과 `settings.json` 을 고칩니다. 두 설정(`pc`, `jupyter`) 모두 같습니다.
+[README 2장](../README.md#2-설치)의 설치를 마친 뒤 이 문서대로 `~/.pi/agent/models.json` 과 `settings.json` 을 고칩니다.
 
 ## 1. 주소와 모델 이름 확인
-pi 를 쓸 터미널(PC 는 Git Bash, 노트북은 JupyterLab 터미널)에서:
+노트북의 터미널에서:
 ```bash
 curl -s http://VLLM주소:8000/v1/models
 ```
 - 결과의 `"id"` 가 모델 이름입니다 (예: `"id": "Qwen/Qwen3-32B"`). `models.json` 에는 이 이름을 **그대로** 적습니다.
+- 같은 클러스터 안의 서비스면 주소는 보통 `http://<서비스>.<네임스페이스>.svc.cluster.local:<포트>/v1` 입니다 (`kubectl get svc -n <네임스페이스>` 로 이름·포트 확인, 권한이 있을 때).
 - 키를 받아야 하는 서버면: `curl -s -H "Authorization: Bearer <키>" http://VLLM주소:8000/v1/models`
 - 아무것도 나오지 않거나 오류가 나면 pi 도 연결하지 못합니다. 주소·포트, 그 서버로 가는 사내망 경로, 프록시를 확인합니다.
-  프록시를 쓰는 환경이면 사내 주소는 프록시를 거치지 않게 `no_proxy` 에 넣습니다 (예: `export no_proxy="10.0.0.5,$no_proxy"`).
+- **프록시:** pi 는 노트북의 프록시 환경변수를 따릅니다 (`http_proxy`·`https_proxy`·`no_proxy`, 소문자가 있으면 소문자를 먼저 봄). `env | grep -i proxy` 에 값이 있으면 LLM 주소가 `no_proxy` 에 있어야 프록시를 거치지 않습니다.
+  예: `~/.bashrc` 에 아래 한 줄을 넣고 새 터미널 (`.svc.cluster.local` 은 그 이름으로 끝나는 주소 모두, `10.0.0.5` 는 LLM 서버 주소의 예):
+  ```bash
+  export no_proxy="${no_proxy:-$NO_PROXY},.svc.cluster.local,10.0.0.5"; export NO_PROXY="$no_proxy"
+  ```
 
 ## 2. models.json
 `~/.pi/agent/models.json` (설치할 때 만든 틀이 있음) 의 `VLLM-서버-주소`, `vLLM-에-올린-모델-이름` 을 바꿉니다.
@@ -37,7 +42,7 @@ curl -s http://VLLM주소:8000/v1/models
 |---|---|
 | `baseUrl` | 서버 주소 + `/v1` (끝에 `/chat/completions` 는 붙이지 않음) |
 | `api` | `openai-completions` 그대로 |
-| `apiKey` | 키가 없는 서버면 아무 글(`EMPTY`). 키가 있으면 그 값, 또는 파일에 적지 않으려면 `"$VLLM_API_KEY"` 처럼 환경변수 이름 (`~/.bashrc` 에 `export VLLM_API_KEY=...`) |
+| `apiKey` | 키가 없는 서버면 아무 글(`EMPTY`). 키가 있으면 그 값, 또는 파일에 적지 않으려면 `"$VLLM_API_KEY"` 처럼 환경변수 이름 (`~/.bashrc` 에 `export VLLM_API_KEY=...`). 다른 머리글이 더 필요한 게이트웨이면 provider 에 `"headers": { "이름": "값" }` |
 | `compat.supportsDeveloperRole` | `false` 그대로 (vLLM·Ollama 는 `developer` 역할을 모름) |
 | `models[].id` | 1장에서 본 모델 이름 그대로 |
 | `models[].name` | `/model` 목록에 보일 이름 (아무 글) |
@@ -80,7 +85,7 @@ vllm serve <모델> --enable-auto-tool-choice --tool-call-parser <모델에 맞�
   (vLLM 에 `chat_template_kwargs.enable_thinking` 으로 보냄. pi 0.87.1 의 형식이며 실제 서버로는 시험하지 못했습니다).
 
 ## 6. Ollama 로 시험할 때
-Ollama 도 같은 형식(OpenAI 호환 `/v1`)이라 그대로 쓸 수 있습니다. 같은 PC 에서 띄웠으면 주소는 `http://127.0.0.1:11434/v1`.
+Ollama 도 같은 형식(OpenAI 호환 `/v1`)이라 그대로 쓸 수 있습니다. 같은 노트북 안에서 띄웠으면 주소는 `http://127.0.0.1:11434/v1`.
 ```json
 "ollama": {
   "baseUrl": "http://OLLAMA주소:11434/v1",
@@ -96,7 +101,7 @@ Ollama 도 같은 형식(OpenAI 호환 `/v1`)이라 그대로 쓸 수 있습니�
 ## 7. 자주 나는 오류
 | 증상 | 확인할 것 |
 |---|---|
-| `Connection error.` / 연결 시간 초과 | 1장의 `curl` 이 되는지 (주소·포트·사내망 경로·`no_proxy`) |
+| `Connection error.` / 연결 시간 초과 | 1장의 `curl` 이 되는지 (주소·포트·사내망 경로). `curl` 은 되는데 pi 만 안 되면 `no_proxy` (1장의 프록시) |
 | `401` / `Unauthorized` | `apiKey` (환경변수로 적었으면 그 터미널에 값이 있는지 `echo $VLLM_API_KEY`) |
 | `404` / `model ... does not exist` | `models[].id` 가 1장의 `id` 와 글자 하나까지 같은지 |
 | `developer` 역할 오류 | `compat.supportsDeveloperRole` 이 `false` 인지 |

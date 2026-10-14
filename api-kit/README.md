@@ -1,13 +1,13 @@
 # api-kit: API 전용 판 만들기
 
-이 저장소에서 웹 채팅 연결 부분(`copilot/`, PC 설정의 연결용 확장, 실행기의 자동 시작)을 빼고 OpenAI 호환 API(vLLM 등)로 쓰는 부분만 남긴 판,
+이 저장소에서 웹 채팅 연결 부분(`copilot/`, PC 설정, 실행기의 자동 시작)을 빼고 OpenAI 호환 API(vLLM 등)로 쓰는 부분만 Kubeflow 노트북(code-server) 전용으로 남긴 판,
 [pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api) 를 만드는 도구입니다. `.gitattributes` 의 `export-ignore` 로 이 저장소의 zip 에는 들어가지 않습니다.
 
 | 파일 | 내용 |
 |---|---|
 | `make-api-kit.sh` | 만들기: `bash api-kit/make-api-kit.sh <내보낼 폴더> [커밋·태그]` |
 | `remove.txt` | 빼는 경로 |
-| `overlay/` | 통째로 바꿔 넣는 파일 (README, CHANGELOG, docs, `install.sh`, `update.sh`, `bin/pi`, `bin/kit-config.sh`, PC 설정 템플릿) |
+| `overlay/` | 통째로 바꿔 넣는 파일 (README, CHANGELOG, VERSION, docs, `install.sh`, `update.sh`, `check-node.sh`, `bin/pi`, `bin/kit-config.sh`). API 판의 판 번호는 `overlay/VERSION` (원래 키트와 따로) |
 | `overlay.sha256` | overlay 가 대신하는 원래 파일의 sha256. 원래 파일이 바뀌면 만들기가 멈춤 |
 | `edits.json` | 몇 줄만 바꾸는 파일 (스킬 등). 바꿀 글이 정한 횟수만큼 없으면 멈춤 |
 | `apply-edits.mjs`, `check.mjs` | 글 바꾸기, 점검 (남은 연결 내용, 확장 목록, CHANGELOG 항목, 문서 링크) |

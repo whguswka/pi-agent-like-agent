@@ -1,9 +1,15 @@
-# API 판에서 빼는 경로 (웹 채팅 중계와 그 시험, API 판에 맞지 않는 문서). 한 줄에 하나, 폴더는 / 로 끝냄
+# API 판에서 빼는 경로. 한 줄에 하나, 폴더는 / 로 끝냄
+# 웹 채팅 연결과 그 시험, API 판에 맞지 않는 문서
 copilot/
-profiles/pc/agent-template/extensions/
 tests/test_relay.py
 tests/test_noise.py
 tests/test_unmangle.py
 tests/test_config.py
 docs/vLLM-연결.md
 docs/LLM-위키-설계.md
+# Windows PC 용 (API 판은 Kubeflow 노트북 전용): PC 설정, cmd 실행기, VS Code(Code.exe) 내장 Node 로 돌릴 때의 터미널 중계
+profiles/pc/
+bin/pi.cmd
+bin/tty-relay.sh
+compat/electron.mjs
+compat/tty-relay.mjs
