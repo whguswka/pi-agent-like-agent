@@ -3,6 +3,15 @@
 판 번호는 `VERSION` 에 있습니다. 새 판으로 바꾸면(`update.sh`) 끝에 그 판의 항목을 보여 줍니다.
 판마다 바탕이 된 [pi-agent-like-agent](https://github.com/whguswka/pi-agent-like-agent) 의 판을 함께 적습니다.
 
+## 2026-10-16.1
+가벼운 업데이트 zip 을 더했습니다. 바탕: pi-agent-like-agent 2026-10-16.1.
+- **가벼운 업데이트 zip**: 판마다 GitHub 저장소의 **Releases** 에 `pi-agent-like-agent-api-<판>-update.zip` 을 올립니다. pi 본체(`runtime/`, 2.8MB·835개 파일)를 뺀 약 0.4MB 라 반입이 가볍습니다 (전체 zip 은 3.2MB) ([README 7장](README.md#7-새-버전으로-바꾸기)).
+  - `update.sh` 가 지금 깔린 pi 본체가 새 판의 것과 같은지 해시 목록(`docs/runtime-SHA256SUMS.txt`)으로 확인한 뒤 그대로 씁니다. 다르면 아무것도 바꾸지 않고 전체 zip 이 필요하다고 멈춥니다.
+  - 키트 파일은 모두 들어 있어 몇 판을 건너뛰어도 됩니다. pi 본체가 바뀌는 판은 CHANGELOG 와 Releases 에 '전체 zip 필요' 를 적습니다.
+- `update.sh`: 처음 zip 을 풀어 설치한 판에서 바꿀 때 나오던 `.commit: No such file or directory` 줄을 없앴습니다 (동작은 같음).
+- 확인한 환경: 개발 PC 에서 설치·업데이트(전체 zip, 가벼운 zip, tar.gz)를 돌렸습니다. 이번 판은 Kubeflow 노트북에서는 돌려 보지 않았습니다.
+- 할 일: **이 판으로는 전체 zip 으로 바꾸세요** (2026-10-15.x 의 `update.sh` 는 가벼운 zip 을 모름). 다음 판부터는 Releases 의 가벼운 zip 으로 바꿀 수 있습니다.
+
 ## 2026-10-15.2
 LLM 위키에 폴더째 반영을 더했습니다. 바탕: pi-agent-like-agent 2026-10-15.1.
 - **LLM 위키: 폴더째 반영** (`/wiki ingest 폴더`): 그 폴더 아래 모든 단계의 원본을 경로 순(숫자는 크기 순: 1월, 2월, 10월)으로 하나씩 차례로 반영합니다 ([README 5장](README.md#llm-위키-wiki)).

@@ -1,7 +1,7 @@
-# 원래 키트 문서에서 API 판과 짝을 이룬 글의 sha256 앞 12자리 (커밋 a2cc63d0de158c7ef3bf15e39c12ca55d864b015). api-kit/make-api-kit.sh --update-sha 가 적음
+# 원래 키트 문서에서 API 판과 짝을 이룬 글의 sha256 앞 12자리 (커밋 dfedcbb0ce96397983828342e31f203108663180). api-kit/make-api-kit.sh --update-sha 가 적음
 #  'api:바꾸기' 블록 안 글과 'api=' 줄의 원래 키트 쪽 글. 바뀌면 API 판 만들기가 멈춤: API 판 글(조각, api= 뒤)도 고쳐야 하는지 보고 --update-sha
 23a9a8a483a2	docs/반입-검토-요청서.md	바꾸기 제목
-50e52dc77978	docs/반입-검토-요청서.md	api=
+48487625bbdf	docs/반입-검토-요청서.md	api=
 5d0defac120a	docs/반입-검토-요청서.md	api=
 7d136a30ecaf	docs/반입-검토-요청서.md	api=
 9739fe5ecb42	docs/반입-검토-요청서.md	api=
@@ -20,6 +20,7 @@ e6489cdbf645	docs/수동-작업-절차.md	api=
 acc02063b6bd	docs/수동-작업-절차.md	api=
 993fb5296efc	docs/수동-작업-절차.md	api=
 3156304e9b9d	docs/수동-작업-절차.md	api=
+58c350f0ecb8	docs/수동-작업-절차.md	api=
 bbab784fb388	docs/수동-작업-절차.md	api=
 3b0e48a6e7ba	docs/수동-작업-절차.md	api=
 7b78404b947e	docs/수동-작업-절차.md	api=
@@ -97,7 +98,7 @@ e1bbee7ddef4	README.md	api=
 24f0d3ff4d79	README.md	api=
 fe78384f03dc	README.md	바꾸기 6장-앞
 459b79593ec3	README.md	api=
-cf8caa907c17	README.md	바꾸기 7장-방법
+258a43dfa8a5	README.md	바꾸기 7장-방법
 23644d5b7603	README.md	api=
 a4edaaaebb08	README.md	api=
 04484e5e72c4	README.md	바꾸기 8장-파일
@@ -105,4 +106,4 @@ a4edaaaebb08	README.md	api=
 bb8512141232	README.md	바꾸기 8장-끝
 e9144b473784	README.md	api=
 e4aeba6862dd	README.md	바꾸기 9장-표
-e439855219c1	README.md	바꾸기 10장
+09720817d609	README.md	바꾸기 10장

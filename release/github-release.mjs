@@ -30,7 +30,11 @@ const section = (() => {
 		}
 		if (on) out.push(l);
 	}
-	return out.join("\n").trim();
+	// CHANGELOG 의 상대 링크(README.md#… 등)는 Release 페이지에서 깨지므로 그 태그의 저장소 주소로
+	return out
+		.join("\n")
+		.trim()
+		.replace(/\]\((?![a-z]+:|#|\/)([^)\s]+)\)/gi, (_, p) => `](https://github.com/${owner}/${repo}/blob/${tag}/${p})`);
 })();
 let prev = "";
 try {

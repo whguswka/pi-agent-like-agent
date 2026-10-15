@@ -40,7 +40,7 @@ for (const line of readFileSync(join(KIT, "remove.txt"), "utf8").split(/\r?\n/))
 	const p = line.trim();
 	if (p && !p.startsWith("#") && existsSync(join(root, p))) errors.push(`남아 있음: ${p}`);
 }
-if (existsSync(join(root, "api-kit"))) errors.push("남아 있음: api-kit/ (.gitattributes 의 export-ignore 확인)");
+for (const d of ["api-kit", "release"]) if (existsSync(join(root, d))) errors.push(`남아 있음: ${d}/ (.gitattributes 의 export-ignore 확인)`);
 for (const p of files.filter((f) => f.endsWith(".md") && !f.startsWith("runtime/")))
 	read(p).split(/\r?\n/).forEach((l, i) => {
 		if (/<!-- (api[:=]|\/api|조각:)/.test(l)) errors.push(`남은 표시 (assemble.mjs 를 거치지 않음): ${p}:${i + 1}: ${l.trim().slice(0, 140)}`);

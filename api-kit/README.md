@@ -55,6 +55,11 @@
    bash api-kit/make-api-kit.sh ../pi-agent-like-agent-api
    cd ../pi-agent-like-agent-api && git add -A && git commit -m "<판>: ..." && git tag -a v<판> -m <판> && git push origin main && git push origin v<판>
    ```
+5. Release 페이지와 업데이트용 가벼운 zip (원래 키트와 같은 도구, [release/README.md](../release/README.md)):
+   ```bash
+   bash release/update-zip.sh ../pi-agent-like-agent-api v<판> /tmp
+   node release/github-release.mjs ../pi-agent-like-agent-api v<판> /tmp/pi-agent-like-agent-api-<판>-update.zip
+   ```
 - API 판의 `update.sh` 는 zip 안에 `docs/API-연결.md` 가 있어야 그 판의 zip 으로 봅니다 (원래 키트의 zip 을 거절). 이 파일 이름은 바꾸지 마세요.
 - 시험: 내보낸 폴더에서 `node tests/<이름>.mjs`, 임시 HOME 에 `install.sh`, `update.sh --force` (zip 은 `git archive` 로 만들어야 GitHub 의 zip 과 같음: 한글 파일 이름).
 - 커밋하지 않은 변경으로 만들어 보려면 `bash api-kit/make-api-kit.sh /tmp/api-try "$(git stash create)"` (api-kit/ 은 늘 작업 폴더의 것을 씀).
