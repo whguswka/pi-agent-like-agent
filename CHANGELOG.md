@@ -9,6 +9,16 @@
 - 2026-10-14.2 뒤의 판부터 항목 앞에 `[공통]` 또는 `[Copilot]` 을 붙입니다. `[공통]` 은 Kubeflow 노트북용 API 판([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))에도 들어가는 것,
   `[Copilot]` 은 이 판(업무 PC·Copilot)에만 있는 것입니다.
 
+## 2026-10-16.1
+- [공통] **가벼운 업데이트 zip**: 판마다 GitHub 저장소의 **Releases** 에 `pi-agent-like-agent-<판>-update.zip` 을 올립니다.
+  pi 본체(`runtime/`, 2.8MB·835개 파일)를 뺀 약 0.4MB 라 반입이 가볍습니다 (전체 zip 은 3.2MB) ([README 7장](README.md#7-새-버전으로-바꾸기)).
+  - `update.sh` 가 지금 깔린 pi 본체가 새 판의 것과 같은지 해시 목록(`docs/runtime-SHA256SUMS.txt`)으로 확인한 뒤 그대로 씁니다. 다르면 아무것도 바꾸지 않고 전체 zip 이 필요하다고 멈춥니다.
+  - 키트 파일은 모두 들어 있어 몇 판을 건너뛰어도 됩니다. pi 본체가 바뀌는 판은 CHANGELOG 와 Releases 에 '전체 zip 필요' 를 적습니다 (지금까지 pi 본체는 한 번도 바뀌지 않았음).
+  - 처음 설치는 지금처럼 전체 zip (Code > Download ZIP, 또는 Releases 의 `Source code (zip)`).
+- [공통] `update.sh`: 처음 zip 을 풀어 설치한 판에서 바꿀 때 나오던 `.commit: No such file or directory` 줄을 없앴습니다 (동작은 같음).
+- [Copilot] 가벼운 zip 도 README 7장의 명령(새 판의 `update.sh` 를 꺼내 실행)으로 바꿉니다. 예전 판에서도 됩니다.
+  2026-10-15.1 까지의 `~/tools/pi/update.sh` 에 바로 주면 '저장소의 zip 이 아닙니다' 로 멈춥니다 (아무것도 바뀌지 않음).
+
 ## 2026-10-15.1
 - [공통] **LLM 위키: 폴더째 반영** (`/wiki ingest 폴더`): 그 폴더 아래 모든 단계의 원본을 경로 순(숫자는 크기 순: 1월, 2월, 10월)으로 하나씩 차례로 반영합니다 ([README 5장](README.md#llm-위키-wiki)).
   - 처음에 개수를 보여 주고 묻습니다. 한 번에 10개까지 하고, 이미 반영한 것과 글이 아닌 파일(pdf·docx·hwp 등), 200KB 넘는 파일은 뺍니다. raw/ 전체는 `/wiki ingest raw`.

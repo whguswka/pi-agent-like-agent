@@ -605,6 +605,9 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 ```
 - 새 판의 `update.sh` 를 꺼내 실행합니다. 지금 판에 `update.sh` 가 없는 예전 판(2026-10-02 이전)도 이 방법으로 바꿉니다.
   이미 새 판을 쓰고 있으면 `bash ~/tools/pi/update.sh "$Z"` 도 같습니다.
+- **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 판의 `pi-agent-like-agent-<판>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.4MB 라 반입이 가볍습니다 (전체 zip 은 3.2MB).
+  `Z=` 뒤에 그 파일을 적어 위 명령으로 바꿉니다. 지금 깔린 pi 본체가 새 판의 것과 같은지 해시로 확인한 뒤 그대로 쓰고, 다르면(pi 본체가 바뀐 판. CHANGELOG·Releases 에 적음) 아무것도 바꾸지 않고 전체 zip 이 필요하다고 알려 줍니다.
+  몇 판을 건너뛰어도 됩니다. 2026-10-15.1 까지의 `~/tools/pi/update.sh` 는 이 zip 을 모르니 위 명령(새 판의 `update.sh` 를 꺼내 실행)으로 바꿉니다.
 - 하는 일: zip 확인 → 중계 서버 끄기 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 판을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
 - 끝에 `지금 판 -> 새 판` 과 확인할 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 판으로 시작합니다 (중계 서버도 새 판으로 켜짐). `/doctor` 의 '버전' 줄로 확인합니다.
 - 폴더가 사용 중이라 이름을 바꾸지 못하면 **아무것도 바꾸지 않고 멈춥니다.** pi, Copilot 전용 창, 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요.
@@ -744,6 +747,7 @@ python ~/tools/pi/copilot/diag.py --limits
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 8개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `api-kit/` | 이 저장소에서 Kubeflow 노트북용 API 판([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))을 만드는 도구 (이 저장소의 zip 에는 들어가지 않음) |
+| `release/` | 판 내기 도구: 업데이트용 가벼운 zip 만들기, GitHub Release 올리기 (이 저장소의 zip 에는 들어가지 않음) |
 | `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
 | `CHANGELOG.md` | 판마다 바뀐 점과 바꾼 뒤 할 일 |
 | `docs/` | [한 장 요약](docs/빠른시작.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |

@@ -2,3 +2,5 @@
 * -text
 # API 전용 판을 만드는 도구(api-kit/)는 이 저장소의 zip(Download ZIP, 태그 zip)에 넣지 않음
 /api-kit export-ignore
+# 판 내기 도구(release/: 업데이트용 zip, GitHub Release)도 넣지 않음
+/release export-ignore
