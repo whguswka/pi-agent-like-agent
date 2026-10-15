@@ -48,11 +48,14 @@ if (prev)
 		runtimeChanged = true;
 	}
 const light = `${repo}-${ver}-update.zip`;
+// 이 판으로는 전체 zip 이 필요한 때: pi 본체가 앞 태그와 다르거나, CHANGELOG 의 '할 일' 이 전체 zip 을 말할 때 (예: 예전 update.sh 가 가벼운 zip 을 모름)
+const fullNeeded = runtimeChanged || /^- 할 일[^\n]*전체 zip/m.test(section);
 const body = [
 	"**사내망으로 반입할 파일**",
-	`- 새 판으로 바꿀 때: 아래 Assets 의 \`${light}\` (pi 본체 \`runtime/\` 을 뺀 가벼운 zip). 바꾸는 명령은 README 7장`,
+	fullNeeded
+		? `- **이 판으로 바꿀 때는 전체 zip** (\`Source code (zip)\`)${runtimeChanged ? `: pi 본체가 앞 판(${prev.replace(/^v/, "")})과 다릅니다` : ": 아래 '할 일' 을 보세요"}. 아래 Assets 의 \`${light}\` (pi 본체 \`runtime/\` 을 뺀 가벼운 zip)는 이미 이 판 이상을 쓰는 곳에서 씁니다`
+		: `- 새 판으로 바꿀 때: 아래 Assets 의 \`${light}\` (pi 본체 \`runtime/\` 을 뺀 가벼운 zip). 바꾸는 명령은 README 7장`,
 	"- 처음 설치할 때, 또는 pi 본체가 바뀐 판: `Source code (zip)` (전체)",
-	runtimeChanged ? `- **이 판은 pi 본체가 앞 판(${prev.replace(/^v/, "")})과 다릅니다.** 이 판으로 처음 바꿀 때는 전체 zip 을 받으세요` : "",
 	"",
 	`## ${ver}`,
 	section || "(CHANGELOG 에 이 판의 항목이 없습니다)",
