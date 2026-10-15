@@ -1,4 +1,4 @@
-# 원래 키트 문서에서 API 판과 짝을 이룬 글의 sha256 앞 12자리 (커밋 150650469c168a50b328ad0b03fd40293e89de84). api-kit/make-api-kit.sh --update-sha 가 적음
+# 원래 키트 문서에서 API 판과 짝을 이룬 글의 sha256 앞 12자리 (커밋 a2cc63d0de158c7ef3bf15e39c12ca55d864b015). api-kit/make-api-kit.sh --update-sha 가 적음
 #  'api:바꾸기' 블록 안 글과 'api=' 줄의 원래 키트 쪽 글. 바뀌면 API 판 만들기가 멈춤: API 판 글(조각, api= 뒤)도 고쳐야 하는지 보고 --update-sha
 23a9a8a483a2	docs/반입-검토-요청서.md	바꾸기 제목
 50e52dc77978	docs/반입-검토-요청서.md	api=
@@ -91,8 +91,8 @@ dab05b8d8664	README.md	api=
 0062c17e4d04	README.md	api=
 0a298e96e7da	README.md	api=
 bdd943328cc0	README.md	api=
-7756deb18f80	README.md	api=
-a1ee43bd6008	README.md	api=
+e1bbee7ddef4	README.md	api=
+4f0586cbb349	README.md	api=
 3c99762049c5	README.md	api=
 24f0d3ff4d79	README.md	api=
 fe78384f03dc	README.md	바꾸기 6장-앞
