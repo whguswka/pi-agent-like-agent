@@ -1,31 +1,39 @@
 // API 판 점검: node check.mjs <만든 폴더>
-//  1) remove.txt 의 경로가 없는지
+//  1) remove.txt 의 경로가 없는지, 문서에 표시(<!-- api... -->)가 남지 않았는지
 //  2) 사람이 읽는 글·스크립트·설정 템플릿에 웹 채팅 중계 내용이 남았는지 (runtime/, 파일 해시 목록, 확장 소스, tests/ 는 뺌)
 //  3) 확장: 정한 목록과 같은지 (새 확장은 중계 내용이 없는지 본 뒤 SHARED_EXT 에 더함), kit.ts·wiki.ts 에 isBridge 조건이 있는지,
 //     install.sh·update.sh 의 KIT_EXT 에 모든 확장이 있는지
 //  4) CHANGELOG.md 에 이 판(VERSION)의 항목이 있는지, 문서의 상대 링크(파일·#제목)가 맞는지
+// 원래 키트의 링크 점검: node check.mjs --links <저장소 폴더>   4) 의 링크 점검만 (api-kit/ 은 빼고, HTML 주석 안의 API 판 글은 보지 않음)
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = process.argv[2];
+const linksOnly = process.argv[2] === "--links";
+const root = process.argv[linksOnly ? 3 : 2];
 if (!root || !existsSync(root)) {
-	console.error("사용법: node check.mjs <만든 폴더>");
+	console.error("사용법: node check.mjs <만든 폴더>  또는  node check.mjs --links <저장소 폴더>");
 	process.exit(2);
 }
 const KIT = dirname(fileURLToPath(import.meta.url));
 const errors = [];
+const anchors = new Map();
 const read = (p) => readFileSync(join(root, p), "utf8");
 function walk(dir, out = []) {
 	for (const d of readdirSync(join(root, dir), { withFileTypes: true })) {
 		const p = dir ? `${dir}/${d.name}` : d.name;
-		if (d.name === ".git") continue;
+		if (d.name === ".git" || (linksOnly && p === "api-kit")) continue;
 		if (d.isDirectory()) walk(p, out);
 		else out.push(p);
 	}
 	return out;
 }
 const files = walk("");
+const docs = files.filter((f) => f.endsWith(".md") && !f.startsWith("runtime/") && !f.startsWith("skills/") && !f.startsWith("prompts/") && !f.startsWith("profiles/"));
+if (linksOnly) {
+	checkLinks();
+	finish(`[api-kit] 링크 점검 통과 (문서 ${docs.length}개)`);
+}
 
 // 1) 지운 경로
 for (const line of readFileSync(join(KIT, "remove.txt"), "utf8").split(/\r?\n/)) {
@@ -33,6 +41,10 @@ for (const line of readFileSync(join(KIT, "remove.txt"), "utf8").split(/\r?\n/))
 	if (p && !p.startsWith("#") && existsSync(join(root, p))) errors.push(`남아 있음: ${p}`);
 }
 if (existsSync(join(root, "api-kit"))) errors.push("남아 있음: api-kit/ (.gitattributes 의 export-ignore 확인)");
+for (const p of files.filter((f) => f.endsWith(".md") && !f.startsWith("runtime/")))
+	read(p).split(/\r?\n/).forEach((l, i) => {
+		if (/<!-- (api[:=]|\/api|조각:)/.test(l)) errors.push(`남은 표시 (assemble.mjs 를 거치지 않음): ${p}:${i + 1}: ${l.trim().slice(0, 140)}`);
+	});
 
 // 2) 남은 중계 내용
 const TERMS = [
@@ -87,8 +99,12 @@ for (const s of ["install.sh", "update.sh"]) {
 // 4) CHANGELOG 항목, 상대 링크
 const version = read("VERSION").trim();
 if (!new RegExp(`^## ${version.replace(/\./g, "\\.")}(\\s|$)`, "m").test(read("CHANGELOG.md"))) errors.push(`CHANGELOG.md 에 '## ${version}' 항목이 없음 (update.sh 가 끝에 보여 줌)`);
-const anchor = (h) => h.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s/g, "-");
-const anchors = new Map();
+checkLinks();
+finish(`[api-kit] 점검 통과 (파일 ${files.length}개, 글 ${surface.length}개 확인, 판 ${version})`);
+
+function anchor(h) {
+	return h.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s/g, "-");
+}
 function anchorsOf(p) {
 	if (!anchors.has(p)) {
 		const seen = new Map();
@@ -107,27 +123,33 @@ function anchorsOf(p) {
 	}
 	return anchors.get(p);
 }
-for (const p of files.filter((f) => f.endsWith(".md") && !f.startsWith("runtime/") && !f.startsWith("skills/") && !f.startsWith("prompts/") && !f.startsWith("profiles/"))) {
-	let fence = false;
-	read(p).split(/\r?\n/).forEach((l, i) => {
-		if (/^\s*```/.test(l)) fence = !fence;
-		if (fence) return;
-		for (const m of l.matchAll(/\]\(([^)\s]+)\)/g)) {
-			const href = m[1];
-			if (/^[a-z]+:/i.test(href)) continue;
-			const [file, hash] = href.split("#");
-			const target = file ? posix.normalize(posix.join(posix.dirname(p), decodeURI(file))) : p;
-			if (!existsSync(join(root, target))) {
-				errors.push(`링크 대상 없음: ${p}:${i + 1}: ${href}`);
-				continue;
+// 문서의 상대 링크 (원래 키트 문서의 HTML 주석 안 글은 API 판 글이라 보지 않음)
+function checkLinks() {
+	for (const p of docs) {
+		let fence = false;
+		read(p).split(/\r?\n/).forEach((l, i) => {
+			if (/^\s*```/.test(l)) fence = !fence;
+			if (fence) return;
+			for (const m of l.replace(/<!--.*?-->/g, "").matchAll(/\]\(([^)\s]+)\)/g)) {
+				const href = m[1];
+				if (/^[a-z]+:/i.test(href)) continue;
+				const [file, hash] = href.split("#");
+				const target = file ? posix.normalize(posix.join(posix.dirname(p), decodeURI(file))) : p;
+				if (!existsSync(join(root, target))) {
+					errors.push(`링크 대상 없음: ${p}:${i + 1}: ${href}`);
+					continue;
+				}
+				if (hash && target.endsWith(".md") && !anchorsOf(target).has(decodeURI(hash))) errors.push(`없는 제목 링크: ${p}:${i + 1}: ${href}`);
 			}
-			if (hash && target.endsWith(".md") && !anchorsOf(target).has(decodeURI(hash))) errors.push(`없는 제목 링크: ${p}:${i + 1}: ${href}`);
-		}
-	});
+		});
+	}
 }
 
-if (errors.length) {
-	console.error(`[api-kit] 점검 실패 ${errors.length}건:\n  ` + errors.join("\n  "));
-	process.exit(1);
+function finish(ok) {
+	if (errors.length) {
+		console.error(`[api-kit] 점검 실패 ${errors.length}건:\n  ` + errors.join("\n  "));
+		process.exit(1);
+	}
+	console.log(ok);
+	process.exit(0);
 }
-console.log(`[api-kit] 점검 통과 (파일 ${files.length}개, 글 ${surface.length}개 확인, 판 ${version})`);

@@ -6,10 +6,12 @@
 - **할 일**은 그 판으로 바꾼 뒤 사람이 따로 할 일입니다. 적혀 있지 않으면 [수동 작업 절차](docs/수동-작업-절차.md) 3장대로 바꾸고 4-1 의 5분 점검만 하면 됩니다.
 - **예전 판의 zip**(되돌리기 등)은 GitHub 저장소의 **Tags** 에서 받습니다. 판을 낸 커밋마다 `v<판 번호>` 태그가 있고, 그 판의 zip 은 같은 업데이트 명령으로 깝니다 (`Z=` 에 받은 파일 이름).
 - 판을 낸 뒤 문서만 고친 커밋은 판 번호를 올리지 않고, 다음 판에 함께 적습니다.
+- 2026-10-14.2 뒤의 판부터 항목 앞에 `[공통]` 또는 `[Copilot]` 을 붙입니다. `[공통]` 은 Kubeflow 노트북용 API 판([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))에도 들어가는 것,
+  `[Copilot]` 은 이 판(업무 PC·Copilot)에만 있는 것입니다.
 
 ## 2026-10-14.2 (중계 서버 2026-10-14.2)
 - **LLM 위키 (`/wiki`)**: 안드레 카파시의 'LLM Wiki' 방식입니다. 원본을 넣으면 pi 가 마크다운 위키 페이지를 쓰고 서로 이어 두어,
-  다음에 물을 때 처음부터 다시 찾지 않고 쌓인 위키를 근거로 답합니다 ([README 6장](README.md#llm-위키-wiki), [설계](docs/LLM-위키-설계.md)).
+  다음에 물을 때 처음부터 다시 찾지 않고 쌓인 위키를 근거로 답합니다 ([README 5장](README.md#llm-위키-wiki), [설계](docs/LLM-위키-설계.md)).
   - 위키는 PC 폴더(기본 `~/pi-wiki/모델운영`, `/wiki init 이름 폴더` 로 지정)이고 Obsidian 으로 봅니다 (링크는 `[[제목]]`). 만들 때 모델 운영용 규칙 초안 `WIKI.md` 가 들어갑니다.
   - 위키가 켜져 있으면 모델이 알아서 위키를 먼저 찾고, 일하는 중에 새로 확인한 것은 남긴 뒤 답 끝에 `위키에 남김: [[…]]` 을 적습니다 (`~/.pi/agent/wiki.json` 의 `auto`).
   - 목록(index.md)·기록(log.md)·점검은 pi 가 코드로 하고, 모델은 여러 페이지를 한 번에 읽고 씁니다 (Copilot 과 오가는 횟수를 줄이려고). 고치기 전 페이지는 위키 폴더의 `.history/` 에 남습니다.
@@ -21,14 +23,14 @@
 
 ## 2026-10-14.1 (중계 서버 2026-10-14.1)
 - **hook 만들기 스킬 `hook-creator`**: "명령 실행 전에 ○○ 막아줘", "작업이 끝나면 ○○ 기록해줘" 처럼 부탁하면 pi 의 hook(확장 파일 `~/.pi/agent/extensions/my-<이름>.ts`)을 만들고
-  `/reload` 로 적용하게 안내합니다 ([README 6장](README.md#hook-확장-파일)).
+  `/reload` 로 적용하게 안내합니다 ([README 5장](README.md#hook-확장-파일)).
   - 키트 설정으로 되는 일(위험 명령 확인 `guard_patterns`, 끝 알림 `notify_after_seconds`)이면 hook 대신 설정을 알려 줍니다.
   - 예 6개(명령 기록, 파일 보호, 결과에 안내 덧붙이기, 팀 규칙 파일, 입력 바꾸기, 끝날 때 기록)는 `~/.pi/agent/skills/hook-creator/examples.md` 에 있습니다. `my-` 로 시작하는 확장은 업데이트해도 그대로 남습니다.
 - **VS Code 터미널에서는 fullscreen 화면**: 대화가 길면 기본 화면은 다시 그릴 때마다 대화 전체(수천 줄)를 다시 출력해서, VS Code 터미널에서는 일하는 동안 스크롤이 위로 감겼다 내려왔습니다.
   이제 VS Code 터미널에서 `pi` 를 켜면 대화 기록을 pi 화면 안에서 스크롤하는 fullscreen 화면이 됩니다 (마우스 휠·`PageUp`/`PageDown`, 끌어서 고르면 복사, `Ctrl+F` 찾기).
   - 직접 `--tui-mode` 를 주거나 `/settings` 에서 화면 방식을 고른 경우, Git Bash 창 등 다른 터미널은 그대로입니다. 예전 화면은 `pi --tui-mode regular`.
 - **잘린 명령 결과**: Copilot·사내AI 에 보내는 명령 결과·파일 내용이 `tool_result_chars`(6000자)를 넘어 가운데를 줄일 때, 그 자리에 다시 보는 방법(좁혀 다시 실행, read 의 offset·limit)을 적습니다.
-  예전에는 `...[N chars omitted]...` 만 적었습니다. 잘리는 곳과 늘리는 법은 [README 10장](README.md#10-설정)의 `tool_result_chars`.
+  예전에는 `...[N chars omitted]...` 만 적었습니다. 잘리는 곳과 늘리는 법은 [README 8장](README.md#8-설정)의 `tool_result_chars`.
 - 할 일: VS Code 용으로 `~/.bashrc` 에 `alias pi="pi --tui-mode fullscreen"` 줄을 넣었다면 지워도 됩니다 (그대로 둬도 같음).
 
 ## 2026-10-13.1 (중계 서버 2026-10-13.1)
@@ -50,7 +52,7 @@
 
 ## 2026-10-06.5 (중계 서버 2026-10-06.5)
 - **끊김·제한 기록**: Copilot·사내AI 가 중간에 끊기거나 사용량 제한에 걸리는 상황을 고치기 위해, 중계 서버가 요청마다 어떻게 끝났는지를 기록합니다.
-  `python ~/tools/pi/copilot/diag.py --limits` 가 한 화면으로 요약합니다 ([README 11-1](README.md#11-1-끊김제한-기록-2026-10-065-부터)). `/doctor` 에도 한 줄로 나옵니다.
+  `python ~/tools/pi/copilot/diag.py --limits` 가 한 화면으로 요약합니다 ([README 9-1](README.md#9-1-끊김제한-기록-2026-10-065-부터)). `/doctor` 에도 한 줄로 나옵니다.
   - 남기는 것: 요청마다 걸린 시간·조각 수·보낸 글자 수·답 글자 수, 답이 끝난 방법(원문·화면·처리 중 기다림), 다시 부탁한 까닭, 대화를 새로 연 까닭,
     오류 종류. 사용량 제한이면 그 직전의 사용량(최근 10분·60분·24시간 요청 수와 글자 수, 오늘 첫 요청부터 지난 시간, 대화의 질문 수).
   - 남기지 않는 것: 요청·답의 글, 파일 내용, 명령, 도구 결과. 이 PC 의 파일에만 쓰고 어디로도 보내지 않습니다 (`~/.pi/agent/relay-events.jsonl`, 사내AI 는 `inhouse-events.jsonl`).

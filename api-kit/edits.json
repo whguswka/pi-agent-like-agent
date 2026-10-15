@@ -11,9 +11,6 @@
   { "file": "profiles/jupyter/agent-template/AGENTS.md",
     "from": "- Kubeflow JupyterLab 노트북(리눅스) 안이다.",
     "to": "- Kubeflow 노트북(리눅스, code-server 등) 안이다." },
-  { "file": "profiles/jupyter/agent-template/bridge.json",
-    "from": "(README 10장)",
-    "to": "(README 8장)" },
 
   { "file": "skills/data-analysis/SKILL.md",
     "from": "- 한글 글꼴: Windows 는 `plt.rcParams[\"font.family\"] = \"Malgun Gothic\"`. 리눅스(노트북)는 `fc-list :lang=ko` 로",

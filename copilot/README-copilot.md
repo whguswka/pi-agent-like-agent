@@ -32,7 +32,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
     - 중계 서버가 만든 대화만 기록해 두고(`~/.pi/agent/copilot-chats.json`) 그것만 지웁니다. 직접 쓰신 대화는 건드리지 않습니다.
     - 확인 창에 그 대화의 제목이 보일 때만 '삭제' 를 누릅니다. 다르면 취소합니다.
     - 창을 닫아 알림 없이 끝난 세션의 대화는 다음에 새 대화를 열 때 지웁니다. 끄려면 `bridge.json` 의 `delete_finished_chats` 를 `false` 로.
-- **jupyter 모드:** pi 확장(`~/.pi/agent/extensions/jupyter.ts`)이 bash·read·write·edit 도구를 노트북 안에서 실행합니다. 실행 중에 `/jupyter`·`/local` 로 바꿀 수 있습니다 ([README 5장](../README.md#5-실행-위치-바꾸기-pc-와-jupyter-노트북)).
+- **jupyter 모드:** pi 확장(`~/.pi/agent/extensions/jupyter.ts`)이 bash·read·write·edit 도구를 노트북 안에서 실행합니다. 실행 중에 `/jupyter`·`/local` 로 바꿀 수 있습니다 ([README 3-3](../README.md#3-3-실행-위치-바꾸기-pc-와-jupyter-노트북)).
   - 명령은 JupyterLab 터미널 세션 `pibridge` 에서 실행됩니다. 화면에 띄워 둘 필요는 없습니다.
   - 보고 싶으면 JupyterLab 왼쪽 '실행 중인 터미널과 커널' 목록에서 `pibridge` 를 열면, 실행되는 명령과 출력이 실시간으로 보입니다.
   - 출력과 종료 코드는 화면이 아니라 파일(노트북 `~/pi-bridge/run/`)로 정확히 받습니다. 다 읽은 파일은 다음 명령 때 지워집니다.
@@ -48,7 +48,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 - 최신 Chrome(136 이후)은 평소 프로필에는 원격 조작을 허용하지 않아서 전용 프로필(`%LOCALAPPDATA%\pi-copilot-chrome`)이 꼭 필요합니다.
 
 ## 2. 사용
-기본 사용법, 모델 고르기, 실행 위치 바꾸기(`/jupyter`, `/local`), 지침·스킬·메모리, 대화 관리는 [README 3~8장](../README.md#3-기본-사용법)에 있습니다. 덧붙이면:
+기본 사용법, 모델 고르기, 실행 위치 바꾸기(`/jupyter`, `/local`), 지침·스킬·메모리, 대화 관리는 [README 3~6장](../README.md#3-기본-사용법)에 있습니다. 덧붙이면:
 - 중계 서버를 직접 켜려면 `python ~/tools/pi/copilot/relay.py` (창을 열어 두면 Copilot 과 주고받는 내용이 보입니다). 상태: `curl -s http://127.0.0.1:8765/health`
 - jupyter 모드에서 폴더는 노트북 홈 기준입니다. `'~/work/myproject'` 처럼 따옴표로 감싸도 됩니다.
 - jupyter 모드에서 pi 의 `!명령` 도 노트북에서 실행됩니다. 단 `/local` 로 다른 PC 폴더를 골라도 `!명령` 은 pi 를 시작한 폴더에서 실행됩니다.
@@ -60,7 +60,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 - `models.json` 의 `contextWindow` 를 1000000 으로 크게 잡은 이유: pi 가 스스로 기록을 요약(압축)하면 기록이 바뀌어 Copilot 새 채팅이 열립니다. 대화 기억은 Copilot 채팅이 갖고 있으므로 pi 의 압축이 거의 일어나지 않게 했습니다 (대화가 약 390만 자 쌓여야 시작. 회사 Copilot 에서의 점검은 [수동 작업 절차 4-2](../docs/수동-작업-절차.md#4-2-요약-점검)).
 
 ## 3. 설정 (copilot/bridge.json, 중계 서버 옵션)
-`copilot/bridge.json` 은 기본값입니다. 바꾸고 싶은 항목은 **내 설정 파일 `~/.pi/agent/bridge.json`** 에 같은 이름으로 적으세요 (업데이트해도 남음, [README 10장](../README.md#10-설정)).
+`copilot/bridge.json` 은 기본값입니다. 바꾸고 싶은 항목은 **내 설정 파일 `~/.pi/agent/bridge.json`** 에 같은 이름으로 적으세요 (업데이트해도 남음, [README 8장](../README.md#8-설정)).
 
 | 항목 | 의미 |
 |---|---|

@@ -4,10 +4,12 @@
 #    1) <커밋> 을 git archive 로 풂 (api-kit/ 은 .gitattributes 의 export-ignore 라 빠짐)
 #    2) remove.txt 의 경로를 지움
 #    3) overlay/ 의 파일로 덮어씀. 원래 파일이 overlay.sha256 을 적은 뒤 바뀌었으면 멈춤 (바뀐 내용을 overlay 에 옮긴 뒤 --update-sha)
+#       원래 키트 문서에서 API 판과 짝을 이룬 글(api:바꾸기 블록, api= 줄)이 marks.sha256 을 적은 뒤 바뀌었어도 멈춤
+#    3-2) 문서의 표시 처리 (assemble.mjs: 원래 키트 문서 한 벌 + fragments/ 의 조각 -> API 판 글)
 #    4) edits.json 의 글 바꾸기 (바꿀 글이 정한 횟수만큼 없으면 멈춤)
 #    5) check.mjs 로 점검 (남은 중계 내용, 판 번호의 CHANGELOG 항목, 확장 목록)
 #    6) <내보낼 폴더> 를 결과로 바꿈 (.git 은 그대로 둠: API 저장소의 작업 폴더에 바로 내보내도 됨)
-#   bash api-kit/make-api-kit.sh --update-sha [커밋]   overlay.sha256 을 <커밋> 의 원래 파일로 다시 적음
+#   bash api-kit/make-api-kit.sh --update-sha [커밋]   overlay.sha256 과 marks.sha256 을 <커밋> 의 원래 파일로 다시 적음
 # api-kit/ 의 파일(overlay, edits, 점검)은 작업 폴더의 것을 쓴다. 내보낸 뒤 올리기 전에 api-kit/ 도 커밋할 것
 set -euo pipefail
 KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -20,6 +22,15 @@ command -v "$NODE" >/dev/null 2>&1 || die "node 를 찾지 못했습니다 (NODE
 # overlay 의 파일 목록 (overlay/ 기준 경로)
 overlay_files() { (cd "$KIT/overlay" && find . -type f | sed 's#^\./##' | LC_ALL=C sort); }
 blob_sha() { git -C "$REPO" cat-file -e "$1:$2" 2>/dev/null && git -C "$REPO" show "$1:$2" | sha256sum | cut -d' ' -f1; }
+# <커밋> 을 <폴더> 에 풀고 remove.txt 의 경로를 지움 (api-kit/ 은 .gitattributes 의 export-ignore 라 빠짐)
+extract() {
+  git -C "$REPO" archive --format=tar "$1" | tar -x -C "$2"
+  while IFS= read -r p || [ -n "$p" ]; do
+    p="${p%$'\r'}"
+    case "$p" in ""|"#"*) continue ;; esac
+    if [ -e "$2/$p" ]; then rm -rf "$2/${p%/}"; else echo "[api-kit] 참고: 이 커밋에는 없는 경로 (remove.txt 에서 빼도 됨): $p"; fi
+  done < "$KIT/remove.txt"
+}
 
 if [ "${1:-}" = --update-sha ]; then
   REV="$(git -C "$REPO" rev-parse --verify "${2:-HEAD}^{commit}")" || die "커밋을 찾지 못했습니다: ${2:-HEAD}"
@@ -31,6 +42,10 @@ if [ "${1:-}" = --update-sha ]; then
     done
   } > "$KIT/overlay.sha256"
   echo "[api-kit] overlay.sha256 을 다시 적었습니다 ($(grep -vc '^#' "$KIT/overlay.sha256") 개, 커밋 ${REV:0:7})"
+  U="$(mktemp -d "${TMPDIR:-/tmp}/api-kit.XXXXXX")"
+  trap 'rm -rf "$U"' EXIT
+  extract "$REV" "$U" >/dev/null
+  "$NODE" "$KIT/assemble.mjs" --write-marks "$U" "$KIT/fragments" "$KIT/marks.sha256" "$REV"
   exit 0
 fi
 
@@ -49,14 +64,8 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/api-kit.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 T="$TMP/tree"
 mkdir -p "$T"
-# 1) 풀기
-git -C "$REPO" archive --format=tar "$REV" | tar -x -C "$T"
-# 2) 지우기
-while IFS= read -r p || [ -n "$p" ]; do
-  p="${p%$'\r'}"
-  case "$p" in ""|"#"*) continue ;; esac
-  if [ -e "$T/$p" ]; then rm -rf "$T/${p%/}"; else echo "[api-kit] 참고: 이 커밋에는 없는 경로 (remove.txt 에서 빼도 됨): $p"; fi
-done < "$KIT/remove.txt"
+# 1) 풀기, 2) 지우기
+extract "$REV" "$T"
 # 3) 덮어쓰기 (그 전에 원래 파일이 바뀌었는지)
 drift=0
 if [ -f "$KIT/overlay.sha256" ]; then
@@ -73,7 +82,19 @@ fi
 if [ "$drift" -gt 0 ]; then
   base="$(sed -n '1s/.*커밋 \([0-9a-f]*\)).*/\1/p' "$KIT/overlay.sha256")"
   echo "[api-kit] 바뀐 내용: git diff ${base:0:7} ${REV:0:7} -- <위 파일>  을 보고 overlay/ 에 옮긴 뒤 --update-sha ${REV:0:7}" >&2
-  [ -n "${API_KIT_ALLOW_DRIFT:-}" ] || die "멈춤: overlay 가 대신하는 원래 파일 ${drift}개가 바뀌었습니다 (그래도 만들려면 API_KIT_ALLOW_DRIFT=1)"
+fi
+# 원래 키트 문서에서 API 판과 짝을 이룬 글 (바뀌었으면 조각·api= 뒤의 글도 고쳐야 하는지 볼 것)
+mdrift=0 rc=0
+"$NODE" "$KIT/assemble.mjs" --marks "$T" "$KIT/fragments" "$KIT/marks.sha256" || rc=$?
+case "$rc" in
+  0) ;;
+  1) mdrift=1
+     base="$(sed -n '1s/.*커밋 \([0-9a-f]*\)).*/\1/p' "$KIT/marks.sha256" 2>/dev/null || true)"
+     echo "[api-kit] 바뀐 내용: git diff ${base:0:7} ${REV:0:7} -- <위 문서>  를 보고 API 판 글(api-kit/fragments/ 의 조각, api= 뒤의 글)을 고친 뒤 --update-sha ${REV:0:7}" >&2 ;;
+  *) die "멈춤: 문서의 표시를 고친 뒤 다시 실행하세요" ;;
+esac
+if [ $((drift + mdrift)) -gt 0 ] && [ -z "${API_KIT_ALLOW_DRIFT:-}" ]; then
+  die "멈춤: overlay 가 대신하는 원래 파일 ${drift}개, 짝을 이룬 문서 글 $([ "$mdrift" = 1 ] && echo 바뀜 || echo 그대로) (그래도 만들려면 API_KIT_ALLOW_DRIFT=1)"
 fi
 n=0
 while IFS= read -r f; do
@@ -83,6 +104,8 @@ while IFS= read -r f; do
 done < <(overlay_files)
 # 셸 스크립트는 실행 권한 (zip 으로 받으면 사라지지만 git 저장소에는 남음)
 chmod +x "$T/bin/pi" "$T/install.sh" "$T/update.sh" "$T/check-node.sh" 2>/dev/null || true
+# 3-2) 문서의 표시 처리
+"$NODE" "$KIT/assemble.mjs" "$T" "$KIT/fragments"
 # 4) 글 바꾸기
 "$NODE" "$KIT/apply-edits.mjs" "$T" "$KIT/edits.json"
 # 5) 점검
