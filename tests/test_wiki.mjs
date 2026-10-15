@@ -132,6 +132,69 @@ check("/wiki init 의 폴더: ~ 는 홈, 상대 경로는 지금 폴더 기준, 
 	&& w.wikiDir(tmp) === tmp && w.wikiDir(`"${tmp}"`) === tmp && w.wikiDir("  ") === "",
 	[w.wikiDir("~/위키/가"), w.wikiDir("rel/나", tmp)]);
 
+// 원본 (raw/): 여러 단계 폴더, 같은 이름의 파일, 폴더째 반영
+const fr = join(tmp, "폴더위키");
+w.initWiki(fr, "폴더위키", "2026-10-15");
+const put = (rel, text = `# ${rel}\n내용\n`) => {
+	mkdirSync(dirname(join(fr, rel)), { recursive: true });
+	writeFileSync(join(fr, rel), text);
+};
+for (const f of ["회의록/2025/1월.md", "회의록/2025/2월.md", "회의록/2025/10월.md", "회의록/2025/분기/1분기/정리.md", "회의록/2026/1월.md", "가/x/메모.md", "나/x/메모.md", "보고서.md", "보고서.txt"]) put(`raw/${f}`);
+put("raw/회의록/계획.pdf", "%PDF-1.4");
+writeFileSync(join(fr, "raw/회의록/깨진.dat"), Buffer.from([1, 2, 0, 3]));
+put("raw/회의록/큰.txt", "가".repeat(80000));
+put("raw/assets/그림.md", "x");
+const rawAll = w.rawFilesOf(fr);
+check("원본 목록: 모든 깊이, raw/assets/ 는 뺌", rawAll.includes("raw/회의록/2025/분기/1분기/정리.md") && !rawAll.some((x) => x.startsWith("raw/assets/")), rawAll);
+check("경로 차례: 마디마다, 숫자는 크기 순",
+	JSON.stringify(["raw/a/10월.md", "raw/a/분기/x.md", "raw/a/2월.md", "raw/a/1월.md"].sort(w.pathOrder)) === JSON.stringify(["raw/a/1월.md", "raw/a/2월.md", "raw/a/10월.md", "raw/a/분기/x.md"]));
+check("글인지: 문서는 이름으로, 0 바이트가 있으면 글이 아님, 크기는 한도를 줄 때만",
+	w.rawKind(fr, "raw/회의록/계획.pdf") === "binary" && w.rawKind(fr, "raw/회의록/깨진.dat") === "binary" && w.rawKind(fr, "raw/보고서.txt") === "text"
+	&& w.rawKind(fr, "raw/회의록/큰.txt", 200000) === "big" && w.rawKind(fr, "raw/회의록/큰.txt") === "text" && w.rawKind(fr, "raw/없음.md") === "binary");
+const tg = (a) => JSON.stringify(w.rawTarget(fr, a));
+check("찾기: 폴더 (raw/ 를 빼고, 끝의 / 도)", tg("회의록") === JSON.stringify({ rel: "raw/회의록", dir: true }) && tg("raw/회의록/2025/") === JSON.stringify({ rel: "raw/회의록/2025", dir: true }), [tg("회의록"), tg("raw/회의록/2025/")]);
+check("찾기: 파일 (.md 없이도), raw/ 전체", tg("회의록/2025/1월") === JSON.stringify({ rel: "raw/회의록/2025/1월.md", dir: false }) && tg("raw") === JSON.stringify({ rel: "raw", dir: true }), tg("회의록/2025/1월"));
+check("찾기: 이름이나 경로 끝만 (하위 폴더 안에서 하나뿐인 파일·폴더)",
+	tg("2월.md") === JSON.stringify({ rel: "raw/회의록/2025/2월.md", dir: false }) && tg("1분기") === JSON.stringify({ rel: "raw/회의록/2025/분기/1분기", dir: true }) && tg("2025/10월") === JSON.stringify({ rel: "raw/회의록/2025/10월.md", dir: false }),
+	[tg("2월.md"), tg("1분기"), tg("2025/10월")]);
+check("찾기: 같은 이름이 여러 개면 후보 (경로 차례)", tg("1월.md") === JSON.stringify({ many: ["raw/회의록/2025/1월.md", "raw/회의록/2026/1월.md"] }), tg("1월.md"));
+check("찾기: 따옴표·역슬래시·전체 경로, 위키 밖·없는 것",
+	tg('"회의록\\2026"') === JSON.stringify({ rel: "raw/회의록/2026", dir: true }) && tg(join(fr, "raw", "회의록", "2026")) === JSON.stringify({ rel: "raw/회의록/2026", dir: true }) && tg("../x") === "{}" && tg("없음") === "{}",
+	[tg('"회의록\\2026"'), tg(join(fr, "raw", "회의록", "2026"))]);
+const src = (title, sources) => `---\ntitle: ${title}\nsummary: ${title} 요약\ntype: source\nsources: [${sources}]\n---\n${title}\n`;
+w.applyWrite(fr, "폴더위키", `=== pages/source/1월.md\n${src("1월", "raw/회의록/2025/1월.md")}`, "ingest", "", "2026-10-15");
+w.applyWrite(fr, "폴더위키", `=== pages/source/2월.md\n${src("2월", "2월.md")}`, "ingest", "", "2026-10-15");
+w.applyWrite(fr, "폴더위키", `=== pages/source/메모.md\n${src("메모", "메모.md")}`, "ingest", "", "2026-10-15");
+let fp = w.loadPages(fr);
+const refl = w.reflectedRaw(rawAll, fp);
+check("반영 여부: 경로로 맞춤 (같은 이름의 다른 폴더 원본은 반영 안 됨)", refl.has("raw/회의록/2025/1월.md") && !refl.has("raw/회의록/2026/1월.md"), [...refl]);
+check("반영 여부: 폴더를 빼고 이름만 적은 것은 그 이름이 하나뿐일 때만", refl.has("raw/회의록/2025/2월.md") && !refl.has("raw/가/x/메모.md") && !refl.has("raw/나/x/메모.md"), [...refl]);
+const unused = w.lint(fr, "폴더위키").rawUnused;
+check("점검: 같은 이름의 다른 폴더 원본은 '반영 안 된 원본'에 남음, 경로 차례", unused.includes("raw/회의록/2026/1월.md") && !unused.includes("raw/회의록/2025/1월.md") && JSON.stringify(unused) === JSON.stringify([...unused].sort(w.pathOrder)), unused);
+const st = (x, all = rawAll) => w.sourceTitle(x, all, fp);
+check("요약 페이지 이름: 그 원본의 요약 페이지가 있으면 그 이름", st("raw/회의록/2025/1월.md") === "1월" && st("raw/회의록/2025/2월.md") === "2월", [st("raw/회의록/2025/1월.md"), st("raw/회의록/2025/2월.md")]);
+check("요약 페이지 이름: 하나뿐이면 파일 이름 (확장자 뺌)", st("raw/회의록/2025/10월.md") === "10월" && st("raw/회의록/2025/분기/1분기/정리.md") === "정리", [st("raw/회의록/2025/10월.md")]);
+check("요약 페이지 이름: 같은 이름이 다른 폴더에도 있으면 위 폴더 이름을 붙임", st("raw/회의록/2026/1월.md") === "2026 1월", st("raw/회의록/2026/1월.md"));
+check("요약 페이지 이름: 위 폴더 이름까지 같으면 한 단계 더", st("raw/가/x/메모.md") === "가 x 메모" && st("raw/나/x/메모.md") === "나 x 메모", [st("raw/가/x/메모.md"), st("raw/나/x/메모.md")]);
+check("요약 페이지 이름: 같은 폴더에 확장자만 다른 원본이 있으면 확장자까지", st("raw/보고서.md") === "보고서.md" && st("raw/보고서.txt") === "보고서.txt", [st("raw/보고서.md"), st("raw/보고서.txt")]);
+w.applyWrite(fr, "폴더위키", `=== pages/model/수요 예측 모델.md\n---\ntitle: 수요 예측 모델\nsummary: 모델\ntype: model\n---\n본문\n`, "note", "", "2026-10-15");
+put("raw/수요 예측 모델.md");
+fp = w.loadPages(fr);
+check("요약 페이지 이름: 다른 페이지가 그 이름을 쓰는데 붙일 폴더가 없으면 '… 원본'", st("raw/수요 예측 모델.md", w.rawFilesOf(fr)) === "수요 예측 모델 원본", st("raw/수요 예측 모델.md", w.rawFilesOf(fr)));
+let plan = w.planIngest(fr, "raw/회의록", fp, 3, 200000);
+check("폴더째 계획: 반영한 것·글이 아닌 것·큰 것은 빼고, 경로 차례로",
+	JSON.stringify(plan) === JSON.stringify({
+		items: ["raw/회의록/2025/10월.md", "raw/회의록/2025/분기/1분기/정리.md", "raw/회의록/2026/1월.md"], later: [],
+		done: ["raw/회의록/2025/1월.md", "raw/회의록/2025/2월.md"], binary: ["raw/회의록/계획.pdf", "raw/회의록/깨진.dat"], big: ["raw/회의록/큰.txt"],
+	}), plan);
+plan = w.planIngest(fr, "raw/회의록", fp, 2, 200000);
+check("폴더째 계획: 한 번에 하는 수를 넘으면 다음에", plan.items.length === 2 && JSON.stringify(plan.later) === JSON.stringify(["raw/회의록/2026/1월.md"]), plan);
+check("폴더째 계획: raw/ 전체", w.planIngest(fr, "raw", fp, 100).items.includes("raw/가/x/메모.md") && w.planIngest(fr, "raw", fp, 100).items.includes("raw/회의록/2026/1월.md"));
+const ip = w.ingestPrompt("폴더위키", "raw/회의록/2026/1월.md", "2026 1월", { i: 2, n: 5 });
+check("반영 부탁: 원본 경로, 요약 페이지 제목과 sources, 폴더, 폴더째면 몇 번째와 묻지 말라는 말",
+	ip.includes("raw/회의록/2026/1월.md 을 llm-wiki 스킬의 ingest") && ip.includes("제목을 '2026 1월'") && ip.includes("sources 에 raw/회의록/2026/1월.md") && ip.includes("폴더: 회의록/2026")
+	&& ip.includes("2/5 번째") && !w.ingestPrompt("a", "raw/x.md", "x").includes("번째") && !w.ingestPrompt("a", "raw/x.md", "x").includes("폴더:"), ip);
+
 // 규모: 500쪽
 const big = join(tmp, "큰위키");
 w.initWiki(big, "큰위키", "2026-10-14");

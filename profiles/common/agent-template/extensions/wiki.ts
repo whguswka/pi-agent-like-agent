@@ -7,15 +7,16 @@
  *  - 모델은 짧은 검색 결과(wiki_search)와 여러 페이지를 한 번에 읽고 쓰는 도구(wiki_read, wiki_write)를 쓴다.
  * 위키는 PC 폴더 (jupyter 모드에서도 PC). 링크는 Obsidian 형식 [[페이지 제목]]. 고치기 전 페이지는 .history/ 에 남긴다.
  *
- * 명령: /wiki (상태), /wiki init [이름] [폴더], /wiki use <이름>, /wiki off, /wiki ingest <raw/ 안 파일>,
+ * 명령: /wiki (상태), /wiki init [이름] [폴더], /wiki use <이름>, /wiki off, /wiki ingest <raw/ 안 파일·폴더>,
  *       /wiki ask <질문>, /wiki save [제목], /wiki lint, /wiki reindex
+ *   폴더를 주면 그 아래 모든 깊이의 원본을 하나씩 차례로 반영해 달라고 보낸다 (앞 요청이 끝나면 다음, 한 번에 INGEST_LIMIT 개)
  * 설정: ~/.pi/agent/wiki.json {"wikis": {"이름": "폴더"}, "active": "이름", "auto": "write" | "ask" | "search" | "off"}
  *   auto: 위키가 켜져 있을 때 모델이 알아서 위키를 쓰는 정도 (write: 찾고 남김, ask: 찾고 남길지 물음, search: 찾기만, off: 부탁할 때만)
  */
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -371,6 +372,163 @@ export function readTargets(root: string, pages: Page[], targets: string[], offs
 }
 
 // ---------------------------------------------------------------------------
+// 원본 (raw/): 찾기, 반영했는지, 요약 페이지 이름, 폴더째 반영할 차례
+// ---------------------------------------------------------------------------
+
+/** 경로 차례: '/' 마디마다 견주고, 숫자는 크기 순 (1월, 2월, 10월) */
+export function pathOrder(a: string, b: string): number {
+	const x = a.split("/");
+	const y = b.split("/");
+	for (let i = 0; i < Math.min(x.length, y.length); i++) {
+		const c = x[i].localeCompare(y[i], undefined, { numeric: true });
+		if (c) return c;
+	}
+	return x.length - y.length;
+}
+
+/** 원본으로 다루는 파일 (raw/assets/ 는 페이지에 넣는 그림이라 뺌) */
+export const rawFilesOf = (root: string) => listFiles(root, "raw").filter((r) => !r.startsWith("raw/assets/"));
+
+const BINARY = /\.(pdf|docx?|xlsx?|xlsm|pptx?|hwpx?|od[tsp]|rtf|zip|7z|rar|gz|tgz|bz2|xz|tar|jar|png|jpe?g|gif|bmp|tiff?|webp|svg|ico|heic|mp3|wav|m4a|mp4|mov|avi|mkv|exe|dll|so|bin|class|pyc|parquet|feather|orc|avro|pkl|pickle|joblib|npy|npz|h5|hdf5|onnx|pt|pth|ckpt|safetensors|db|sqlite3?)$/i;
+/** 원본이 글(텍스트)인지: 문서·그림·압축 파일은 이름으로, 그 밖은 앞부분에 0 바이트가 있으면 글이 아님. maxBytes 를 넘으면 big */
+export function rawKind(root: string, rel: string, maxBytes = 0): "text" | "binary" | "big" {
+	if (BINARY.test(rel)) return "binary";
+	let fd = -1;
+	try {
+		const p = join(root, rel);
+		if (maxBytes && statSync(p).size > maxBytes) return "big";
+		fd = openSync(p, "r");
+		const buf = Buffer.alloc(4096);
+		const n = readSync(fd, buf, 0, buf.length, 0);
+		return buf.subarray(0, n).includes(0) ? "binary" : "text";
+	} catch {
+		return "binary";
+	} finally {
+		if (fd >= 0) closeSync(fd);
+	}
+}
+
+/** 반영한 원본: 페이지 머리말 sources 에 적힌 raw/ 파일. 전체 경로로 맞추고 (raw/ 나 .md 를 빼고 적어도 됨),
+ *  폴더를 빼고 이름만 적은 것은 그 이름의 원본이 raw/ 안에 하나뿐일 때만 맞춤 (같은 이름이 여러 폴더에 있으면 경로로만) */
+export function reflectedRaw(rawFiles: string[], pages: Page[]): Set<string> {
+	const byPath = new Map<string, string>();
+	const byName = new Map<string, string[]>();
+	for (const r of rawFiles) {
+		byPath.set(key(r), r);
+		const n = key(baseOf(r));
+		byName.set(n, [...(byName.get(n) || []), r]);
+	}
+	const out = new Set<string>();
+	for (const p of pages)
+		for (const s0 of p.sources) {
+			const s = slash(String(s0)).trim().replace(/^\[\[|\]\]$/g, "").replace(/^\.\//, "");
+			if (!s) continue;
+			const hit = [s, `raw/${s}`, `${s}.md`, `raw/${s}.md`].map((c) => byPath.get(key(c))).find(Boolean);
+			if (hit) out.add(hit);
+			else {
+				const same = byName.get(key(baseOf(s))) || [];
+				if (same.length === 1) out.add(same[0]);
+			}
+		}
+	return out;
+}
+
+/** /wiki ingest 에 준 대상 -> raw/ 안의 파일·폴더. raw/ 를 빼고 적거나, 이름이나 경로 끝만 적어도 찾음 (파일은 .md 없이도).
+ *  여러 개가 맞으면 many 에 후보 (경로 차례). raw/ 전체는 'raw' */
+export function rawTarget(root: string, arg: string): { rel?: string; dir?: boolean; many?: string[] } {
+	let t = slash(arg.trim().replace(/^["']|["']$/g, "").trim()).replace(/^\.\//, "").replace(/\/+$/, "");
+	if (t && isAbsolute(t)) t = slash(relative(root, t));
+	if (!t || t.split("/").some((s) => s === "..")) return {};
+	if (t === "raw" || t === ".") return { rel: "raw", dir: true };
+	if (t.startsWith("raw/")) t = t.slice(4);
+	const isDir = (rel: string) => {
+		try {
+			return statSync(join(root, rel)).isDirectory();
+		} catch {
+			return false;
+		}
+	};
+	for (const rel of [`raw/${t}`, `raw/${t}.md`]) if (existsSync(join(root, rel))) return { rel, dir: isDir(rel) };
+	const files = listFiles(root, "raw");
+	const dirs = new Set<string>();
+	for (const f of files) {
+		const parts = f.split("/");
+		for (let i = 2; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+	}
+	const k = key(t);
+	const ends = (p: string) => key(p).endsWith(`/${k}`) || key(p).endsWith(`/${k}.md`);
+	const hits = [...files.filter(ends), ...[...dirs].filter(ends)].sort(pathOrder);
+	if (hits.length === 1) return { rel: hits[0], dir: dirs.has(hits[0]) };
+	return hits.length ? { many: hits } : {};
+}
+
+/** 원본의 요약(source) 페이지 제목. 그 원본의 요약 페이지가 이미 있으면 그 제목, 없으면 파일 이름 (확장자는 뺌).
+ *  같은 이름의 원본이 다른 폴더에도 있거나 다른 페이지가 그 이름을 쓰면, 겹치지 않을 때까지 위 폴더 이름을 앞에 붙임
+ *  ('2025 1월', '회의록 2025 1월'). 붙일 폴더가 없으면 끝에 '원본', 같은 폴더에 확장자만 다른 원본이 있으면 확장자까지 */
+export function sourceTitle(rel: string, rawFiles: string[], pages: Page[]): string {
+	const all = rawFiles.includes(rel) ? rawFiles : [...rawFiles, rel];
+	const mine = pages.find((p) => p.type === "source" && reflectedRaw(all, [p]).has(rel));
+	if (mine) return mine.title || mine.name;
+	const file = (r: string) => r.split("/").pop() || r;
+	const dirsOf = (r: string) => r.split("/").slice(1, -1);
+	const name = (r: string, k: number, last = file(r).replace(/\.[^.]+$/, "") || file(r)) =>
+		pageName([...dirsOf(r).slice(Math.max(0, dirsOf(r).length - k)), last].join(" "));
+	const taken = (n: string) => pages.some((p) => key(p.name) === key(n));
+	const group = all.filter((r) => r !== rel && key(name(r, 0)) === key(name(rel, 0)));
+	const deepest = Math.max(dirsOf(rel).length, ...group.map((r) => dirsOf(r).length));
+	for (let k = 0; k <= deepest; k++) {
+		const n = name(rel, k);
+		if (!taken(n) && !group.some((r) => key(name(r, k)) === key(n))) return n;
+	}
+	const suffixed = pageName(`${name(rel, deepest)} 원본`);
+	if (!group.length && !taken(suffixed)) return suffixed;
+	const full = name(rel, deepest, file(rel));
+	let n = full;
+	for (let i = 2; taken(n); i++) n = pageName(`${full} ${i}`);
+	return n;
+}
+
+export const INGEST_LIMIT = 10; // 폴더째 반영: 한 번에 반영하는 원본 수 (Copilot·사내AI 는 원본 하나에 4~12번 오감)
+export const INGEST_MAX_BYTES = 200_000; // 폴더째 반영에서 빼는 큰 원본 (하나씩은 반영할 수 있음)
+export interface IngestPlan {
+	items: string[]; // 이번에 반영할 원본 (차례대로)
+	later: string[]; // 한 번에 하는 수를 넘어 다음에
+	done: string[]; // 이미 반영함
+	binary: string[]; // 글이 아님 (문서·그림 등)
+	big: string[]; // 너무 큼
+}
+/** 폴더째 반영할 원본: 그 폴더 아래 모든 깊이 (숨김 폴더·raw/assets/ 는 빼고), 경로 차례 */
+export function planIngest(root: string, dir: string, pages = loadPages(root), limit = INGEST_LIMIT, maxBytes = INGEST_MAX_BYTES): IngestPlan {
+	const all = rawFilesOf(root);
+	const reflected = reflectedRaw(all, pages);
+	const plan: IngestPlan = { items: [], later: [], done: [], binary: [], big: [] };
+	for (const r of all.filter((f) => dir === "raw" || f.startsWith(`${dir}/`)).sort(pathOrder)) {
+		if (reflected.has(r)) plan.done.push(r);
+		else {
+			const kind = rawKind(root, r, maxBytes);
+			if (kind === "binary") plan.binary.push(r);
+			else if (kind === "big") plan.big.push(r);
+			else if (plan.items.length < limit) plan.items.push(r);
+			else plan.later.push(r);
+		}
+	}
+	return plan;
+}
+
+/** 원본 하나를 반영해 달라는 부탁. 폴더째 반영이면 몇 번째인지와, 반영 방향을 묻지 말라는 말을 더함 */
+export function ingestPrompt(name: string, rel: string, title: string, batch?: { i: number; n: number }): string {
+	const dir = rel.split("/").slice(1, -1).join("/");
+	return [
+		`'${name}' 위키의 ${rel} 을 llm-wiki 스킬의 ingest 순서대로 위키에 반영해 줘.`,
+		batch ? `폴더째 반영의 ${batch.i}/${batch.n} 번째라 반영 방향은 묻지 말고 바로 반영해 줘.` : "",
+		`원본 요약 페이지는 제목을 '${title}' 로 하고 sources 에 ${rel} 을 그대로 적어 줘.`,
+		dir ? `원본이 있는 폴더: ${dir} (폴더 이름도 참고).` : "",
+	]
+		.filter(Boolean)
+		.join(" ");
+}
+
+// ---------------------------------------------------------------------------
 // 쓰기 (pages/ 아래만, 여러 페이지를 한 번에) + 목록·기록 자동
 // ---------------------------------------------------------------------------
 
@@ -531,7 +689,7 @@ export function lint(root: string, name: string, pages = loadPages(root)): LintR
 	const known = new Set(types.map((t) => t.id));
 	const byName = new Map<string, Page[]>();
 	for (const p of pages) byName.set(key(p.name), [...(byName.get(key(p.name)) || []), p]);
-	const rawFiles = listFiles(root, "raw").filter((r) => !r.startsWith("raw/assets/"));
+	const rawFiles = rawFilesOf(root);
 	const rawNames = new Set(listFiles(root, "raw").map((r) => key(baseOf(r.split("/").pop() || ""))));
 	const inbound = new Map<string, number>();
 	const broken: string[] = [];
@@ -542,8 +700,7 @@ export function lint(root: string, name: string, pages = loadPages(root)): LintR
 				if (k !== key(p.name)) inbound.set(k, (inbound.get(k) || 0) + 1);
 			} else if (!rawNames.has(k)) broken.push(`${p.name} -> [[${l}]]`);
 		}
-	const used = new Set(pages.flatMap((p) => p.sources.map((s) => key(slash(s).replace(/^\.\//, "")))));
-	const usedBase = new Set(pages.flatMap((p) => p.sources.map((s) => key(slash(s).split("/").pop() || ""))));
+	const reflected = reflectedRaw(rawFiles, pages);
 	let indexText = "";
 	try {
 		indexText = readFileSync(join(root, "index.md"), "utf8");
@@ -555,7 +712,7 @@ export function lint(root: string, name: string, pages = loadPages(root)): LintR
 		noMeta: pages.filter((p) => !p.ok).map((p) => p.rel),
 		dupNames: [...byName.values()].filter((ps) => ps.length > 1).map((ps) => ps.map((p) => p.rel).join(" / ")),
 		unknownType: pages.filter((p) => p.type && !known.has(p.type)).map((p) => `${p.name} (${p.type})`),
-		rawUnused: rawFiles.filter((r) => !used.has(key(r)) && !usedBase.has(key(r.split("/").pop() || ""))),
+		rawUnused: rawFiles.filter((r) => !reflected.has(r)).sort(pathOrder),
 		indexStale: indexText !== buildIndex(name, pages, types),
 	};
 }
@@ -570,7 +727,7 @@ export function formatLint(r: LintReport, max = 3000): string {
 		sec("머리말 없음·빠짐", r.noMeta, "title·summary·type"),
 		sec("모르는 분류", r.unknownType, "WIKI.md 의 분류에 넣거나 type 을 고침"),
 		sec("고아 페이지", r.orphans, "다른 페이지에서 [[링크]]"),
-		sec("아직 반영 안 된 원본", r.rawUnused, "/wiki ingest <파일>"),
+		sec("아직 반영 안 된 원본", r.rawUnused, "/wiki ingest <파일·폴더>"),
 		r.indexStale ? "목록(index.md)이 페이지와 다름 (/wiki reindex)" : "",
 	].filter(Boolean);
 	if (parts.length === 1) parts.push("문제 없음");
@@ -676,6 +833,20 @@ export default function (pi: ExtensionAPI) {
 	let lastPrompt = "";
 	let lastAnswer = "";
 	let shown = false;
+	/** 폴더째 반영: 원본 하나를 요청 하나로, 앞 요청이 끝나면(agent_settled) 다음을 보냄 */
+	let batch: null | {
+		name: string;
+		root: string;
+		dir: string; // raw/... 또는 raw
+		items: string[];
+		i: number; // 지금 반영하는 원본
+		ok: string[];
+		missed: string[]; // 요청은 끝났는데 반영되지 않음
+		streak: number; // 연달아 반영되지 않은 수
+		stop: string; // 멈출 까닭 (abort, error, unfinished, user)
+		later: number; // 한 번에 하는 수를 넘어 다음에 할 수
+		prompt: string; // 지금 보낸 부탁
+	} = null;
 
 	const current = () => {
 		const cfg = readConfig();
@@ -696,7 +867,8 @@ export default function (pi: ExtensionAPI) {
 	};
 	const status = (ctx: any) => {
 		const { name, root } = current();
-		if (ctx?.hasUI) ctx.ui.setStatus?.("wiki", root ? ctx.ui.theme.fg("accent", `위키: ${name}`) : undefined);
+		const prog = batch ? ` · 반영 ${batch.i + 1}/${batch.items.length}` : "";
+		if (ctx?.hasUI) ctx.ui.setStatus?.("wiki", root ? ctx.ui.theme.fg("accent", `위키: ${name}${prog}`) : undefined);
 	};
 	const show = (ctx: any, text: string | undefined) => {
 		if (!ctx?.hasUI) return;
@@ -711,6 +883,71 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 	const result = (text: string) => ({ content: [{ type: "text" as const, text }], details: undefined });
+
+	// 폴더째 반영
+	const few = (list: string[], n = 2) => `${list.slice(0, n).map((r) => r.split("/").pop()).join(", ")}${list.length > n ? " 등" : ""}`;
+	const byFolder = (list: string[]) => {
+		const m = new Map<string, number>();
+		for (const r of list) {
+			const d = r.split("/").slice(1, -1).join("/") || "raw/";
+			m.set(d, (m.get(d) || 0) + 1);
+		}
+		const all = [...m].map(([d, n]) => `${d} ${n}개`);
+		return `${all.slice(0, 5).join(" · ")}${all.length > 5 ? ` 외 ${all.length - 5}곳` : ""}`;
+	};
+	const sendItem = (ctx: any) => {
+		if (!batch) return;
+		const rel = batch.items[batch.i];
+		const title = sourceTitle(rel, rawFilesOf(batch.root), loadPages(batch.root));
+		batch.prompt = ingestPrompt(batch.name, rel, title, { i: batch.i + 1, n: batch.items.length });
+		status(ctx);
+		send(batch.prompt);
+	};
+	const finish = (ctx: any, why: string) => {
+		const b = batch;
+		batch = null;
+		status(ctx);
+		if (!b || !ctx?.hasUI) return;
+		const rest = b.items.length - b.ok.length + b.later; // 반영 안 된 것도 같은 명령을 다시 치면 다시 함
+		const again = `/wiki ingest ${b.dir === "raw" ? "raw" : b.dir.slice(4)}`;
+		const missed = b.missed.length ? `, 반영 안 됨 ${b.missed.length}개 (${few(b.missed, 3)})` : "";
+		const cont = rest ? ` 남은 ${rest}개는 ${again} 로 이어 갑니다.` : "";
+		const reason: Record<string, string> = {
+			abort: "Esc",
+			error: "오류. 잠시 뒤에",
+			unfinished: "답이 끝나지 않음",
+			user: "다른 요청이 들어옴",
+		};
+		if (why === "done") return ctx.ui.notify(`위키 반영을 마쳤습니다: ${b.ok.length}개 반영${missed}.${cont}`, b.missed.length ? "warning" : "info");
+		if (why === "miss")
+			return ctx.ui.notify(
+				`원본 2개가 연달아 위키에 반영되지 않아 멈췄습니다 (${few(b.missed.slice(-2))}). 모델의 답을 보고 고친 뒤 ${again} (계획 모드면 /plan 으로 끈 뒤). 반영 ${b.ok.length}개.${cont}`,
+				"warning",
+			);
+		ctx.ui.notify(`위키 반영을 멈췄습니다 (${reason[why] || why}): ${b.ok.length}개 반영${missed}.${cont}`, "warning");
+	};
+	/** 요청 하나가 끝난 뒤: 그 원본이 반영됐는지 보고 다음 원본을 보내거나 끝냄 */
+	const step = (ctx: any) => {
+		const b = batch;
+		if (!b) return;
+		const rel = b.items[b.i];
+		const done = reflectedRaw(rawFilesOf(b.root), loadPages(b.root)).has(rel);
+		if (b.stop) {
+			if (done) b.ok.push(rel); // 멈춘 원본이 반영되지 않았으면 남은 것으로 셈
+			return finish(ctx, b.stop);
+		}
+		if (done) {
+			b.ok.push(rel);
+			b.streak = 0;
+		} else {
+			b.missed.push(rel);
+			b.streak++;
+		}
+		if (b.streak >= 2) return finish(ctx, "miss");
+		b.i++;
+		if (b.i >= b.items.length) return finish(ctx, "done");
+		sendItem(ctx);
+	};
 
 	pi.registerTool({
 		name: "wiki_search",
@@ -773,7 +1010,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("wiki", {
-		description: "LLM 위키: /wiki (상태), init [이름] [폴더], use <이름>, off, ingest <raw/ 파일>, ask <질문>, save [제목], lint, reindex",
+		description: "LLM 위키: /wiki (상태), init [이름] [폴더], use <이름>, off, ingest <raw/ 파일·폴더>, ask <질문>, save [제목], lint, reindex",
 		handler: async (args: string, ctx: any) => {
 			const [sub = "", ...rest] = (args || "").trim().split(/\s+/);
 			const arg = rest.join(" ").trim();
@@ -808,9 +1045,35 @@ export default function (pi: ExtensionAPI) {
 			const c = current();
 			if (!c.root) return notify(`켜진 위키가 없습니다. /wiki init [이름] [폴더] 로 만들거나 /wiki use <이름> (있는 위키: ${Object.keys(cfg.wikis).join(", ") || "없음"})`, "warning");
 			if (sub === "ingest") {
-				const rel = resolveTarget(c.root, [], arg.startsWith("raw/") ? arg : `raw/${arg}`);
-				if (!arg || !rel || !rel.startsWith("raw/")) return notify(`원본은 위키의 raw/ 폴더에 먼저 넣으세요 (${slash(c.root)}/raw). 지금은 raw/ 안의 파일만 받습니다`, "warning");
-				return send(`'${c.name}' 위키의 ${rel} 을 llm-wiki 스킬의 ingest 순서대로 위키에 반영해 줘.`);
+				if (!arg) return notify("/wiki ingest <raw/ 안의 파일·폴더> (예: /wiki ingest 회의록.md, /wiki ingest 회의록). raw/ 전체는 /wiki ingest raw", "warning");
+				if (batch) return notify(`폴더째 반영 중입니다 (${batch.i + 1}/${batch.items.length}). 멈추려면 Esc`, "warning");
+				const t = rawTarget(c.root, arg);
+				if (t.many)
+					return notify(`'${arg}' 에 맞는 원본이 여러 개입니다. 경로를 적어 주세요: ${t.many.slice(0, 6).map((r) => r.slice(4)).join(", ")}${t.many.length > 6 ? ` 외 ${t.many.length - 6}개` : ""}`, "warning");
+				if (!t.rel) return notify(`raw/ 에서 찾지 못했습니다: ${arg}. 원본은 위키의 raw/ 폴더(${slash(c.root)}/raw)에 넣고, raw/ 안의 경로나 이름을 적으세요`, "warning");
+				const pages = loadPages(c.root);
+				if (!t.dir) {
+					if (rawKind(c.root, t.rel) === "binary") return notify(`${t.rel} 은 글(텍스트)이 아니라 반영하지 못합니다. 문서는 텍스트(.md·.txt)로 바꿔 raw/ 에 넣으세요`, "warning");
+					return send(ingestPrompt(c.name, t.rel, sourceTitle(t.rel, rawFilesOf(c.root), pages)));
+				}
+				// 폴더째: 원본 하나를 요청 하나로 차례로 (한 요청에 몰면 대화가 길어지고, 끊기면 어디까지 했는지 알기 어려움)
+				if (!ctx.hasUI) return notify("폴더째 반영은 pi 화면에서 합니다 (물어볼 수 없는 실행 방식)", "warning");
+				if (!ctx.isIdle()) return notify("지금 하는 작업이 끝난 뒤 다시 입력해 주세요", "warning");
+				const plan = planIngest(c.root, t.rel, pages);
+				const where = t.rel === "raw" ? "raw/ 전체" : `${t.rel.slice(4)} 폴더`;
+				const skipped = [
+					plan.done.length ? `이미 반영함 ${plan.done.length}개` : "",
+					plan.binary.length ? `글이 아니라 뺌 ${plan.binary.length}개 (${few(plan.binary)}: 텍스트로 바꿔 넣기)` : "",
+					plan.big.length ? `커서 뺌 ${plan.big.length}개 (${few(plan.big)}: 하나씩 /wiki ingest <경로>)` : "",
+				].filter(Boolean);
+				if (!plan.items.length) return notify(`${where}에 반영할 원본이 없습니다${skipped.length ? ` (${skipped.join(", ")})` : ""}`, "info");
+				const lines = [`이번에 반영: ${plan.items.length}개 (${byFolder(plan.items)})`];
+				if (plan.later.length) lines.push(`다음에: ${plan.later.length}개 (한 번에 ${INGEST_LIMIT}개까지. 끝난 뒤 같은 명령으로 이어 감)`);
+				lines.push(...skipped, "", "원본 하나를 요청 하나로 차례로 보냅니다. Esc 로 멈추고, 같은 명령으로 남은 것부터 이어 갑니다.");
+				if (isBridge()) lines.push("Copilot·사내AI 는 원본 하나에 4~12번 오갑니다. 사용량 제한이 있는 계정이면 내 설정 파일의 max_questions_per_minute 를 2 정도로 두세요.");
+				if (!(await ctx.ui.confirm(`${where}의 원본 ${plan.items.length}개를 위키에 반영할까요?`, lines.join("\n")))) return notify("위키 반영을 하지 않았습니다", "info");
+				batch = { name: c.name, root: c.root, dir: t.rel, items: plan.items, i: 0, ok: [], missed: [], streak: 0, stop: "", later: plan.later.length, prompt: "" };
+				return sendItem(ctx);
 			}
 			if (sub === "ask") {
 				if (!arg) return notify("/wiki ask <질문>", "warning");
@@ -848,15 +1111,36 @@ export default function (pi: ExtensionAPI) {
 					` 폴더  ${slash(c.root)}   (Obsidian 보관소로 열기)`,
 					` 페이지 ${pages.length}쪽 · 반영 안 된 원본 ${r.rawUnused.length}개 · 깨진 링크 ${r.broken.length}개 · 모델이 알아서 쓰기: ${c.cfg.auto}`,
 					` 최근  ${recent.length ? recent.map((l) => l.slice(3)).join("\n       ") : "(기록 없음)"}`,
-					" 명령  /wiki ingest <raw/ 파일> · ask <질문> · save [제목] · lint · reindex · use <이름> · off",
+					" 명령  /wiki ingest <raw/ 파일·폴더> · ask <질문> · save [제목] · lint · reindex · use <이름> · off",
 				].join("\n"),
 			);
 		},
 	});
 
 	pi.on("session_start", async (_event: unknown, ctx: any) => {
+		batch = null; // 새 세션에서는 폴더째 반영을 이어 가지 않음 (같은 명령으로 남은 것부터)
 		applyTools(!!current().root);
 		status(ctx);
+	});
+
+	// 폴더째 반영 중에 사용자가 직접 요청하면 지금 원본까지만 하고 멈춤 (/ 로 시작하는 명령은 그대로)
+	pi.on("input", async (event: any) => {
+		if (batch && event.source !== "extension" && !String(event.text || "").trim().startsWith("/")) batch.stop ||= "user";
+	});
+
+	// 요청이 제대로 끝났는지: 마지막이 끝까지 쓴 답이어야 함 (Esc·오류·도구 실행 중에 끊김이면 멈춤)
+	pi.on("agent_end", async (event: any) => {
+		if (!batch) return;
+		const msgs: any[] = event.messages || [];
+		const last = msgs[msgs.length - 1];
+		if (!(last?.role === "assistant" && last.stopReason === "stop"))
+			batch.stop ||= last?.stopReason === "aborted" ? "abort" : last?.stopReason === "error" ? "error" : "unfinished";
+		const asked = batch.prompt;
+		if (msgs.some((m) => m?.role === "user" && textOf(m).trim() && !textOf(m).includes(asked))) batch.stop ||= "user";
+	});
+
+	pi.on("agent_settled", async (_event: unknown, ctx: any) => {
+		if (batch) setTimeout(() => step(ctx), 0); // 다른 확장의 '끝남' 처리가 늦어지지 않게 따로
 	});
 
 	pi.on("before_agent_start", async (event: any) => {
