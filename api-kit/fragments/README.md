@@ -179,7 +179,7 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 - 하는 일: 받은 파일 확인 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 판을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
 - 끝에 `지금 판 -> 새 판` 과 이 판에서 바뀐 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 판으로 시작합니다. `/doctor` 의 판 번호로 확인합니다.
 - 받은 파일이 지금과 같은 판이면 멈춥니다 (이전 판 폴더를 덮지 않도록). 같은 판을 다시 깔려면 끝에 `--force`.
-- **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 판의 `pi-agent-like-agent-api-<판>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.4MB 라 반입이 가볍습니다. 같은 명령에 그 파일을 줍니다.
+- **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 판의 `pi-agent-like-agent-api-<판>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.2MB 라 반입이 가볍습니다. 같은 명령에 그 파일을 줍니다.
   지금 깔린 pi 본체가 새 판의 것과 같은지 해시로 확인한 뒤 그대로 쓰고, 다르면(pi 본체가 바뀐 판. CHANGELOG·Releases 에 적음) 아무것도 바꾸지 않고 전체 zip 이 필요하다고 알려 줍니다. 몇 판을 건너뛰어도 됩니다.
   2026-10-16.1 보다 예전 판의 `update.sh` 는 이 zip 을 모르므로, 그 판에서는 한 번 전체 zip 으로 바꿉니다.
 - zip 을 풀 프로그램(`unzip`, Python)이 둘 다 없는 노트북이면, GitHub 의 Tags 에서 그 판의 `tar.gz` 를 받아 같은 명령에 주면 됩니다 (`tar` 로 풂).

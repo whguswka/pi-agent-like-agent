@@ -5,7 +5,7 @@
 
 ## 2026-10-16.1
 가벼운 업데이트 zip 을 더했습니다. 바탕: pi-agent-like-agent 2026-10-16.1.
-- **가벼운 업데이트 zip**: 판마다 GitHub 저장소의 **Releases** 에 `pi-agent-like-agent-api-<판>-update.zip` 을 올립니다. pi 본체(`runtime/`, 2.8MB·835개 파일)를 뺀 약 0.4MB 라 반입이 가볍습니다 (전체 zip 은 3.2MB) ([README 7장](README.md#7-새-버전으로-바꾸기)).
+- **가벼운 업데이트 zip**: 판마다 GitHub 저장소의 **Releases** 에 `pi-agent-like-agent-api-<판>-update.zip` 을 올립니다. pi 본체(`runtime/`, 2.8MB·835개 파일)를 뺀 약 0.2MB 라 반입이 가볍습니다 (전체 zip 은 3.0MB) ([README 7장](README.md#7-새-버전으로-바꾸기)).
   - `update.sh` 가 지금 깔린 pi 본체가 새 판의 것과 같은지 해시 목록(`docs/runtime-SHA256SUMS.txt`)으로 확인한 뒤 그대로 씁니다. 다르면 아무것도 바꾸지 않고 전체 zip 이 필요하다고 멈춥니다.
   - 키트 파일은 모두 들어 있어 몇 판을 건너뛰어도 됩니다. pi 본체가 바뀌는 판은 CHANGELOG 와 Releases 에 '전체 zip 필요' 를 적습니다.
 - `update.sh`: 처음 zip 을 풀어 설치한 판에서 바꿀 때 나오던 `.commit: No such file or directory` 줄을 없앴습니다 (동작은 같음).
