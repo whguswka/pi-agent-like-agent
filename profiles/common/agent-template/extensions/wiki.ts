@@ -846,6 +846,7 @@ export default function (pi: ExtensionAPI) {
 		stop: string; // 멈출 까닭 (abort, error, unfinished, user)
 		later: number; // 한 번에 하는 수를 넘어 다음에 할 수
 		prompt: string; // 지금 보낸 부탁
+		sent: boolean; // 부탁을 보냈고 그 요청이 아직 끝나지 않음 (요청 하나에 한 번만 다음으로)
 	} = null;
 
 	const current = () => {
@@ -900,8 +901,13 @@ export default function (pi: ExtensionAPI) {
 		const rel = batch.items[batch.i];
 		const title = sourceTitle(rel, rawFilesOf(batch.root), loadPages(batch.root));
 		batch.prompt = ingestPrompt(batch.name, rel, title, { i: batch.i + 1, n: batch.items.length });
+		batch.sent = true;
 		status(ctx);
-		send(batch.prompt);
+		try {
+			send(batch.prompt);
+		} catch {
+			finish(ctx, "error"); // 보내지 못하면 '반영 중' 으로 남지 않게
+		}
 	};
 	const finish = (ctx: any, why: string) => {
 		const b = batch;
@@ -1072,7 +1078,7 @@ export default function (pi: ExtensionAPI) {
 				lines.push(...skipped, "", "원본 하나를 요청 하나로 차례로 보냅니다. Esc 로 멈추고, 같은 명령으로 남은 것부터 이어 갑니다.");
 				if (isBridge()) lines.push("Copilot·사내AI 는 원본 하나에 4~12번 오갑니다. 사용량 제한이 있는 계정이면 내 설정 파일의 max_questions_per_minute 를 2 정도로 두세요.");
 				if (!(await ctx.ui.confirm(`${where}의 원본 ${plan.items.length}개를 위키에 반영할까요?`, lines.join("\n")))) return notify("위키 반영을 하지 않았습니다", "info");
-				batch = { name: c.name, root: c.root, dir: t.rel, items: plan.items, i: 0, ok: [], missed: [], streak: 0, stop: "", later: plan.later.length, prompt: "" };
+				batch = { name: c.name, root: c.root, dir: t.rel, items: plan.items, i: 0, ok: [], missed: [], streak: 0, stop: "", later: plan.later.length, prompt: "", sent: false };
 				return sendItem(ctx);
 			}
 			if (sub === "ask") {
@@ -1140,7 +1146,9 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_settled", async (_event: unknown, ctx: any) => {
-		if (batch) setTimeout(() => step(ctx), 0); // 다른 확장의 '끝남' 처리가 늦어지지 않게 따로
+		if (!batch?.sent) return;
+		batch.sent = false;
+		setTimeout(() => step(ctx), 0); // 다른 확장의 '끝남' 처리가 늦어지지 않게 따로
 	});
 
 	pi.on("before_agent_start", async (event: any) => {
