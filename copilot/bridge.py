@@ -73,7 +73,7 @@ DEFAULT_CONFIG = {
     #  tab_reload_mb: 새 대화를 열 때·pi 세션이 끝날 때(/new 등) 이 탭의 웹 앱이 이만큼(MB) 넘게 쓰거나 전용 창 전체가 memory_warn_mb 를
     #   넘으면 단추 대신 페이지를 새로 읽음 (0 이면 끔)
     #  memory_warn_mb: pi + 중계 서버 + 전용 창을 합친 메모리가 이만큼(MB) 넘으면 pi 상태 줄에서 /new 를 권함 (0 이면 끔)
-    "tab_reload_mb": 400,
+    "tab_reload_mb": 300,
     "memory_warn_mb": 2500,
     "open_tab_if_missing": False,  # 전용 창에 이 서비스의 탭이 없으면 새로 연다 (사내AI)
     # 끝난 대화 삭제: 중계 서버가 만든 대화(copilot-chats.json 에 기록)만 왼쪽 목록에서 '… > 삭제 > 확인' 으로 지운다
