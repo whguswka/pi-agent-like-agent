@@ -95,13 +95,15 @@ const fail = (what, r) => {
 };
 
 const base = `/repos/${owner}/${repo}/releases`;
-const info = { tag_name: tag, name: `버전 ${ver}`, body, draft: false, prerelease: false, make_latest: "true" };
+// 가장 새 태그일 때만 Latest 로 (지난 Release 를 고쳐도 Latest 가 그리로 옮겨 가지 않게)
+const latest = git("tag", "--list", "v*", "--sort=-v:refname").split("\n")[0] === tag ? "true" : "false";
+const info = { tag_name: tag, name: `버전 ${ver}`, body, draft: false, prerelease: false, make_latest: latest };
 let r = await api("POST", base, JSON.stringify(info), { "Content-Type": "application/json" });
 let rel = r.json;
 if (r.status === 422) {
 	r = await api("GET", `${base}/tags/${encodeURIComponent(tag)}`);
 	if (r.status !== 200) fail("있는 Release 찾기", r);
-	r = await api("PATCH", `${base}/${r.json.id}`, JSON.stringify({ name: info.name, body, make_latest: "true" }), { "Content-Type": "application/json" });
+	r = await api("PATCH", `${base}/${r.json.id}`, JSON.stringify({ name: info.name, body, make_latest: latest }), { "Content-Type": "application/json" });
 	if (r.status !== 200) fail("Release 고치기", r);
 	rel = r.json;
 	console.log(`[release] 있는 Release 를 고침: ${rel.html_url}`);

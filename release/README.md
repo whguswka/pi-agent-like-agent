@@ -15,6 +15,7 @@
 
 **Release 본문:** 받을 파일 안내 + 그 태그의 `CHANGELOG.md` 의 `## <버전>` 항목. 제목은 `버전 <버전>`.
 태그를 낸 뒤 CHANGELOG 의 글을 고쳤으면 `--notes HEAD` 를 앞에 붙여 지난 Release 의 본문만 다시 씁니다 (올릴 파일 없이. 링크는 그 태그의 파일로 가므로 그 뒤에 바뀐 제목으로 가는 링크가 없는지 봄).
+`Latest` 표시는 가장 새 태그의 Release 에만 둡니다 (지난 Release 를 고쳐도 옮겨 가지 않음).
 토큰은 `git credential fill`(GCM_INTERACTIVE=never)로 얻어 `Authorization` 머리글로만 씁니다 (화면·인자에 쓰지 않음).
 
 **버전을 낼 때 (태그를 push 한 뒤):**
