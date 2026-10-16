@@ -165,7 +165,7 @@ def summarize(events, days=7, now=None):
         if e.get("svc") not in svcs:
             svcs.append(e.get("svc"))
     if not svcs:
-        lines.append("  기록 없음 (이 판의 중계 서버로 요청하면 쌓임)")
+        lines.append("  기록 없음 (이 버전의 중계 서버로 요청하면 쌓임)")
         return lines
     for svc in svcs:
         ev = [e for e in events if e.get("svc") == svc]

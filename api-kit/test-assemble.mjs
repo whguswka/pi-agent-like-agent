@@ -105,7 +105,7 @@ const again = (s) => {
 let r = again(src);
 check("그대로면 바뀐 짝 없음", r.changed.length === 0 && r.gone === 0, r);
 r = again(src.replace("| Ctrl+P \\| VS Code 가 가져감 \\|", "| Ctrl+P \\| 바뀐 API 글 \\|").replace("- 노트북 줄", "- 바뀐 노트북 줄"));
-check("API 판 글만 고치면 걸리지 않음", r.changed.length === 0 && r.gone === 0, r);
+check("API 키트 글만 고치면 걸리지 않음", r.changed.length === 0 && r.gone === 0, r);
 r = again(src.replace("| Git Bash | 필요 |", "| Git Bash | 2.40 이상 |").replace("- PC 줄 <!--", "- 바뀐 PC 줄 <!--"));
 check("원래 키트 쪽 글이 바뀌면 걸림 (블록과 api= 줄, 줄 번호와 함께)", r.changed.map((k) => `${k.kind}:${k.line}`).join(",") === "바꾸기 준비물:3,api=:25" && r.gone === 2, r);
 console.log(fails ? `RESULT: FAIL (${fails})` : "RESULT: PASS");

@@ -1410,9 +1410,9 @@ def main_print_shell(path):
     return 0
 
 
-# 예전 판들이 내놓은 copilot/bridge.json 의 값 가운데 지금 판과 다른 것 ('표.항목' 은 표(dict) 안의 항목).
-# 이전 판 폴더의 bridge.json 이 이 값이면 사용자가 고친 것이 아니라 판이 바뀌며 달라진 것이다.
-# bridge.json 의 값을 바꾸는 판마다 바꾸기 전 값을 여기에 더하고 BRIDGE_JSON_SHA256 을 새 파일의 값으로 (tests/test_config.py 가 확인)
+# 예전 버전들이 내놓은 copilot/bridge.json 의 값 가운데 지금 버전과 다른 것 ('표.항목' 은 표(dict) 안의 항목).
+# 이전 버전 폴더의 bridge.json 이 이 값이면 사용자가 고친 것이 아니라 버전이 바뀌며 달라진 것이다.
+# bridge.json 의 값을 바꾸는 버전마다 바꾸기 전 값을 여기에 더하고 BRIDGE_JSON_SHA256 을 새 파일의 값으로 (tests/test_config.py 가 확인)
 SHIPPED_OLD_VALUES = {
     "first_reply_timeout_seconds": [180],
     "copilot_model": ["GPT 6.0 Sol", "GPT-6 Sol"],
@@ -1424,7 +1424,7 @@ BRIDGE_JSON_SHA256 = "530a8a1ed74df4300482e0b2de6cba187384733f56c8e6ecb16a45fd5c
 
 
 def edited_keys(old_path, new_path):
-    """이전 판의 저장소 bridge.json(old)에서 사용자가 직접 고친 것으로 보이는 항목: 새 판과 값이 다르고, 예전 판이 내놓은 값도 아닌 것.
+    """이전 버전의 저장소 bridge.json(old)에서 사용자가 직접 고친 것으로 보이는 항목: 새 버전과 값이 다르고, 예전 버전이 내놓은 값도 아닌 것.
     (update.sh 와 수동 작업 절차 3-2: 직접 고친 항목은 내 설정 파일로 옮기라고 알림)"""
     old, new = read_config_file(old_path) or {}, read_config_file(new_path) or {}
     out = []
@@ -1440,7 +1440,7 @@ def edited_keys(old_path, new_path):
 if __name__ == "__main__":  # python bridge.py --shell-config  (bin/pi 가 부름)
     if sys.argv[1:2] == ["--shell-config"]:
         sys.exit(main_print_shell(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge.json")))
-    # python bridge.py --edited-keys <이전 판 bridge.json> [새 판 bridge.json]  (update.sh, 수동 작업 절차 3-2)
+    # python bridge.py --edited-keys <이전 버전 bridge.json> [새 버전 bridge.json]  (update.sh, 수동 작업 절차 3-2)
     if sys.argv[1:2] == ["--edited-keys"] and len(sys.argv) >= 3:
         for s in (sys.stdout, sys.stderr):
             try:

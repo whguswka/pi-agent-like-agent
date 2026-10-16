@@ -41,9 +41,9 @@ check("기본 명령·스킬 복사 (스킬은 폴더째)", read(A("prompts/revi
 	&& !fs.existsSync(A("skills/not-a-skill")), out);
 check("settings.json 의 skills 목록은 건드리지 않음", JSON.stringify(readJson(A("settings.json")).skills) === JSON.stringify(["D:/team/skills"]));
 out = run();
-check("다시 설치해도 바뀌지 않음", !/추가|새 판|그대로/.test(out), out);
+check("다시 설치해도 바뀌지 않음", !/추가|새 버전|그대로/.test(out), out);
 
-// 새 판: review·test·debugging·weekly 가 바뀜. 사용자는 review 를 고쳤고 debugging 은 지웠음
+// 새 버전: review·test·debugging·weekly 가 바뀜. 사용자는 review 를 고쳤고 debugging 은 지웠음
 put(A("prompts/review.md"), "내가 고친 review");
 fs.rmSync(A("skills/debugging"), { recursive: true });
 put(path.join(kit, "prompts", "review.md"), "review v2");
@@ -52,12 +52,12 @@ put(path.join(kit, "skills", "debugging", "SKILL.md"), "debugging v2");
 put(path.join(kit, "skills", "korean-report", "weekly.md"), "weekly v2");
 put(path.join(kit, "skills", "new-skill", "SKILL.md"), "new v1");
 out = run();
-check("고치지 않은 것은 새 판으로 (명령, 스킬 폴더 안 파일)", read(A("prompts/test.md")) === "test v2" && read(A("skills/korean-report/weekly.md")) === "weekly v2", out);
+check("고치지 않은 것은 새 버전으로 (명령, 스킬 폴더 안 파일)", read(A("prompts/test.md")) === "test v2" && read(A("skills/korean-report/weekly.md")) === "weekly v2", out);
 check("고친 것은 그대로 두고 알림", read(A("prompts/review.md")) === "내가 고친 review" && out.includes("직접 고친 것은 그대로 둠") && out.includes("/review"), out);
 check("지운 것은 다시 넣지 않음", !fs.existsSync(A("skills/debugging")), out);
-check("새 판에 생긴 스킬은 추가", read(A("skills/new-skill/SKILL.md")) === "new v1" && out.includes("new-skill"), out);
+check("새 버전에 생긴 스킬은 추가", read(A("skills/new-skill/SKILL.md")) === "new v1" && out.includes("new-skill"), out);
 out = run();
-check("고친 것은 다음에도 그대로 (알림만)", read(A("prompts/review.md")) === "내가 고친 review" && !/추가|새 판으로/.test(out), out);
+check("고친 것은 다음에도 그대로 (알림만)", read(A("prompts/review.md")) === "내가 고친 review" && !/추가|새 버전으로/.test(out), out);
 
 // 원래 사용자가 만든 같은 이름의 명령은 덮어쓰지 않음
 const agent2 = path.join(tmp, "agent2");
@@ -66,7 +66,7 @@ put(path.join(agent2, "prompts", "test.md"), "내 test 명령");
 execFileSync(process.execPath, [script, tpl, agent2, kit], { encoding: "utf8" });
 check("원래 있던 같은 이름의 내 명령은 덮어쓰지 않음", read(path.join(agent2, "prompts", "test.md")) === "내 test 명령");
 
-// 예전 판(설정에 저장소 폴더를 등록하던 방식)에서 넣은 경로는 뺌
+// 예전 버전(설정에 저장소 폴더를 등록하던 방식)에서 넣은 경로는 뺌
 const state = readJson(A(".pi-agent-kit-template.json"));
 state.kitPaths = { prompts: "C:/old/kit/prompts", skills: "C:/old/kit/skills" };
 put(A(".pi-agent-kit-template.json"), JSON.stringify(state));
@@ -76,9 +76,9 @@ st.skills = ["D:/team/skills", "C:/old/kit/skills"];
 writeJson(A("settings.json"), st);
 out = run();
 const s2 = readJson(A("settings.json"));
-check("예전 판의 등록 경로는 빼고, 사용자가 넣은 경로는 남김", !("prompts" in s2) && JSON.stringify(s2.skills) === JSON.stringify(["D:/team/skills"]), s2);
+check("예전 버전의 등록 경로는 빼고, 사용자가 넣은 경로는 남김", !("prompts" in s2) && JSON.stringify(s2.skills) === JSON.stringify(["D:/team/skills"]), s2);
 out = run(null);
-check("저장소 폴더를 주지 않으면 복사하지 않음", !/추가|새 판/.test(out), out);
+check("저장소 폴더를 주지 않으면 복사하지 않음", !/추가|새 버전/.test(out), out);
 
 // models.json: pi 처럼 주석과 끝의 쉼표를 받아들이고 새 모델을 넣음
 writeJson(path.join(tpl, "models.json"), { providers: { copilot: { baseUrl: "u", models: [{ id: "m1" }] } } });

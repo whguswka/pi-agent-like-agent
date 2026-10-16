@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# 새 판으로 바꾸기: bash ~/tools/pi/update.sh <받은 zip 파일> [pc|jupyter] [--force]
+# 새 버전으로 바꾸기: bash ~/tools/pi/update.sh <받은 zip 파일> [pc|jupyter] [--force]
 #  1) zip 이 이 저장소인지 확인하고 옆의 임시 폴더에 풂
-#  2) 중계 서버를 끔 (다음 pi 실행 때 새 판으로 켜짐)
-#  3) 지금 폴더를 <폴더>.old 로 바꾸고 새 판을 그 자리에 둠
+#  2) 중계 서버를 끔 (다음 pi 실행 때 새 버전으로 켜짐)
+#  3) 지금 폴더를 <폴더>.old 로 바꾸고 새 버전을 그 자리에 둠
 #  4) install.sh 로 설정 반영 (내 설정·지침·스킬·세션 기록은 그대로)
-#  5) 지금 판 -> 새 판, 확인할 점을 보여 줌
+#  5) 지금 버전 -> 새 버전, 확인할 점을 보여 줌
 # 설정 이름(pc|jupyter)을 생략하면 ~/.pi/agent/models.json 을 보고 고른다.
-# 같은 판이면 멈춘다 (이전 판 폴더를 덮지 않게). 그래도 다시 설치하려면 --force. 예전 판 zip 을 주면 그 판으로 되돌린다.
-# 업데이트용 zip(Releases 의 <저장소>-<판>-update.zip)은 pi 본체(runtime/)를 뺀 가벼운 zip 이다: 지금 깔린 pi 본체가
-#  새 판의 해시 목록(docs/runtime-SHA256SUMS.txt)과 같은지 먼저 확인하고, 같으면 그것을 새 판 폴더로 복사해 쓴다 (다르면 아무것도 바꾸지 않고 멈춤)
+# 같은 버전이면 멈춘다 (이전 버전 폴더를 덮지 않게). 그래도 다시 설치하려면 --force. 예전 버전 zip 을 주면 그 버전으로 되돌린다.
+# 업데이트용 zip(Releases 의 <저장소>-<버전>-update.zip)은 pi 본체(runtime/)를 뺀 가벼운 zip 이다: 지금 깔린 pi 본체가
+#  새 버전의 해시 목록(docs/runtime-SHA256SUMS.txt)과 같은지 먼저 확인하고, 같으면 그것을 새 버전 폴더로 복사해 쓴다 (다르면 아무것도 바꾸지 않고 멈춤)
 #
-# update.sh 가 없는 예전 판에서는: 새 zip 에서 이 파일만 꺼내 pi 폴더 옆(~/tools/update.sh)에 두고 실행한다
+# update.sh 가 없는 예전 버전에서는: 새 zip 에서 이 파일만 꺼내 pi 폴더 옆(~/tools/update.sh)에 두고 실행한다
 #   unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 #   -> 옆의 pi 폴더(~/tools/pi)를 바꾸고, 끝나면 꺼낸 update.sh 는 지운다
 
@@ -45,7 +45,7 @@ ZIP="$(cd "$(dirname "$ZIP")" && pwd)/$(basename "$ZIP")"
 # 지금 폴더가 바꿀 폴더 안이면 이름을 바꿀 수 없다 (Windows 는 대소문자를 구분하지 않으므로 소문자로 비교)
 case "${PWD,,}/" in "${PI_HOME,,}"/*) die "지금 폴더($PWD)가 바꿀 폴더 안에 있습니다. 다른 폴더에서 실행하세요 (예: cd ~)" ;; esac
 
-# 도우미 함수(Python 찾기, Windows 경로): 지금 판에 있으면 그것, 없으면(예전 판) zip 을 푼 뒤 새 판의 것
+# 도우미 함수(Python 찾기, Windows 경로): 지금 버전에 있으면 그것, 없으면(예전 버전) zip 을 푼 뒤 새 버전의 것
 if [ -f "$PI_HOME/bin/kit-config.sh" ]; then
   . "$PI_HOME/bin/find-node.sh"
   . "$PI_HOME/bin/kit-config.sh"
@@ -87,15 +87,15 @@ COMMIT=  # GitHub 에서 받은 zip 은 주석에 커밋 번호가 들어 있음
 [ -n "$PY" ] && COMMIT="$("$PY" -c "import sys, zipfile; print(zipfile.ZipFile(sys.argv[1]).comment.decode('ascii', 'replace')[:7])" \
   "$(pi_native_path "$ZIP")" 2>/dev/null | tr -d '\r\n')"
 OLD_COMMIT="$(tr -d '\r\n' 2>/dev/null < "$PI_HOME/.commit")"
-echo "[update] 지금 판: ${OLD_VER:-(판 번호 없음)}  ->  새 판: ${NEW_VER:-(판 번호 없음)}${COMMIT:+ (커밋 $COMMIT)}"
-# 같은 판을 다시 깔면 하나뿐인 이전 판 폴더(.old)가 지금 판의 복사본으로 바뀌므로 멈춘다
+echo "[update] 지금 버전: ${OLD_VER:-(버전 번호 없음)}  ->  새 버전: ${NEW_VER:-(버전 번호 없음)}${COMMIT:+ (커밋 $COMMIT)}"
+# 같은 버전을 다시 깔면 하나뿐인 이전 버전 폴더(.old)가 지금 버전의 복사본으로 바뀌므로 멈춘다
 if [ -z "$FORCE" ] && [ -n "$OLD_VER" ] && [ "$OLD_VER" = "$NEW_VER" ] \
    && { [ -z "$COMMIT" ] || [ -z "$OLD_COMMIT" ] || [ "$COMMIT" = "$OLD_COMMIT" ]; }; then
-  die "이미 같은 판($NEW_VER)입니다. 받은 zip 이 새 판인지 확인하세요 (그래도 다시 설치하려면 끝에 --force)"
+  die "이미 같은 버전($NEW_VER)입니다. 받은 zip 이 새 버전인지 확인하세요 (그래도 다시 설치하려면 끝에 --force)"
 fi
 if [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ] && [ "$OLD_VER" != "$NEW_VER" ] \
    && [ "$(printf '%s\n%s\n' "$OLD_VER" "$NEW_VER" | sort -V | tail -1)" = "$OLD_VER" ]; then
-  echo "[update] 참고: 지금 판보다 예전 판입니다 (이전 판으로 되돌리기)"
+  echo "[update] 참고: 지금 버전보다 예전 버전입니다 (이전 버전으로 되돌리기)"
 fi
 
 # pi 본체(runtime/)가 해시 목록과 같은지: 같으면 0. 다르면 1, 다르거나 없는 파일을 3개까지 RUNTIME_BAD 에
@@ -133,11 +133,11 @@ PYEOF
     return 1
   fi
 }
-# 업데이트용 zip 이면 지금 깔린 pi 본체가 새 판의 것과 같은지 먼저 본다 (다르면 아무것도 바꾸지 않고 멈춤)
+# 업데이트용 zip 이면 지금 깔린 pi 본체가 새 버전의 것과 같은지 먼저 본다 (다르면 아무것도 바꾸지 않고 멈춤)
 if [ -n "$LIGHT" ]; then
   runtime_check "$PI_HOME" "$TOP/docs/runtime-SHA256SUMS.txt" \
-    || die "이 zip 은 pi 본체(runtime/)를 뺀 업데이트용인데, 지금 깔린 pi 본체가 새 판의 것과 다릅니다 ($RUNTIME_BAD). 전체 zip(GitHub 의 Code > Download ZIP, 또는 Releases 의 Source code (zip))으로 바꾸세요. 지금 판은 그대로입니다"
-  echo "[update] 업데이트용 zip (pi 본체 없음): 지금 깔린 pi 본체가 새 판의 것과 같아 그대로 씁니다"
+    || die "이 zip 은 pi 본체(runtime/)를 뺀 업데이트용인데, 지금 깔린 pi 본체가 새 버전의 것과 다릅니다 ($RUNTIME_BAD). 전체 zip(GitHub 의 Code > Download ZIP, 또는 Releases 의 Source code (zip))으로 바꾸세요. 지금 버전은 그대로입니다"
+  echo "[update] 업데이트용 zip (pi 본체 없음): 지금 깔린 pi 본체가 새 버전의 것과 같아 그대로 씁니다"
 fi
 
 # 2) 중계 서버 끄기 (우리 중계 서버일 때만. 8766 은 사내AI 중계 서버)
@@ -145,7 +145,7 @@ if command -v curl >/dev/null 2>&1; then
   for _port in 8765 8766; do
     case "$(curl -s -m 3 "http://127.0.0.1:$_port/health" 2>/dev/null)" in *'"server": "ok"'*)
       curl -s -m 3 -X POST "http://127.0.0.1:$_port/shutdown" >/dev/null 2>&1 \
-        && echo "[update] 중계 서버$([ "$_port" = 8765 ] || echo "($_port)")를 껐습니다 (다음 pi 실행 때 새 판으로 켜짐)"
+        && echo "[update] 중계 서버$([ "$_port" = 8765 ] || echo "($_port)")를 껐습니다 (다음 pi 실행 때 새 버전으로 켜짐)"
       sleep 1 ;;
     esac
   done
@@ -154,19 +154,19 @@ fi
 # 3) 폴더 바꾸기 (실패하면 아무것도 바꾸지 않은 상태로 멈춤)
 OLD="$PI_HOME.old"
 rm -rf "$OLD" 2>/dev/null
-[ -e "$OLD" ] && die "지난번 이전 판 폴더($OLD)를 지우지 못했습니다. 그 폴더를 연 창을 닫고 다시 실행하세요. 지금 판은 그대로입니다"
+[ -e "$OLD" ] && die "지난번 이전 버전 폴더($OLD)를 지우지 못했습니다. 그 폴더를 연 창을 닫고 다시 실행하세요. 지금 버전은 그대로입니다"
 mv "$PI_HOME" "$OLD" 2>/dev/null \
-  || die "지금 폴더의 이름을 바꾸지 못했습니다 (사용 중). pi, Copilot 전용 창, 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요. 지금 판은 그대로입니다"
+  || die "지금 폴더의 이름을 바꾸지 못했습니다 (사용 중). pi, Copilot 전용 창, 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요. 지금 버전은 그대로입니다"
 if ! mv "$TOP" "$PI_HOME"; then
   mv "$OLD" "$PI_HOME" 2>/dev/null
-  die "새 판을 옮기지 못해 원래대로 되돌렸습니다"
+  die "새 버전을 옮기지 못해 원래대로 되돌렸습니다"
 fi
-# 업데이트용 zip: 이전 판의 pi 본체를 새 판 폴더로 복사 (옮기지 않음: 이전 판 폴더는 되돌리기용으로 그대로 둠)
+# 업데이트용 zip: 이전 버전의 pi 본체를 새 버전 폴더로 복사 (옮기지 않음: 이전 버전 폴더는 되돌리기용으로 그대로 둠)
 if [ -n "$LIGHT" ]; then
   if ! cp -a "$OLD/runtime" "$PI_HOME/runtime" 2>/dev/null || ! runtime_check "$PI_HOME" "$PI_HOME/docs/runtime-SHA256SUMS.txt"; then
     mv "$PI_HOME" "$WORK/failed" 2>/dev/null
     mv "$OLD" "$PI_HOME" 2>/dev/null
-    die "pi 본체(runtime/)를 새 판 폴더로 복사하지 못해 원래대로 되돌렸습니다 (${RUNTIME_BAD:-복사 실패}). 디스크 공간을 확인하세요"
+    die "pi 본체(runtime/)를 새 버전 폴더로 복사하지 못해 원래대로 되돌렸습니다 (${RUNTIME_BAD:-복사 실패}). 디스크 공간을 확인하세요"
   fi
 fi
 [ -n "$COMMIT" ] && echo "$COMMIT" > "$PI_HOME/.commit"
@@ -174,37 +174,37 @@ fi
 # 4) 설정 반영
 echo "[update] 설정 반영: bash $PI_HOME/install.sh $PROFILE"
 echo
-bash "$PI_HOME/install.sh" "$PROFILE" || echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 판: $OLD)" >&2
-# 예전 판으로 되돌린 경우 그 판의 install.sh 는 새 판에만 있던 확장을 치우지 못하므로 여기서도 (키트가 낸 적 있는 이름만, 옮겨 둠)
+bash "$PI_HOME/install.sh" "$PROFILE" || echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 버전: $OLD)" >&2
+# 예전 버전으로 되돌린 경우 그 버전의 install.sh 는 새 버전에만 있던 확장을 치우지 못하므로 여기서도 (키트가 낸 적 있는 이름만, 옮겨 둠)
 KIT_EXT="copilot-session.ts jupyter.ts guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
 for f in $KIT_EXT; do
   [ -e "$AGENT_DIR/extensions/$f" ] || continue
   { [ -e "$PI_HOME/profiles/common/agent-template/extensions/$f" ] || [ -e "$PI_HOME/profiles/$PROFILE/agent-template/extensions/$f" ]; } && continue
   mkdir -p "$(dirname "$AGENT_DIR/extensions.removed/$f")" && mv -f "$AGENT_DIR/extensions/$f" "$AGENT_DIR/extensions.removed/$f" \
-    && echo "[update] 치움: $AGENT_DIR/extensions/$f (이 판에는 없는 확장 -> extensions.removed/)"
+    && echo "[update] 치움: $AGENT_DIR/extensions/$f (이 버전에는 없는 확장 -> extensions.removed/)"
 done
 rmdir "$AGENT_DIR/extensions/lib" 2>/dev/null
 echo
 
-# 5) 확인할 점: 이전 판에서 copilot/bridge.json 을 직접 고쳤다면 내 설정 파일로 옮기도록 알림
-#    판 사이에 키트가 바꾼 값(예: 모델 이름)은 고친 것으로 보지 않는다 (새 판의 bridge.py --edited-keys: 예전 판들이 내놓은 값을 앎)
+# 5) 확인할 점: 이전 버전에서 copilot/bridge.json 을 직접 고쳤다면 내 설정 파일로 옮기도록 알림
+#    버전 사이에 키트가 바꾼 값(예: 모델 이름)은 고친 것으로 보지 않는다 (새 버전의 bridge.py --edited-keys: 예전 버전들이 내놓은 값을 앎)
 if [ -n "$PY" ] && [ -f "$OLD/copilot/bridge.json" ]; then
   _edited="$(PYTHONIOENCODING=utf-8 "$PY" "$(pi_native_path "$PI_HOME/copilot/bridge.py")" --edited-keys \
     "$(pi_native_path "$OLD/copilot/bridge.json")" "$(pi_native_path "$PI_HOME/copilot/bridge.json")" 2>/dev/null | tr -d '\r')"
   case "$_edited" in ""|"고친 항목 없음"|"확인하지 못함"*) ;; *)
-    echo "[update] 확인: 이전 판의 copilot/bridge.json 에서 새 판과 값이 다른 항목: $_edited"
+    echo "[update] 확인: 이전 버전의 copilot/bridge.json 에서 새 버전과 값이 다른 항목: $_edited"
     echo "         직접 고친 것이라면 그 항목을 내 설정 파일(~/.pi/agent/bridge.json)로 옮기세요." ;;
   esac
 fi
-[ -n "$PI_UPDATE_BOOT" ] && rm -f "$PI_UPDATE_BOOT"  # 예전 판용으로 꺼내 둔 update.sh
-# 6) 이 판에서 바뀐 점과 할 일 (CHANGELOG.md 의 '## <새 판>' 항목. 사내망에서는 GitHub 을 볼 수 없으므로 여기서 보여 줌)
+[ -n "$PI_UPDATE_BOOT" ] && rm -f "$PI_UPDATE_BOOT"  # 예전 버전용으로 꺼내 둔 update.sh
+# 6) 이 버전에서 바뀐 점과 할 일 (CHANGELOG.md 의 '## <새 버전>' 항목. 사내망에서는 GitHub 을 볼 수 없으므로 여기서 보여 줌)
 if [ -n "$NEW_VER" ] && [ -f "$PI_HOME/CHANGELOG.md" ]; then
   notes="$(awk -v v="$NEW_VER" '$1 == "##" && $2 == v {on = 1; next} on && /^## / {exit} on && NF' "$PI_HOME/CHANGELOG.md")"
   if [ -n "$notes" ]; then
-    echo "[update] 이 판에서 바뀐 점 (전체: $PI_HOME/CHANGELOG.md)"
+    echo "[update] 이 버전에서 바뀐 점 (전체: $PI_HOME/CHANGELOG.md)"
     printf '%s\n' "$notes" | sed 's/^/  /'
     echo
   fi
 fi
-echo "[update] 완료: ${OLD_VER:-예전 판} -> ${NEW_VER:-새 판}. 이전 판은 $OLD 에 있습니다 (잘 되면 지워도 됨)"
-echo "         pi 를 실행하면 새 판으로 시작합니다. 상태 확인: pi 안에서 /doctor (또는 python $PI_HOME/copilot/diag.py --report)"
+echo "[update] 완료: ${OLD_VER:-예전 버전} -> ${NEW_VER:-새 버전}. 이전 버전은 $OLD 에 있습니다 (잘 되면 지워도 됨)"
+echo "         pi 를 실행하면 새 버전으로 시작합니다. 상태 확인: pi 안에서 /doctor (또는 python $PI_HOME/copilot/diag.py --report)"

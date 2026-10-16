@@ -1,6 +1,6 @@
-# API 판 README 조각
+# API 키트 README 조각
 
-원래 키트 `README.md` 의 `api:바꾸기 이름`·`api:넣기 이름` 표시 자리에 API 판에서 들어갈 글입니다 (`api-kit/assemble.mjs` 가 씀).
+원래 키트 `README.md` 의 `api:바꾸기 이름`·`api:넣기 이름` 표시 자리에 API 키트에서 들어갈 글입니다 (`api-kit/assemble.mjs` 가 씀).
 '조각: 이름' 주석 줄로 나누고, 조각 끝의 빈 줄은 빼고 읽습니다. 첫 조각 위의 이 글은 읽지 않습니다.
 
 <!-- 조각: 제목 -->
@@ -8,7 +8,7 @@
 
 <!-- 조각: 안내 -->
 > **처음이면 [한 장 요약 (빠른 시작)](docs/빠른시작.md)** 부터 보세요. 설치, LLM 연결, 매일 쓰는 법, 자주 쓰는 명령(`/plan`, `@파일`, `/undo`, `/remember` 등)이 한 장에 있습니다.
-> LLM 서버 연결은 [API 연결](docs/API-연결.md), 사람이 직접 하는 일(반입, 설치, 업데이트, 되돌리기)은 [수동 작업 절차](docs/수동-작업-절차.md), 판마다 바뀐 점은 [CHANGELOG](CHANGELOG.md) 에 있습니다.
+> LLM 서버 연결은 [API 연결](docs/API-연결.md), 사람이 직접 하는 일(반입, 설치, 업데이트, 되돌리기)은 [수동 작업 절차](docs/수동-작업-절차.md), 버전마다 바뀐 점은 [CHANGELOG](CHANGELOG.md) 에 있습니다.
 
 <!-- 조각: 소개 -->
 ```
@@ -17,7 +17,7 @@
                                 └── 두뇌(LLM): OpenAI 호환 API (vLLM 등). 주소와 모델 이름은 ~/.pi/agent/models.json
 ```
 - JupyterLab 터미널 같은 다른 Linux 터미널에서도 같은 방법으로 씁니다.
-- 이 저장소는 [pi-agent-like-agent](https://github.com/whguswka/pi-agent-like-agent) 에서 웹 채팅 연결 부분을 빼고, API 로 쓰는 부분만 Kubeflow 노트북용으로 남긴 판입니다.
+- 이 저장소는 [pi-agent-like-agent](https://github.com/whguswka/pi-agent-like-agent) 에서 웹 채팅 연결 부분을 빼고, API 로 쓰는 부분만 Kubeflow 노트북용으로 남긴 키트입니다.
 
 <!-- 조각: 준비물 -->
 | 항목 | 설명 |
@@ -109,7 +109,7 @@ code-server(VS Code 웹)는 브라우저 안에서 돌기 때문에, 몇몇 키�
 | `Ctrl+W` | 브라우저 탭이 닫힘 | 단어 지우기는 `Alt+Backspace` |
 | `Ctrl+T`, `Ctrl+N` | 브라우저의 새 탭·새 창 | 누르지 않기 |
 
-**Shift+Enter 로 줄 바꾸기 (한 번 설정):** VS Code 1.109 보다 예전 판(예: code-server 4.93)의 터미널은 `Shift+Enter` 를 `Enter` 와 똑같이 보내서, pi 가 줄을 바꾸지 않고 바로 보냅니다.
+**Shift+Enter 로 줄 바꾸기 (한 번 설정):** VS Code 1.109 보다 예전 버전(예: code-server 4.93)의 터미널은 `Shift+Enter` 를 `Enter` 와 똑같이 보내서, pi 가 줄을 바꾸지 않고 바로 보냅니다.
 1. `F1` (또는 `Ctrl+Shift+P`) 을 누르고 `Preferences: Open Keyboard Shortcuts (JSON)` 을 고릅니다.
 2. 열린 파일의 `[` `]` 안에 아래를 넣고 저장합니다 (다른 항목이 있으면 그 사이에 쉼표).
    ```json
@@ -122,7 +122,7 @@ code-server(VS Code 웹)는 브라우저 안에서 돌기 때문에, 몇몇 키�
    ```
 - 저장한 뒤에도 `Shift+Enter` 가 바로 보내면 브라우저 탭을 새로 고칩니다 (브라우저의 새로 고침 단추. 켜 둔 pi 는 그대로 이어집니다).
 - 이 설정은 code-server 의 사용자 설정 폴더(홈 아래)에 남습니다. 그 뒤로 bash 같은 다른 프로그램에서 `Shift+Enter` 를 누르면 글자 몇 개가 들어갈 수 있습니다.
-- VS Code 1.109 이후 판(예: code-server 4.121)은 이 설정 없이도 `Shift+Enter` 로 줄이 바뀝니다.
+- VS Code 1.109 이후 버전(예: code-server 4.121)은 이 설정 없이도 `Shift+Enter` 로 줄이 바뀝니다.
 - 긴 지시는 파일에 적어 두고 `@파일` 로 보내도 됩니다.
 - VS Code 가 가져가는 키를 터미널로 보내려면 설정의 `terminal.integrated.sendKeybindingsToShell` 을 켭니다 (그동안 터미널 안에서는 VS Code 단축키가 듣지 않음). 브라우저가 가져가는 키(`Ctrl+W` 등)는 그래도 안 됩니다.
 
@@ -171,19 +171,19 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 
 <!-- 조각: 7장-방법 -->
 1. 실행 중인 pi 를 모두 끕니다 (`/quit`).
-2. 새 판 zip 을 2-1 처럼 노트북 홈에 올립니다.
+2. 새 버전 zip 을 2-1 처럼 노트북 홈에 올립니다.
 3. 터미널에서 (받은 파일 이름이 다르면 그 이름으로):
    ```bash
    cd ~ && bash ~/tools/pi/update.sh ~/pi-agent-like-agent-api-main.zip
    ```
-- 하는 일: 받은 파일 확인 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 판을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
-- 끝에 `지금 판 -> 새 판` 과 이 판에서 바뀐 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 판으로 시작합니다. `/doctor` 의 판 번호로 확인합니다.
-- 받은 파일이 지금과 같은 판이면 멈춥니다 (이전 판 폴더를 덮지 않도록). 같은 판을 다시 깔려면 끝에 `--force`.
-- **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 판의 `pi-agent-like-agent-api-<판>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.2MB 라 반입이 가볍습니다. 같은 명령에 그 파일을 줍니다.
-  지금 깔린 pi 본체가 새 판의 것과 같은지 해시로 확인한 뒤 그대로 쓰고, 다르면(pi 본체가 바뀐 판. CHANGELOG·Releases 에 적음) 아무것도 바꾸지 않고 전체 zip 이 필요하다고 알려 줍니다. 몇 판을 건너뛰어도 됩니다.
-  2026-10-16.1 보다 예전 판의 `update.sh` 는 이 zip 을 모르므로, 그 판에서는 한 번 전체 zip 으로 바꿉니다.
-- zip 을 풀 프로그램(`unzip`, Python)이 둘 다 없는 노트북이면, GitHub 의 Tags 에서 그 판의 `tar.gz` 를 받아 같은 명령에 주면 됩니다 (`tar` 로 풂).
-- 메시지별 할 일과 `update.sh` 가 안 될 때의 손 절차: [수동 작업 절차 3장](docs/수동-작업-절차.md#3-새-판으로-바꾸기)
+- 하는 일: 받은 파일 확인 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 버전을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
+- 끝에 `지금 버전 -> 새 버전` 과 이 버전에서 바뀐 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 버전으로 시작합니다. `/doctor` 의 버전 번호로 확인합니다.
+- 받은 파일이 지금과 같은 버전이면 멈춥니다 (이전 버전 폴더를 덮지 않도록). 같은 버전을 다시 깔려면 끝에 `--force`.
+- **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 버전의 `pi-agent-like-agent-api-<버전>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.2MB 라 반입이 가볍습니다. 같은 명령에 그 파일을 줍니다.
+  지금 깔린 pi 본체가 새 버전의 것과 같은지 해시로 확인한 뒤 그대로 쓰고, 다르면(pi 본체가 바뀐 버전. CHANGELOG·Releases 에 적음) 아무것도 바꾸지 않고 전체 zip 이 필요하다고 알려 줍니다. 몇 버전을 건너뛰어도 됩니다.
+  2026-10-16.1 보다 예전 버전의 `update.sh` 는 이 zip 을 모르므로, 그 버전에서는 한 번 전체 zip 으로 바꿉니다.
+- zip 을 풀 프로그램(`unzip`, Python)이 둘 다 없는 노트북이면, GitHub 의 Tags 에서 그 버전의 `tar.gz` 를 받아 같은 명령에 주면 됩니다 (`tar` 로 풂).
+- 메시지별 할 일과 `update.sh` 가 안 될 때의 손 절차: [수동 작업 절차 3장](docs/수동-작업-절차.md#3-새-버전으로-바꾸기)
 
 <!-- 조각: 8장-파일 -->
 | 파일 | 내용 |
@@ -219,7 +219,7 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 | 시작 화면에 `Warning: fd not found` / `ripgrep not found` | 무시해도 됩니다. 기본 도구(명령 실행, 파일 읽기·쓰기·고치기)는 이 둘 없이 동작하고, 입력창의 `@` 파일 목록도 fd 없이 나옵니다 |
 | 오래 쓰다 보면 느려지거나 엉뚱하게 답함 | 대화가 너무 길어진 탓입니다. `/compact` 로 줄이거나 `/new` 로 새 세션을 시작하세요 (필요한 맥락은 AGENTS.md 나 `/handoff` 메모로) |
 | 파드를 다시 시작했더니 pi 가 없음 | pi 와 Node 를 홈 아래에 두었는지(`~/tools/pi`, `pip install --user`), 새 터미널에서 `pi --version` |
-| 업데이트가 `이미 같은 판` 으로 멈춤 | 받은 파일이 새 판인지 확인 ([7장](#7-새-버전으로-바꾸기)) |
+| 업데이트가 `이미 같은 버전` 으로 멈춤 | 받은 파일이 새 버전인지 확인 ([7장](#7-새-버전으로-바꾸기)) |
 | pi 설정 파일 오류 (`settings.json`, `models.json`) | JSON 형식 확인 (마지막 항목 뒤 쉼표 빼기, 따옴표). 설치·업데이트 때 남긴 `.bak` 으로 되돌릴 수 있습니다 |
 | pi 가 끝난 뒤 터미널 화면이 이상함 | `reset` 입력 |
 
@@ -228,11 +228,11 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 |---|---|
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
-| `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
+| `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 버전으로 바꾸기, Node 진단 스크립트, 버전 번호 |
 | `profiles/` | 설정 템플릿과 기본 지침(`jupyter`: Kubeflow 노트북용), 확장(`common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, LLM 위키 `/wiki`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 8개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `tests/` | 단위 테스트 (`node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`) |
-| `CHANGELOG.md` | 판마다 바뀐 점과 바꾼 뒤 할 일 |
+| `CHANGELOG.md` | 버전마다 바뀐 점과 바꾼 뒤 할 일 |
 | `docs/` | [한 장 요약](docs/빠른시작.md), [API 연결](docs/API-연결.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**

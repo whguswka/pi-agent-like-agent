@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 설치·업데이트: bash install.sh <jupyter|pc>   (새 판으로 바꾼 뒤에도 다시 실행)
-#  실행권한 부여 + ~/.pi/agent 설정 템플릿 배치 (기존 설정은 유지하고 새 판에 추가된 항목만 넣음) + PATH 등록
+# 설치·업데이트: bash install.sh <jupyter|pc>   (새 버전으로 바꾼 뒤에도 다시 실행)
+#  실행권한 부여 + ~/.pi/agent 설정 템플릿 배치 (기존 설정은 유지하고 새 버전에 추가된 항목만 넣음) + PATH 등록
 #   jupyter : Kubeflow JupyterLab 터미널에서 실행, 사내 vLLM 연결
 #   pc      : 업무 PC 의 Git Bash 에서 실행, Copilot 웹 채팅 연결 (copilot/ 중계기)
 set -e
@@ -29,17 +29,17 @@ for T in "$PI_HOME/profiles/common/agent-template" "$TEMPLATE"; do
     esac
   done
 done
-# 이 판에 없는 키트 확장은 치운다 (pi 는 extensions 의 .ts 를 모두 불러오므로 이름이 바뀌거나 빠진 확장이 남으면 함께 돎).
+# 이 버전에 없는 키트 확장은 치운다 (pi 는 extensions 의 .ts 를 모두 불러오므로 이름이 바뀌거나 빠진 확장이 남으면 함께 돎).
 #  키트가 낸 적이 있는 이름만 (직접 만든 확장은 그대로). 지우지 않고 extensions.removed/ 로 옮김. 확장을 새로 내면 이 목록에 더할 것
 KIT_EXT="copilot-session.ts jupyter.ts guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
 for f in $KIT_EXT; do
   [ -e "$AGENT_DIR/extensions/$f" ] || continue
   { [ -e "$PI_HOME/profiles/common/agent-template/extensions/$f" ] || [ -e "$TEMPLATE/extensions/$f" ]; } && continue
   mkdir -p "$(dirname "$AGENT_DIR/extensions.removed/$f")" && mv -f "$AGENT_DIR/extensions/$f" "$AGENT_DIR/extensions.removed/$f" \
-    && echo "치움: $AGENT_DIR/extensions/$f (이 판에는 없는 확장 -> extensions.removed/)"
+    && echo "치움: $AGENT_DIR/extensions/$f (이 버전에는 없는 확장 -> extensions.removed/)"
 done
 rmdir "$AGENT_DIR/extensions/lib" 2>/dev/null || true  # 비었으면 (set -e 라서 || true)
-# 이미 있던 설정 파일에는 새 판에 추가된 항목(새 모델 등)만 넣는다. 직접 고친 값과 직접 지운 항목은 그대로 (pi 가 쓰는 Node 로 실행)
+# 이미 있던 설정 파일에는 새 버전에 추가된 항목(새 모델 등)만 넣는다. 직접 고친 값과 직접 지운 항목은 그대로 (pi 가 쓰는 Node 로 실행)
 . "$PI_HOME/bin/find-node.sh"
 if PI_MERGE_NODE="$(pi_find_node 2>/dev/null)"; then
   pi_node_exec "$PI_MERGE_NODE" "$PI_HOME/bin/merge-config.mjs" "$TEMPLATE" "$AGENT_DIR" "$PI_HOME" || echo "참고: 위 설정 파일을 확인해 주세요"
@@ -95,7 +95,7 @@ esac
 echo
 "$PI_HOME/check-node.sh" || true
 echo
-echo "설치 완료 (판 $(tr -d '\r\n' < "$PI_HOME/VERSION" 2>/dev/null || echo '?')). 새 터미널을 열고 'pi --version' 으로 확인하세요. (지금 터미널에서 바로 쓰려면: export PATH=\"$PI_HOME/bin:\$PATH\")"
+echo "설치 완료 (버전 $(tr -d '\r\n' < "$PI_HOME/VERSION" 2>/dev/null || echo '?')). 새 터미널을 열고 'pi --version' 으로 확인하세요. (지금 터미널에서 바로 쓰려면: export PATH=\"$PI_HOME/bin:\$PATH\")"
 if [ "$PROFILE" = pc ]; then
   echo "사용법: $PI_HOME/README.md (GitHub 첫 페이지와 같은 내용)"
   echo "  1) pi 를 실행하면 Chrome 전용 창이 뜹니다. 처음이면 그 창에서 Copilot 에 로그인하세요 (jupyter 모드는 Kubeflow 도)"

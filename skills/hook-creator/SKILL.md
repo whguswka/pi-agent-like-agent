@@ -16,7 +16,7 @@ pi 에는 hook 설정 파일이 따로 없다. hook 은 확장(TypeScript 파일
 3. 파일 위치를 정한다: pi 설정 폴더의 `extensions/my-<이름>.ts`
    - pi 설정 폴더는 이 SKILL.md 의 위치(스킬 목록의 location)에서 `skills/hook-creator/SKILL.md` 를 뺀 곳이다 (예: `C:/Users/<사용자>/.pi/agent/`).
      그 절대 경로로 쓴다 (jupyter 모드에서도 PC 경로는 PC 에 쓴다. `~` 는 노트북 홈을 뜻하므로 다른 파일을 읽을 때 헷갈리지 않게).
-   - 이름은 `my-` 로 시작한다. 키트 확장(copilot-session, jupyter, guard, notify, kit, undo, modes, memory, files, `lib/`)은 고치지 않는다: 업데이트 때 새 판으로 덮어쓴다. `my-` 확장은 업데이트해도 그대로 남는다.
+   - 이름은 `my-` 로 시작한다. 키트 확장(copilot-session, jupyter, guard, notify, kit, undo, modes, memory, files, `lib/`)은 고치지 않는다: 업데이트 때 새 버전으로 덮어쓴다. `my-` 확장은 업데이트해도 그대로 남는다.
    - 작업 폴더 밖이라 쓰기 전에 확인 창이 뜬다.
 4. 아래 '형식'과 '규칙'대로 쓴다. 비슷한 예가 같은 폴더의 `examples.md` 에 있다 (명령 기록, 파일 보호, 결과에 안내 덧붙이기, 규칙 더하기, 입력 바꾸기, 끝날 때 기록).
 5. 다 쓰면 pi 에서 `/reload` 를 입력하라고 알린다 (pi 를 다시 실행해도 됨). 불러오지 못하면 pi 가 오류를 보여 주므로 그 내용대로 고친다.

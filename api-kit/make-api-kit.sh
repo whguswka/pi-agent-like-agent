@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# API 전용 판(pi-agent-like-agent-api) 만들기: 이 저장소의 한 커밋에서 웹 채팅 중계 부분을 빼고 API 판 글로 바꾼 폴더를 만든다
+# API 전용 키트(pi-agent-like-agent-api) 만들기: 이 저장소의 한 커밋에서 웹 채팅 중계 부분을 빼고 API 키트 글로 바꾼 폴더를 만든다
 #   bash api-kit/make-api-kit.sh <내보낼 폴더> [커밋·태그 (기본 HEAD)]
 #    1) <커밋> 을 git archive 로 풂 (api-kit/ 은 .gitattributes 의 export-ignore 라 빠짐)
 #    2) remove.txt 의 경로를 지움
 #    3) overlay/ 의 파일로 덮어씀. 원래 파일이 overlay.sha256 을 적은 뒤 바뀌었으면 멈춤 (바뀐 내용을 overlay 에 옮긴 뒤 --update-sha)
-#       원래 키트 문서에서 API 판과 짝을 이룬 글(api:바꾸기 블록, api= 줄)이 marks.sha256 을 적은 뒤 바뀌었어도 멈춤
-#    3-2) 문서의 표시 처리 (assemble.mjs: 원래 키트 문서 한 벌 + fragments/ 의 조각 -> API 판 글)
+#       원래 키트 문서에서 API 키트와 짝을 이룬 글(api:바꾸기 블록, api= 줄)이 marks.sha256 을 적은 뒤 바뀌었어도 멈춤
+#    3-2) 문서의 표시 처리 (assemble.mjs: 원래 키트 문서 한 벌 + fragments/ 의 조각 -> API 키트 글)
 #    4) edits.json 의 글 바꾸기 (바꿀 글이 정한 횟수만큼 없으면 멈춤)
-#    5) check.mjs 로 점검 (남은 중계 내용, 판 번호의 CHANGELOG 항목, 확장 목록)
+#    5) check.mjs 로 점검 (남은 중계 내용, 버전 번호의 CHANGELOG 항목, 확장 목록)
 #    6) <내보낼 폴더> 를 결과로 바꿈 (.git 은 그대로 둠: API 저장소의 작업 폴더에 바로 내보내도 됨)
 #   bash api-kit/make-api-kit.sh --update-sha [커밋]   overlay.sha256 과 marks.sha256 을 <커밋> 의 원래 파일로 다시 적음
 # api-kit/ 의 파일(overlay, edits, 점검)은 작업 폴더의 것을 쓴다. 내보낸 뒤 올리기 전에 api-kit/ 도 커밋할 것
@@ -83,14 +83,14 @@ if [ "$drift" -gt 0 ]; then
   base="$(sed -n '1s/.*커밋 \([0-9a-f]*\)).*/\1/p' "$KIT/overlay.sha256")"
   echo "[api-kit] 바뀐 내용: git diff ${base:0:7} ${REV:0:7} -- <위 파일>  을 보고 overlay/ 에 옮긴 뒤 --update-sha ${REV:0:7}" >&2
 fi
-# 원래 키트 문서에서 API 판과 짝을 이룬 글 (바뀌었으면 조각·api= 뒤의 글도 고쳐야 하는지 볼 것)
+# 원래 키트 문서에서 API 키트와 짝을 이룬 글 (바뀌었으면 조각·api= 뒤의 글도 고쳐야 하는지 볼 것)
 mdrift=0 rc=0
 "$NODE" "$KIT/assemble.mjs" --marks "$T" "$KIT/fragments" "$KIT/marks.sha256" || rc=$?
 case "$rc" in
   0) ;;
   1) mdrift=1
      base="$(sed -n '1s/.*커밋 \([0-9a-f]*\)).*/\1/p' "$KIT/marks.sha256" 2>/dev/null || true)"
-     echo "[api-kit] 바뀐 내용: git diff ${base:0:7} ${REV:0:7} -- <위 문서>  를 보고 API 판 글(api-kit/fragments/ 의 조각, api= 뒤의 글)을 고친 뒤 --update-sha ${REV:0:7}" >&2 ;;
+     echo "[api-kit] 바뀐 내용: git diff ${base:0:7} ${REV:0:7} -- <위 문서>  를 보고 API 키트 글(api-kit/fragments/ 의 조각, api= 뒤의 글)을 고친 뒤 --update-sha ${REV:0:7}" >&2 ;;
   *) die "멈춤: 문서의 표시를 고친 뒤 다시 실행하세요" ;;
 esac
 if [ $((drift + mdrift)) -gt 0 ] && [ -z "${API_KIT_ALLOW_DRIFT:-}" ]; then
@@ -114,4 +114,4 @@ chmod +x "$T/bin/pi" "$T/install.sh" "$T/update.sh" "$T/check-node.sh" 2>/dev/nu
 mkdir -p "$OUT"
 find "$OUT" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 cp -a "$T/." "$OUT/"
-echo "[api-kit] 완료: $OUT (판 $(tr -d '\r\n' < "$OUT/VERSION"), 원래 키트 커밋 ${REV:0:7}, 덮어쓴 파일 ${n}개, 파일 $(find "$OUT" -path "$OUT/.git" -prune -o -type f -print | wc -l)개)"
+echo "[api-kit] 완료: $OUT (버전 $(tr -d '\r\n' < "$OUT/VERSION"), 원래 키트 커밋 ${REV:0:7}, 덮어쓴 파일 ${n}개, 파일 $(find "$OUT" -path "$OUT/.git" -prune -o -type f -print | wc -l)개)"

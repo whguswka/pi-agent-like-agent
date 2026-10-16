@@ -1,6 +1,6 @@
 [
   { "file": ".gitattributes",
-    "from": "# API 전용 판을 만드는 도구(api-kit/)는 이 저장소의 zip(Download ZIP, 태그 zip)에 넣지 않음\n/api-kit export-ignore\n# 판 내기 도구(release/: 업데이트용 zip, GitHub Release)도 넣지 않음\n/release export-ignore\n",
+    "from": "# API 전용 키트를 만드는 도구(api-kit/)는 이 저장소의 zip(Download ZIP, 태그 zip)에 넣지 않음\n/api-kit export-ignore\n# 릴리스 도구(release/: 업데이트용 zip, GitHub Release)도 넣지 않음\n/release export-ignore\n",
     "to": "" },
   { "file": "requirements.txt",
     "from": "# pi-agent-like-agent 의 PyPI 의존성",

@@ -64,7 +64,7 @@ export default function (pi: ExtensionAPI) {
 					shown = false;
 				}
 			} catch {
-				// 중계 서버가 꺼져 있거나 /status 가 없는 예전 판: 표시하지 않음
+				// 중계 서버가 꺼져 있거나 /status 가 없는 예전 버전: 표시하지 않음
 			} finally {
 				asking = false;
 			}

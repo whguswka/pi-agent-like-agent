@@ -11,7 +11,7 @@ pi 는 터미널에서 동작합니다. 할 일을 말로 지시하면 LLM 과 �
 <!-- api:바꾸기 안내 -->
 > **처음이면 [한 장 요약 (빠른 시작)](docs/빠른시작.md)** 부터 보세요. 설치, 매일 쓰는 법, 자주 쓰는 명령(`/plan`, `@파일`, `/undo`, `/remember` 등)이 한 장에 있습니다.
 > 사람이 직접 하는 일(반입, 설치, 업데이트, 되돌리기, 설정, 문제 보고)은 [수동 작업 절차](docs/수동-작업-절차.md) 에 순서대로 있습니다.
-> 판마다 바뀐 점과 바꾼 뒤 할 일은 [바뀐 점 (CHANGELOG)](CHANGELOG.md) 에 있습니다.
+> 버전마다 바뀐 점과 바꾼 뒤 할 일은 [바뀐 점 (CHANGELOG)](CHANGELOG.md) 에 있습니다.
 <!-- /api -->
 
 <!-- api:바꾸기 소개 -->
@@ -125,7 +125,7 @@ python ~/tools/pi/copilot/diag.py --report
 | `--delete-test` | + 시험 대화를 하나 만들어 지워 보기 (다른 대화는 건드리지 않음) |
 | `--jupyter` | + JupyterLab 터미널에서 시험 명령 실행 ([3-3](#3-3-실행-위치-바꾸기-pc-와-jupyter-노트북)을 쓸 때) |
 | `--input-limit` | + 입력창이 한 번에 받는 글자 수 확인 (붙여 넣어 보기만 하고 보내지 않음). 권장 `max_chars` 를 알려 줌 |
-| `--report` | **한 화면 상태 요약**: 판 번호, Node, 중계 서버, 전용 창, 현재 모델, 설정, 최근 요청 통계(평균 시간, 새 대화, 조각 나눔), 최근 로그 (읽기만 함) |
+| `--report` | **한 화면 상태 요약**: 버전 번호, Node, 중계 서버, 전용 창, 현재 모델, 설정, 최근 요청 통계(평균 시간, 새 대화, 조각 나눔), 최근 로그 (읽기만 함) |
 
 - `--report` 는 요약만 보여 줍니다. 나머지 진단은 마지막 줄에 `결과: 정상` 이 나오면 됩니다.
 - **문제가 생기면 `--report` 화면을 찍어 보내 주세요.** 상황 대부분이 한 장에 담깁니다. pi 를 쓰는 중이면 `/doctor` 로 같은 내용을 볼 수 있습니다.
@@ -182,7 +182,7 @@ pi -p "이 폴더의 파이썬 파일 목록과 역할을 알려줘"     # 한 �
 | 자주 하는 일 | 기본 명령 `/init` `/handoff` `/review` `/test` `/commit` `/explain` ([5장](#5-지침-스킬-메모리)) |
 | 명령 목록 | `/` 를 치면 나옴 |
 | 빠른 도움말 | `/kit` (키, 세션, 명령·스킬 목록, 설정 파일 위치를 편집기 위에 보여 줌. 다시 입력하면 닫힘). 팀 공유 폴더 등록은 `/kit share <폴더>` |
-| 상태 요약 | `/doctor` (`diag.py --report` 와 같은 내용을 pi 화면에. 문제가 생기면 이 화면을 찍어 보내 주세요) | <!-- api= \| 상태 요약 \| `/doctor` (판 번호, pi 폴더, Node. 문제가 생기면 이 화면을 찍어 보내 주세요) \| -->
+| 상태 요약 | `/doctor` (`diag.py --report` 와 같은 내용을 pi 화면에. 문제가 생기면 이 화면을 찍어 보내 주세요) | <!-- api= \| 상태 요약 \| `/doctor` (버전 번호, pi 폴더, Node. 문제가 생기면 이 화면을 찍어 보내 주세요) \| -->
 
 **@파일**: 입력창에서 `@` 를 치면 작업 폴더의 파일 목록이 뜹니다. 글자를 더 치면 좁혀지고(`@src/ma`), `Tab` 으로 고릅니다.
 - jupyter 모드에서는 노트북 작업 폴더의 파일이 나옵니다. `.git`, `node_modules`, `__pycache__`, `.venv` 등은 빼고 6단계 깊이까지 보여 줍니다. <!-- api= - `.git`, `node_modules`, `__pycache__`, `.venv` 등은 빼고 6단계 깊이까지 보여 줍니다. -->
@@ -341,7 +341,7 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
 ```
 - `ui_noise_words`: 답 아래에 있는 단추의 글(공유하기 등)이 답 끝에 섞여 나오면 그 글을 적습니다.
 - `reply_busy_lines`: 사내AI 가 답을 쓰기 전에 처리 단계를 보여 주며 단계 사이에 오래 멈추면, 그동안에만 보이는 줄(처리 단계 제목 등)을 적습니다. 그 줄이 보이는 동안은 글이 멈춰도 답이 끝난 것으로 보지 않습니다 (없으면 글이 `stable_seconds`(사내AI 8초) 동안 그대로일 때 끝난 것으로 봄).
-- 고친 뒤 pi 를 다시 실행하면 사내AI 중계 서버도 새 설정으로 다시 켜집니다 (2026-10-06.4 부터. 그 전 판은 `curl -s -X POST http://127.0.0.1:8766/shutdown` 뒤 pi 실행).
+- 고친 뒤 pi 를 다시 실행하면 사내AI 중계 서버도 새 설정으로 다시 켜집니다 (2026-10-06.4 부터. 그 전 버전은 `curl -s -X POST http://127.0.0.1:8766/shutdown` 뒤 pi 실행).
 
 | pi 모델 id | 사내AI 화면 | |
 |---|---|---|
@@ -454,7 +454,7 @@ description: 주간 업무 보고서를 쓸 때 사용. 이번 주 git 기록을
 | `korean-report` | 주간보고·작업 결과 보고서·회의록 (개조식, 양식 파일 포함) |
 | `debugging` | 재현 → 오류 읽기 → 원인 좁히기 → 고치기 → 확인 순서 |
 
-**기본 명령·스킬과 업데이트:** 고치지 않은 것은 새 판으로 바꾸고, 직접 고친 것은 그대로 둡니다 (설치할 때 "직접 고친 것은 그대로 둠" 으로 알려 줌). 지운 것은 다시 넣지 않습니다.
+**기본 명령·스킬과 업데이트:** 고치지 않은 것은 새 버전으로 바꾸고, 직접 고친 것은 그대로 둡니다 (설치할 때 "직접 고친 것은 그대로 둠" 으로 알려 줌). 지운 것은 다시 넣지 않습니다.
 
 스킬을 두는 곳:
 
@@ -535,7 +535,7 @@ pi 에는 hook 설정 파일이 따로 없고, `~/.pi/agent/extensions/` 의 Typ
 - `hook-creator` 스킬에게 "명령 실행 전에 ○○ 막아줘", "작업이 끝나면 ○○ 기록해줘" 처럼 부탁하면 `my-<이름>.ts` 로 만들어 줍니다.
   예 6개(명령 기록, 파일 보호, 결과에 안내 덧붙이기, 팀 규칙 파일, 입력 바꾸기, 끝날 때 기록)는 `~/.pi/agent/skills/hook-creator/examples.md` 에 있습니다.
 - 적용은 `/reload` (또는 pi 를 다시 실행). 끄려면 파일 이름 끝에 `.off` 를 붙이고 `/reload`.
-- `my-` 로 시작하는 내 확장은 업데이트해도 그대로 남습니다. 키트 확장(`guard.ts` 등)을 직접 고치면 업데이트 때 새 판으로 바뀝니다.
+- `my-` 로 시작하는 내 확장은 업데이트해도 그대로 남습니다. 키트 확장(`guard.ts` 등)을 직접 고치면 업데이트 때 새 버전으로 바뀝니다.
 - 확장은 pi 와 같은 권한으로 돕니다. 직접 쓰거나 내용을 확인한 코드만 두세요.
 
 ### LLM 위키 (/wiki)
@@ -603,36 +603,36 @@ cd ~
 Z=~/Downloads/pi-agent-like-agent-main.zip
 unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 ```
-- 새 판의 `update.sh` 를 꺼내 실행합니다. 지금 판에 `update.sh` 가 없는 예전 판(2026-10-02 이전)도 이 방법으로 바꿉니다.
-  이미 새 판을 쓰고 있으면 `bash ~/tools/pi/update.sh "$Z"` 도 같습니다.
-- **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 판의 `pi-agent-like-agent-<판>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.4MB 라 반입이 가볍습니다 (전체 zip 은 3.2MB).
-  `Z=` 뒤에 그 파일을 적어 위 명령으로 바꿉니다. 지금 깔린 pi 본체가 새 판의 것과 같은지 해시로 확인한 뒤 그대로 쓰고, 다르면(pi 본체가 바뀐 판. CHANGELOG·Releases 에 적음) 아무것도 바꾸지 않고 전체 zip 이 필요하다고 알려 줍니다.
-  몇 판을 건너뛰어도 됩니다. 2026-10-15.1 까지의 `~/tools/pi/update.sh` 는 이 zip 을 모르니 위 명령(새 판의 `update.sh` 를 꺼내 실행)으로 바꿉니다.
-- 하는 일: zip 확인 → 중계 서버 끄기 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 판을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
-- 끝에 `지금 판 -> 새 판` 과 확인할 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 판으로 시작합니다 (중계 서버도 새 판으로 켜짐). `/doctor` 의 '버전' 줄로 확인합니다.
+- 새 버전의 `update.sh` 를 꺼내 실행합니다. 지금 버전에 `update.sh` 가 없는 예전 버전(2026-10-02 이전)도 이 방법으로 바꿉니다.
+  이미 새 버전을 쓰고 있으면 `bash ~/tools/pi/update.sh "$Z"` 도 같습니다.
+- **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 버전의 `pi-agent-like-agent-<버전>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.4MB 라 반입이 가볍습니다 (전체 zip 은 3.2MB).
+  `Z=` 뒤에 그 파일을 적어 위 명령으로 바꿉니다. 지금 깔린 pi 본체가 새 버전의 것과 같은지 해시로 확인한 뒤 그대로 쓰고, 다르면(pi 본체가 바뀐 버전. CHANGELOG·Releases 에 적음) 아무것도 바꾸지 않고 전체 zip 이 필요하다고 알려 줍니다.
+  몇 버전을 건너뛰어도 됩니다. 2026-10-15.1 까지의 `~/tools/pi/update.sh` 는 이 zip 을 모르니 위 명령(새 버전의 `update.sh` 를 꺼내 실행)으로 바꿉니다.
+- 하는 일: zip 확인 → 중계 서버 끄기 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 버전을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
+- 끝에 `지금 버전 -> 새 버전` 과 확인할 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 버전으로 시작합니다 (중계 서버도 새 버전으로 켜짐). `/doctor` 의 '버전' 줄로 확인합니다.
 - 폴더가 사용 중이라 이름을 바꾸지 못하면 **아무것도 바꾸지 않고 멈춥니다.** pi, Copilot 전용 창, 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요.
-- 받은 zip 이 지금과 같은 판이면 멈춥니다 (이전 판 폴더를 덮지 않도록). 브라우저가 `(1)` 을 붙여 저장한 새 파일인지 확인하고, 같은 판을 다시 깔려면 끝에 `--force`.
-- 메시지별 할 일, `update.sh` 가 안 될 때의 손 절차, 바꾼 뒤 점검(5분 점검, 처음 한 번 요약 점검): [수동 작업 절차 3·4장](docs/수동-작업-절차.md#3-새-판으로-바꾸기)
+- 받은 zip 이 지금과 같은 버전이면 멈춥니다 (이전 버전 폴더를 덮지 않도록). 브라우저가 `(1)` 을 붙여 저장한 새 파일인지 확인하고, 같은 버전을 다시 깔려면 끝에 `--force`.
+- 메시지별 할 일, `update.sh` 가 안 될 때의 손 절차, 바꾼 뒤 점검(5분 점검, 처음 한 번 요약 점검): [수동 작업 절차 3·4장](docs/수동-작업-절차.md#3-새-버전으로-바꾸기)
 <!-- /api -->
 
 그대로 남는 것:
-- `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 판에 추가된 항목(새 모델 등)만** 넣습니다. 바뀐 파일은 `갱신:` 으로 알려 주고, 이전 파일은 `.bak` 으로 남깁니다. <!-- api= - `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 판에 추가된 항목만** 넣습니다. LLM 주소·모델처럼 직접 고친 값과 직접 지운 항목은 그대로이고, 바뀐 파일은 `갱신:` 으로 알려 주며 이전 파일은 `.bak` 으로 남깁니다. -->
+- `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 버전에 추가된 항목(새 모델 등)만** 넣습니다. 바뀐 파일은 `갱신:` 으로 알려 주고, 이전 파일은 `.bak` 으로 남깁니다. <!-- api= - `~/.pi/agent` 의 설정(`settings.json`, `models.json`)에는 **새 버전에 추가된 항목만** 넣습니다. LLM 주소·모델처럼 직접 고친 값과 직접 지운 항목은 그대로이고, 바뀐 파일은 `갱신:` 으로 알려 주며 이전 파일은 `.bak` 으로 남깁니다. -->
 - 직접 고친 값과 직접 지운 항목, 내 설정 파일(`~/.pi/agent/bridge.json`), 지침(AGENTS.md), 스킬, 세션 기록은 그대로입니다. <!-- api= - 내 설정 파일(`~/.pi/agent/bridge.json`), 지침(AGENTS.md), 스킬, 세션 기록은 그대로입니다. -->
-- 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다. 새 판에서 빠진 키트 확장은 `~/.pi/agent/extensions.removed/` 로 옮깁니다 (직접 만든 확장은 그대로).
-- 기본 명령·스킬(`~/.pi/agent/prompts`, `skills`)은 고치지 않은 것만 새 판으로 바뀝니다. 직접 고친 것과 지운 것은 그대로입니다.
-- 예전 판에서 `copilot/bridge.json` 을 직접 고쳤다면 `update.sh` 가 그 항목을 알려 줍니다. 그 항목을 내 설정 파일([8장](#8-설정))로 옮기세요. <!-- api= -->
+- 확장(`~/.pi/agent/extensions/`)은 새 것으로 바뀝니다. 새 버전에서 빠진 키트 확장은 `~/.pi/agent/extensions.removed/` 로 옮깁니다 (직접 만든 확장은 그대로).
+- 기본 명령·스킬(`~/.pi/agent/prompts`, `skills`)은 고치지 않은 것만 새 버전으로 바뀝니다. 직접 고친 것과 지운 것은 그대로입니다.
+- 예전 버전에서 `copilot/bridge.json` 을 직접 고쳤다면 `update.sh` 가 그 항목을 알려 줍니다. 그 항목을 내 설정 파일([8장](#8-설정))로 옮기세요. <!-- api= -->
 - 잘 동작하면 `~/tools/pi.old` 는 지워도 됩니다 (지우면 그 뒤로는 zip 으로만 되돌릴 수 있음).
 
-**이전 판으로 되돌리기:** `~/tools/pi.old` 에는 바로 앞 판 하나만 남습니다 (다음 업데이트 때 지워짐). 받은 zip 은 보관해 두세요.
-- 이전 판 zip 이 있으면: `cd ~ && bash ~/tools/pi/update.sh <이전 판 zip>` (지금 판은 `pi.old` 로 남고, 그 판에 없는 확장은 치움)
-- zip 이 없으면 `pi.old` 로 되돌리는 절차: [수동 작업 절차 5장](docs/수동-작업-절차.md#5-이전-판으로-되돌리기)
+**이전 버전으로 되돌리기:** `~/tools/pi.old` 에는 바로 앞 버전 하나만 남습니다 (다음 업데이트 때 지워짐). 받은 zip 은 보관해 두세요.
+- 이전 버전 zip 이 있으면: `cd ~ && bash ~/tools/pi/update.sh <이전 버전 zip>` (지금 버전은 `pi.old` 로 남고, 그 버전에 없는 확장은 치움)
+- zip 이 없으면 `pi.old` 로 되돌리는 절차: [수동 작업 절차 5장](docs/수동-작업-절차.md#5-이전-버전으로-되돌리기)
 
 ## 8. 설정
 <!-- api:바꾸기 8장-파일 -->
 | 파일 | 내용 |
 |---|---|
 | `~/.pi/agent/bridge.json` | **내 설정 파일.** 아래 항목 중 바꾸고 싶은 것만 적습니다. 업데이트해도 그대로 남습니다 |
-| `~/tools/pi/copilot/bridge.json` | 중계 서버 설정의 기본값 (저장소에 들어 있는 파일이라 업데이트하면 새 판 값으로 바뀜. 직접 고치지 마세요) |
+| `~/tools/pi/copilot/bridge.json` | 중계 서버 설정의 기본값 (저장소에 들어 있는 파일이라 업데이트하면 새 버전 값으로 바뀜. 직접 고치지 마세요) |
 | `~/.pi/agent/settings.json` | pi 설정: 기본 모델(`defaultModel`), 응답 대기(`retry.provider.timeoutMs`), Git Bash 경로(`shellPath`), 자동 다시 시도 끔(`retry.enabled: false`: 오류·사용량 제한 때 같은 질문을 바로 여러 번 보내지 않게. 오류가 나면 같은 요청을 다시 보내면 이어서 진행) |
 | `~/.pi/agent/models.json` | pi 가 쓸 모델 목록 |
 
@@ -679,7 +679,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 
 <!-- api:바꾸기 8장-끝 -->
 - **설정을 고친 뒤 `pi` 를 다시 실행하면 중계 서버도 새 설정으로 다시 켜집니다** (2026-10-06.4 부터. `/doctor` 의 '내 설정' 줄로 확인). 다른 pi 창이 일하는 중이면 그 일이 끝난 뒤의 실행 때 반영합니다.
-  그 전 판이거나 바로 다시 켜려면, 실행 중인 pi 를 모두 끈 뒤 중계 서버를 끄고 pi 를 실행합니다 (사내AI 설정 `~/.pi/agent/inhouse.json` 은 `8766`):
+  그 전 버전이거나 바로 다시 켜려면, 실행 중인 pi 를 모두 끈 뒤 중계 서버를 끄고 pi 를 실행합니다 (사내AI 설정 `~/.pi/agent/inhouse.json` 은 `8766`):
   ```bash
   curl -s -X POST http://127.0.0.1:8765/shutdown
   ```
@@ -690,7 +690,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 <!-- /api -->
 
 ## 9. 문제 해결
-먼저 `python ~/tools/pi/copilot/diag.py --report` 를 실행해 보세요 (pi 안에서는 `/doctor`). 해결이 안 되면 그 화면을 찍어 보내 주세요. <!-- api= 먼저 pi 안에서 `/doctor` 를 쳐 보세요 (판 번호, pi 폴더, Node). 해결이 안 되면 그 화면과 오류 메시지를 찍어 보내 주세요. -->
+먼저 `python ~/tools/pi/copilot/diag.py --report` 를 실행해 보세요 (pi 안에서는 `/doctor`). 해결이 안 되면 그 화면을 찍어 보내 주세요. <!-- api= 먼저 pi 안에서 `/doctor` 를 쳐 보세요 (버전 번호, pi 폴더, Node). 해결이 안 되면 그 화면과 오류 메시지를 찍어 보내 주세요. -->
 
 <!-- api:바꾸기 9장-표 -->
 | 증상 | 해결 |
@@ -703,7 +703,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | `Copilot 탭을 찾지 못했습니다` | 전용 창에 Copilot 탭이 열려 있고 로그인돼 있는지 확인 |
 | `Connection error.` 또는 `중계 서버에 연결할 수 없습니다` | pi 를 끄고 다시 실행하면 중계 서버도 다시 켜집니다. 그래도 안 되면 `~/.pi/agent/copilot-relay.log` 끝부분 확인. Python 을 못 찾으면 `~/.bashrc` 에 `export PI_PYTHON=/c/.../python.exe` |
 | JupyterLab 로그인이 풀림 (jupyter 모드) | 전용 창의 JupyterLab 탭에서 다시 로그인한 뒤 `/jupyter` |
-| 업데이트가 `이미 같은 판` 으로 멈춤 | 받은 zip 이 새 판인지 확인 ([7장](#7-새-버전으로-바꾸기)) |
+| 업데이트가 `이미 같은 버전` 으로 멈춤 | 받은 zip 이 새 버전인지 확인 ([7장](#7-새-버전으로-바꾸기)) |
 | `429 Copilot 사용량 제한에 걸렸습니다` | 계정 단위의 일시 제한입니다. 기다렸다가 같은 요청을 다시 하면 이어서 진행합니다. 자주 걸리면 `max_questions_per_minute` |
 | 요청마다 로그에 `앞 답을 마무리하는 동안 n초 기다림, Copilot 이 답하는 중` (`grep -c "앞 답을 마무리하는 동안" ~/.pi/agent/copilot-relay.log` 가 요청 수와 비슷함) | 화면의 다른 단추를 '응답 중지' 로 잘못 알아보는 것일 수 있습니다 (그때마다 5초 늦어짐). 전용 창 화면을 찍어 보내 주세요 |
 | `입력창에 글자가 다 들어가지 않았습니다` / `Copilot 입력창이 글을 받지 않습니다` | 2026-10-06.2 부터는 Copilot 이 앞 답을 마무리할 때까지 기다렸다 보냅니다. 그래도 나면 `이어서 해줘` 로 다시 보내고, 반복되면 전용 창 화면과 `tail -30 ~/.pi/agent/copilot-relay.log` 를 보내 주세요. pi 가 일하는 동안에는 전용 창 안을 클릭하지 마세요 |
@@ -723,7 +723,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 
 ### 9-1. 끊김·제한 기록 (2026-10-06.5 부터)
 Copilot·사내AI 가 중간에 끊기거나 사용량 제한에 걸리는 상황은 밖에서 재현할 수 없으므로, 중계 서버가 요청마다 어떻게 끝났는지를 기록합니다.
-한 주쯤 쓴 뒤 아래 요약을 찍어 보내 주면 다음 판을 고치는 데 씁니다.
+한 주쯤 쓴 뒤 아래 요약을 찍어 보내 주면 다음 버전을 고치는 데 씁니다.
 ```bash
 python ~/tools/pi/copilot/diag.py --limits
 ```
@@ -742,14 +742,14 @@ python ~/tools/pi/copilot/diag.py --limits
 |---|---|
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
-| `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 판으로 바꾸기, Node 진단 스크립트, 판 번호 |
+| `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 버전으로 바꾸기, Node 진단 스크립트, 버전 번호 |
 | `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, LLM 위키 `/wiki`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 8개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
-| `api-kit/` | 이 저장소에서 Kubeflow 노트북용 API 판([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))을 만드는 도구 (이 저장소의 zip 에는 들어가지 않음) |
-| `release/` | 판 내기 도구: 업데이트용 가벼운 zip 만들기, GitHub Release 올리기 (이 저장소의 zip 에는 들어가지 않음) |
+| `api-kit/` | 이 저장소에서 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))를 만드는 도구 (이 저장소의 zip 에는 들어가지 않음) |
+| `release/` | 릴리스 도구: 업데이트용 가벼운 zip 만들기, GitHub Release 올리기 (이 저장소의 zip 에는 들어가지 않음) |
 | `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
-| `CHANGELOG.md` | 판마다 바뀐 점과 바꾼 뒤 할 일 |
+| `CHANGELOG.md` | 버전마다 바뀐 점과 바꾼 뒤 할 일 |
 | `docs/` | [한 장 요약](docs/빠른시작.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
 **의존성**

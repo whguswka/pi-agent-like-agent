@@ -143,7 +143,7 @@ def report(cfg):
             kit = f.read().strip()
     except OSError:
         kit = "?"
-    show("버전", "판 {} / pi {} / 중계기 코드 {} / Python {}".format(kit, pkg.get("version", "?"), relay.RELAY_VERSION,
+    show("버전", "키트 {} / pi {} / 중계기 코드 {} / Python {}".format(kit, pkg.get("version", "?"), relay.RELAY_VERSION,
                                                               platform.python_version()))
     # Windows 는 프로그램을 찾을 때 System32(WSL 의 bash.exe)를 PATH 보다 먼저 보므로, PATH 에서 Git Bash 의 bash 를 직접 찾는다
     import shutil
@@ -161,7 +161,7 @@ def report(cfg):
     port = int(os.environ.get("PI_COPILOT_PORT", "8765"))
     try:
         h = get("http://127.0.0.1:{}/health".format(port))
-        ver = h.get("version", "예전 판")
+        ver = h.get("version", "예전 버전")
         show("중계 서버", "실행 중 (버전 {}{}) / 대화 메시지 {} / 남은 질문 {}{}".format(
             ver, ", 코드와 다름 -> pi 를 실행하면 새로 켜짐" if ver != relay.RELAY_VERSION else "",
             h.get("thread_messages"), h.get("copilot_turns_left"),
@@ -170,7 +170,7 @@ def report(cfg):
         show("중계 서버", "꺼져 있음 (pi 를 실행하면 자동으로 켜짐)")
     try:  # 사내AI 중계 서버 (models.json 에 사내AI 모델이 있으면 pi 가 함께 켬)
         h = get("http://127.0.0.1:8766/health")
-        ver = h.get("version", "예전 판")
+        ver = h.get("version", "예전 버전")
         show("사내AI 중계 서버", "실행 중 (버전 {}{}) / 대화 메시지 {}".format(
             ver, ", 코드와 다름 -> pi 를 실행하면 새로 켜짐" if ver != relay.RELAY_VERSION else "", h.get("thread_messages")))
     except (OSError, ValueError):
@@ -222,7 +222,7 @@ def report(cfg):
                 st["avg"], st["median"], st["max"], st["new"], " (평균 {:.0f}초)".format(st["new_avg"]) if st["new"] else "",
                 st["split"], st["retry"], st["errors"]))
         else:
-            show("최근 요청", "통계 없음 (이 판의 중계 서버로 요청하면 쌓임)")
+            show("최근 요청", "통계 없음 (이 버전의 중계 서버로 요청하면 쌓임)")
         try:
             import events
             line = events.summary_line(load_events(7))

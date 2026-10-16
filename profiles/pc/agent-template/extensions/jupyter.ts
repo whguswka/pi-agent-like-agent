@@ -146,7 +146,7 @@ function runPython(py: string, args: string[], cwd: string): Promise<{ code: num
 	});
 }
 let filterCache: boolean | null = null;
-/** python -m tarfile 에 --filter (안전하게 풀기) 가 있는지 (3.12 이상과 보안 패치된 판) */
+/** python -m tarfile 에 --filter (안전하게 풀기) 가 있는지 (3.12 이상과 보안 패치된 버전) */
 async function tarFilter(py: string): Promise<boolean> {
 	if (filterCache === null) filterCache = (await runPython(py, ["-m", "tarfile", "-h"], tmpdir())).out.includes("--filter");
 	return filterCache;

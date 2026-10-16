@@ -1,20 +1,20 @@
-// 원래 키트의 문서 한 벌에서 API 판 문서 만들기
-//   node assemble.mjs <폴더> <조각 폴더>                              표시를 처리해 API 판 글로 바꿔 씀
+// 원래 키트의 문서 한 벌에서 API 키트 문서 만들기
+//   node assemble.mjs <폴더> <조각 폴더>                              표시를 처리해 API 키트 글로 바꿔 씀
 //   node assemble.mjs --marks <폴더> <조각 폴더> <marks.sha256>       짝을 이룬 글이 적어 둔 것과 같은지만 봄 (같으면 0, 다르면 1)
 //   node assemble.mjs --write-marks <폴더> <조각 폴더> <marks.sha256> <커밋>   짝을 이룬 글의 sha256 을 적음
 //  원래 키트 문서의 표시(HTML 주석이라 GitHub 화면에는 안 보임):
-//   <!-- api:빼기 -->          (한 줄)  ...  <!-- /api -->   사이를 API 판에서 뺌 (Copilot·PC 전용 글)
-//   <!-- api:바꾸기 이름 -->   (한 줄)  ...  <!-- /api -->   사이를 API 판에서는 조각 '이름' 으로 바꿈
-//   <!-- api:넣기 이름 -->     (한 줄)                         API 판에서만 그 자리에 조각 '이름' 을 넣음
-//   어떤 줄 <!-- api= 대신 쓸 글 -->   (줄 끝)                    API 판에서는 그 줄을 '대신 쓸 글' 로 (비우면 그 줄을 뺌.
+//   <!-- api:빼기 -->          (한 줄)  ...  <!-- /api -->   사이를 API 키트에서 뺌 (Copilot·PC 전용 글)
+//   <!-- api:바꾸기 이름 -->   (한 줄)  ...  <!-- /api -->   사이를 API 키트에서는 조각 '이름' 으로 바꿈
+//   <!-- api:넣기 이름 -->     (한 줄)                         API 키트에서만 그 자리에 조각 '이름' 을 넣음
+//   어떤 줄 <!-- api= 대신 쓸 글 -->   (줄 끝)                    API 키트에서는 그 줄을 '대신 쓸 글' 로 (비우면 그 줄을 뺌.
 //                                                              표의 칸 나눔은 \| 로 적음, 여러 줄은 \n)
 //  한 줄 표시 앞에는 빈칸을 3개까지 둘 수 있음. 목록 가운데의 표시 줄은 빈칸 두 개를 두면 원래 키트 화면에서 목록이 끊기지 않음
 //  조각: <조각 폴더>/<문서 경로> 한 파일에 '<!-- 조각: 이름 -->' 줄로 나눠 적음 (끝의 빈 줄은 뺌)
 //  원래 키트 문서가 GitHub 에서 그대로 보이도록 점검 (어기면 멈춤):
 //   짝이 맞지 않는 표시, 코드 블록 안의 표시, 표 가운데의 한 줄 표시(표가 둘로 나뉨), 제목 줄의 api=,
 //   없는 조각, 쓰지 않은 조각
-//  짝을 이룬 글: 'api:바꾸기' 블록 안과 'api=' 줄(비우지 않은 것)의 원래 키트 쪽 글. 이 글이 바뀌면 API 판 글(조각, api= 뒤)도
-//   고쳐야 하는지 사람이 봐야 하므로 marks.sha256 에 적어 두고 make-api-kit.sh 가 비교함 (API 판 글만 고친 것은 걸리지 않음)
+//  짝을 이룬 글: 'api:바꾸기' 블록 안과 'api=' 줄(비우지 않은 것)의 원래 키트 쪽 글. 이 글이 바뀌면 API 키트 글(조각, api= 뒤)도
+//   고쳐야 하는지 사람이 봐야 하므로 marks.sha256 에 적어 두고 make-api-kit.sh 가 비교함 (API 키트 글만 고친 것은 걸리지 않음)
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -43,7 +43,7 @@ export function parseFragments(text) {
 	return out;
 }
 
-/** 표시가 든 문서 -> API 판 문서. 오류는 모아서 던짐. marks 배열을 주면 짝을 이룬 글을 담음 */
+/** 표시가 든 문서 -> API 키트 문서. 오류는 모아서 던짐. marks 배열을 주면 짝을 이룬 글을 담음 */
 export function assemble(text, fragments = new Map(), where = "", marks = null) {
 	const lines = text.split("\n");
 	const out = [];
@@ -151,7 +151,7 @@ function walk(dir, base = dir, acc = []) {
 	return acc;
 }
 
-/** 폴더의 표시 든 문서를 모두 처리: [경로, API 판 글] 목록, 짝을 이룬 글, 오류 */
+/** 폴더의 표시 든 문서를 모두 처리: [경로, API 키트 글] 목록, 짝을 이룬 글, 오류 */
 function load(dir, fragDir) {
 	const fragFiles = fragDir && existsSync(fragDir) ? walk(fragDir) : [];
 	const docs = walk(dir).filter((p) => p.endsWith(".md") && !p.startsWith("runtime/") && !p.startsWith(".git/"));
@@ -193,8 +193,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 	}
 	if (mode === "--write-marks") {
 		const head = [
-			`# 원래 키트 문서에서 API 판과 짝을 이룬 글의 sha256 앞 12자리 (커밋 ${rev}). api-kit/make-api-kit.sh --update-sha 가 적음`,
-			"#  'api:바꾸기' 블록 안 글과 'api=' 줄의 원래 키트 쪽 글. 바뀌면 API 판 만들기가 멈춤: API 판 글(조각, api= 뒤)도 고쳐야 하는지 보고 --update-sha",
+			`# 원래 키트 문서에서 API 키트와 짝을 이룬 글의 sha256 앞 12자리 (커밋 ${rev}). api-kit/make-api-kit.sh --update-sha 가 적음`,
+			"#  'api:바꾸기' 블록 안 글과 'api=' 줄의 원래 키트 쪽 글. 바뀌면 API 키트 만들기가 멈춤: API 키트 글(조각, api= 뒤)도 고쳐야 하는지 보고 --update-sha",
 		];
 		writeFileSync(marksFile, [...head, ...marks.map(markLine), ""].join("\n"));
 		console.log(`[api-kit] marks.sha256 을 다시 적었습니다 (짝 ${marks.length}개)`);
@@ -202,7 +202,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 		const saved = existsSync(marksFile) ? readFileSync(marksFile, "utf8").split(/\r?\n/).filter((l) => l && !l.startsWith("#")) : [];
 		const { changed, gone } = compareMarks(marks, saved);
 		for (const k of changed)
-			console.error(`[api-kit] 바뀜: ${k.where}:${k.line} ${k.kind === "api=" ? "api= 줄" : `'${k.kind}' 블록`} 원래: "${short(k.main)}" / API 판: ${k.kind === "api=" ? `"${short(k.api)}"` : `api-kit/fragments/${k.where} 의 ${k.api}`}`);
+			console.error(`[api-kit] 바뀜: ${k.where}:${k.line} ${k.kind === "api=" ? "api= 줄" : `'${k.kind}' 블록`} 원래: "${short(k.main)}" / API 키트: ${k.kind === "api=" ? `"${short(k.api)}"` : `api-kit/fragments/${k.where} 의 ${k.api}`}`);
 		if (gone > changed.length) console.error(`[api-kit] 없어진 짝 ${gone - changed.length}개 (원래 키트에서 표시를 지웠거나 합친 것)`);
 		process.exit(changed.length || gone ? 1 : 0);
 	} else {

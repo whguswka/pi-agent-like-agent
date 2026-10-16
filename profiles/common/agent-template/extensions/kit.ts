@@ -2,8 +2,8 @@
  * pi 안에서 보는 도움말과 상태
  *
  *  /kit     한글 빠른 도움말 (키, 세션, 명령·스킬 목록, 설정 파일 위치). 명령·스킬은 ~/.pi/agent 에 있는 것을 그대로 보여 줌
- *  /doctor  상태 요약: pc 설정은 copilot/diag.py --report (판 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그),
- *           jupyter 설정은 판 번호와 Node 확인. 문제가 생기면 이 화면을 찍어 보내면 된다
+ *  /doctor  상태 요약: pc 설정은 copilot/diag.py --report (버전 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그),
+ *           jupyter 설정은 버전 번호와 Node 확인. 문제가 생기면 이 화면을 찍어 보내면 된다
  *  /kit share <폴더>    팀이 같이 쓰는 폴더(공유 드라이브 등)의 skills·prompts 를 settings.json 에 등록하고 바로 다시 읽음
  *  /kit unshare <폴더>  등록을 뺌.  /kit share (폴더 없이) 는 지금 등록된 폴더를 보여 줌
  * 편집기 위에 띄우고, 다음 요청을 보내거나 같은 명령을 다시 입력하면 닫는다. LLM 에게는 보내지 않는다.
@@ -47,7 +47,7 @@ function helpLines(): string[] {
 	const skills = names(join(agentDir, "skills"), (n) => (existsSync(join(agentDir, "skills", n, "SKILL.md")) ? n : null));
 	const bridge = isBridge();
 	const lines = [
-		`── pi 빠른 도움말 (판 ${version()}) ── 닫기: /kit 다시 입력 또는 요청 보내기`,
+		`── pi 빠른 도움말 (버전 ${version()}) ── 닫기: /kit 다시 입력 또는 요청 보내기`,
 		" 입력  Enter 보내기 · Shift+Enter 줄바꿈 · Esc 멈추기 · Ctrl+O 도구 출력 펼치기 · !명령 직접 실행 · @ 파일 고르기(내용이 함께 감)",
 		" 모델  /model 또는 Ctrl+L 고르기 · Ctrl+P 다음 모델",
 		" 세션  pi -c 이어서 · /resume 고르기 · /new 새로 · /name 이름 붙이기 · 끝내기 /quit(/exit) 또는 Ctrl+C 두 번",
@@ -101,7 +101,7 @@ function run(cmd: string, args: string[], ms: number): Promise<string> {
 }
 
 async function doctorLines(): Promise<string[]> {
-	const head = `── 상태 요약 (판 ${version()}) ── 닫기: /doctor 다시 입력 또는 요청 보내기`;
+	const head = `── 상태 요약 (버전 ${version()}) ── 닫기: /doctor 다시 입력 또는 요청 보내기`;
 	let out: string;
 	if (isBridge()) {
 		const py = process.env.PI_PYTHON_EXE;
@@ -218,8 +218,8 @@ export default function (pi: ExtensionAPI) {
 	}
 	pi.registerCommand("doctor", {
 		description: isBridge()
-			? "상태 요약 (판 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그). 문제가 생기면 이 화면을 찍어 보내 주세요"
-			: "상태 요약 (판 번호, pi 폴더, Node). 문제가 생기면 이 화면을 찍어 보내 주세요",
+			? "상태 요약 (버전 번호, Node, 중계 서버, 전용 창, 모델, 최근 요청, 최근 로그). 문제가 생기면 이 화면을 찍어 보내 주세요"
+			: "상태 요약 (버전 번호, pi 폴더, Node). 문제가 생기면 이 화면을 찍어 보내 주세요",
 		handler: async (_args, ctx) => {
 			if (shown === "doctor") return show(ctx, "doctor", undefined);
 			ctx.ui.notify("상태를 확인하는 중입니다 (몇 초 걸림)...", "info");

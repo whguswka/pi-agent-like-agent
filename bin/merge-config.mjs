@@ -3,7 +3,7 @@
 //  - 사용자가 지운 항목은 다시 넣지 않는다: 지난번에 설치한 템플릿(.pi-agent-kit-template.json)과 비교해 새로 생긴 것만 추가
 //  - 바꾸기 전 파일은 <이름>.bak 으로 남긴다
 //  - 기본 명령·스킬(<저장소>/prompts/*.md, <저장소>/skills/<이름>/)을 사용자 설정 폴더의 prompts·skills 에 복사한다
-//    처음이면 복사, 고치지 않았으면 새 판으로 바꿈, 고쳤으면 그대로 둠(알림), 지웠으면 다시 넣지 않음
+//    처음이면 복사, 고치지 않았으면 새 버전으로 바꿈, 고쳤으면 그대로 둠(알림), 지웠으면 다시 넣지 않음
 //    (고쳤는지는 지난번에 설치한 내용의 해시와 비교. 상태 파일의 kitFiles)
 // 사용법: node merge-config.mjs <템플릿 폴더> <사용자 설정 폴더> [저장소 폴더]
 import crypto from "node:crypto";
@@ -101,7 +101,7 @@ const prev = prevState.ok && isObj(prevState.value) ? prevState.value : {};
 const state = {};
 const norm = (x) => String(x).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
-/** 예전 판(설정에 저장소 폴더를 등록하던 방식)에서 넣은 prompts·skills 경로를 뺀다 (지금은 복사하므로 이름이 겹치지 않게) */
+/** 예전 버전(설정에 저장소 폴더를 등록하던 방식)에서 넣은 prompts·skills 경로를 뺀다 (지금은 복사하므로 이름이 겹치지 않게) */
 function dropOldKitPaths(u, changes) {
 	for (const [key, dir] of Object.entries(prev.kitPaths || {})) {
 		if (!Array.isArray(u[key])) continue;
@@ -172,8 +172,8 @@ function syncKitFiles() {
 		}
 	}
 	if (added.length) console.log(`기본 명령·스킬 추가: ${added.join(", ")}`);
-	if (updated.length) console.log(`기본 명령·스킬 새 판으로: ${updated.join(", ")}`);
-	if (kept.length) console.log(`직접 고친 것은 그대로 둠: ${kept.join(", ")} (새 판은 ${kitHome} 의 prompts·skills 에 있음)`);
+	if (updated.length) console.log(`기본 명령·스킬 새 버전으로: ${updated.join(", ")}`);
+	if (kept.length) console.log(`직접 고친 것은 그대로 둠: ${kept.join(", ")} (새 버전은 ${kitHome} 의 prompts·skills 에 있음)`);
 }
 let failed = false;
 for (const name of FILES) {
