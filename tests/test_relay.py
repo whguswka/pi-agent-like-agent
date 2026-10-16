@@ -1146,16 +1146,25 @@ class _HeapTab:
         return {}
 
 
-def _cop(used_mb, limit):
-    return B.Copilot(_HeapTab(used_mb), dict(B.DEFAULT_CONFIG, use_stream=False, tab_reload_mb=limit))
+def _cop(used_mb, limit, warn=0):
+    # warn 0: 전용 창 전체는 보지 않음 (시험이 진짜 브라우저 포트에 묻지 않게)
+    return B.Copilot(_HeapTab(used_mb), dict(B.DEFAULT_CONFIG, use_stream=False, tab_reload_mb=limit, memory_warn_mb=warn))
 
 
 check("heap_mb: 살아 있는 JS + 화면 객체 (totalSize 는 빼고)", _cop(500, 400).heap_mb() == 540)
-check("heavy: 기준을 넘으면 그 크기", _cop(500, 400).heavy() == 540)
+check("heavy: 탭이 기준을 넘으면 그 크기", _cop(500, 400).heavy() == "탭 메모리 540MB")
 check("heavy: 기준 아래면 None", _cop(100, 400).heavy() is None)
-_c0 = _cop(5000, 0)
-check("heavy: 0 이면 끔 (탭에 묻지도 않음)", _c0.heavy() is None and "Runtime.getHeapUsage" not in _c0.tab.calls, _c0.tab.calls)
+_c0 = _cop(5000, 0, 100)
+check("heavy: tab_reload_mb 0 이면 끔 (탭·브라우저에 묻지도 않음)", _c0.heavy() is None and "Runtime.getHeapUsage" not in _c0.tab.calls, _c0.tab.calls)
 check("heavy: 탭에 묻지 못하면 None (새로 읽지 않음)", _cop(None, 400).heavy() is None)
+_bm, _asked = B.browser_memory, []
+try:  # 전용 창 전체: 탭(웹 앱)은 작아도 전용 창 전체가 memory_warn_mb 를 넘으면 새로 읽음
+    B.browser_memory = lambda port, timeout=5: _asked.append(port) or {"mb": 2700, "top_mb": 2400, "procs": 10}
+    check("heavy: 전용 창 전체가 memory_warn_mb 를 넘으면 (웹 앱은 작아도)", _cop(100, 400, 2500).heavy() == "전용 창 메모리 2.6GB")
+    check("heavy: 전용 창 전체가 기준 아래면 None", _cop(100, 400, 3000).heavy() is None)
+    check("heavy: memory_warn_mb 0 이면 전용 창은 보지 않음", _cop(100, 400, 0).heavy() is None and len(_asked) == 2, _asked)
+finally:
+    B.browser_memory = _bm
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

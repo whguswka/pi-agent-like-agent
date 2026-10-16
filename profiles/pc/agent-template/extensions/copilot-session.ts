@@ -76,20 +76,36 @@ export default function (pi: ExtensionAPI) {
 	const sync = (ctx: any) => (running || compacting ? start(ctx) : stop(ctx));
 
 	// 메모리 (4): 지금 모델의 중계 서버에 묻는다. 중계 서버가 꺼져 있거나 Windows 가 아니면(값 없음) 보이지 않음
+	// memCtx 는 지금 세션의 ctx. 세션이 끝나면(/new, /kit share 의 다시 읽기 등) 바로 비운다: 끝난 세션의 ctx 를 쓰면 오류가 나고,
+	// 타이머 안의 오류는 pi 를 멈추게 하므로 타이머에서는 어떤 오류도 밖으로 내보내지 않는다
 	let memCtx: any = null;
 	let memTimer: ReturnType<typeof setInterval> | null = null;
+	let memFirst: ReturnType<typeof setTimeout> | null = null;
 	let warned = false;
+	const memStop = () => {
+		if (memTimer) clearInterval(memTimer);
+		if (memFirst) clearTimeout(memFirst);
+		memTimer = memFirst = null;
+		memCtx = null;
+		warned = false;
+	};
 	const memTick = async () => {
 		const ctx = memCtx;
-		if (!ctx?.hasUI) return;
+		if (!ctx) return;
+		const show = (text?: string) => {
+			try {
+				if (memCtx === ctx) ctx.ui.setStatus("memory", text);
+			} catch {}
+		};
 		try {
 			const m: any = await (await fetch(`${serverOf(ctx)}/memory`, { signal: AbortSignal.timeout(3000) })).json();
-			if (typeof m.browser_mb !== "number") return ctx.ui.setStatus("memory", undefined);
+			if (memCtx !== ctx) return; // 묻는 사이에 세션이 끝남
+			if (typeof m.browser_mb !== "number") return show(undefined);
 			const total = m.browser_mb + (m.relay_mb || 0) + Math.round(process.memoryUsage().rss / 1048576);
 			const gb = (mb: number) => `${(mb / 1024).toFixed(1)}GB`;
 			const over = m.warn_mb > 0 && total >= m.warn_mb;
 			const fg = (c: string, s: string) => (ctx.ui.theme?.fg ? ctx.ui.theme.fg(c, s) : s);
-			ctx.ui.setStatus("memory", over ? fg("warning", `메모리 ${gb(total)} · /new 로 정리`) : fg("muted", `메모리 ${gb(total)}`));
+			show(over ? fg("warning", `메모리 ${gb(total)} · /new 로 정리`) : fg("muted", `메모리 ${gb(total)}`));
 			if (over && !warned)
 				ctx.ui.notify(
 					`pi 와 전용 창이 메모리를 ${gb(total)} 쓰고 있습니다 (전용 창 ${gb(m.browser_mb)}). ` +
@@ -98,18 +114,18 @@ export default function (pi: ExtensionAPI) {
 				);
 			warned = over;
 		} catch {
-			ctx.ui.setStatus("memory", undefined);
+			show(undefined);
 		}
 	};
 	pi.on("session_start", async (_event: unknown, ctx: any) => {
+		memStop();
+		if (!ctx?.hasUI) return;
 		memCtx = ctx;
-		if (!memTimer && ctx?.hasUI) {
-			memTimer = setInterval(memTick, 30000);
-			setTimeout(memTick, 3000);
-		}
+		memTimer = setInterval(memTick, 30000);
+		memFirst = setTimeout(memTick, 3000);
 	});
 	pi.on("model_select", async (_event: unknown, ctx: any) => {
-		memCtx = ctx; // 사내AI 모델로 바꾸면 그쪽 중계 서버에 물음
+		if (memCtx) memCtx = ctx; // 사내AI 모델로 바꾸면 그쪽 중계 서버에 물음
 	});
 
 	pi.on("agent_start", async (_event: unknown, ctx: any) => {
@@ -135,10 +151,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (event: { reason?: string }, ctx: any) => {
 		running = compacting = false;
 		stop(ctx);
-		if (memTimer) clearInterval(memTimer);
-		memTimer = null;
-		warned = false;
-		if (ctx?.hasUI) ctx.ui.setStatus("memory", undefined);
+		memStop();
+		try {
+			if (ctx?.hasUI) ctx.ui.setStatus("memory", undefined);
+		} catch {}
 		if (event?.reason === "reload") return;
 		// 두 중계 서버(Copilot, 사내AI)에 모두 알린다. 꺼져 있으면 다음에 새 대화를 열 때 정리된다
 		await Promise.allSettled(

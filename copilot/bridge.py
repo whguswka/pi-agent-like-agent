@@ -70,7 +70,8 @@ DEFAULT_CONFIG = {
     "extra_rules": [],  # 새 대화의 첫 메시지(진행 방식)에 덧붙일 규칙 (사내AI: 자기 도구로 직접 실행하지 말 것)
     "collect_events": True,  # 끊김·제한 기록 (내용 없이 횟수·시간만, 이 PC 의 파일에만. diag.py --limits 로 요약)
     # 메모리: 전용 창의 웹 앱은 페이지를 새로 읽기 전에는 메모리를 거의 돌려주지 않는다
-    #  tab_reload_mb: 새 대화를 열 때·pi 세션이 끝날 때(/new 등) 이 탭이 이만큼(MB) 넘게 쓰고 있으면 단추 대신 페이지를 새로 읽음 (0 이면 끔)
+    #  tab_reload_mb: 새 대화를 열 때·pi 세션이 끝날 때(/new 등) 이 탭의 웹 앱이 이만큼(MB) 넘게 쓰거나 전용 창 전체가 memory_warn_mb 를
+    #   넘으면 단추 대신 페이지를 새로 읽음 (0 이면 끔)
     #  memory_warn_mb: pi + 중계 서버 + 전용 창을 합친 메모리가 이만큼(MB) 넘으면 pi 상태 줄에서 /new 를 권함 (0 이면 끔)
     "tab_reload_mb": 400,
     "memory_warn_mb": 2500,
@@ -822,14 +823,24 @@ class Copilot:
         return round(sum(r.get(k) or 0 for k in ("usedSize", "embedderHeapUsedSize", "backingStorageSize")) / 1048576)
 
     def heavy(self):
-        """tab_reload_mb 를 넘었으면 그 크기(MB), 아니면 None (0 이면 끔)"""
+        """페이지를 새로 읽을 만큼 큰지: 이 탭의 웹 앱이 tab_reload_mb 를 넘거나, 전용 창 전체(모든 프로세스)가 memory_warn_mb 를
+        넘으면 그 설명, 아니면 None. 웹 앱 크기만으로는 화면·이미지 메모리가 빠지므로 전용 창 전체도 본다 (pi 상태 줄이 /new 를 권하는
+        때 /new 를 치면 반드시 정리되도록). tab_reload_mb 가 0 이면 끔"""
         limit = float(self.cfg.get("tab_reload_mb") or 0)
-        mb = self.heap_mb() if limit > 0 else None
-        return mb if mb is not None and mb >= limit else None
+        if limit <= 0:
+            return None
+        mb = self.heap_mb()
+        if mb is not None and mb >= limit:
+            return "탭 메모리 {}MB".format(mb)
+        warn = float(self.cfg.get("memory_warn_mb") or 0)
+        b = browser_memory(self.cfg["cdp_port"]) if warn > 0 else None
+        if b and b["mb"] >= warn:
+            return "전용 창 메모리 {:.1f}GB".format(b["mb"] / 1024)
+        return None
 
-    def reload_page(self, mb):
+    def reload_page(self, why):
         """페이지를 새로 읽어 웹 앱이 쌓은 메모리를 비움 (새 대화 화면이 됨). 단추로 새 대화를 열면 페이지는 그대로라 줄지 않음"""
-        log("Copilot: 탭 메모리 {}MB -> 페이지를 새로 읽음 (새 대화 화면)".format(mb))
+        log("Copilot: {} -> 페이지를 새로 읽음 (새 대화 화면)".format(why))
         self.tab.call("Page.navigate", {"url": self.cfg["copilot_new_chat_url"]})
         time.sleep(3.5)
         self.wait_input(60)
@@ -837,9 +848,9 @@ class Copilot:
         self.turns_left = None
 
     def new_chat(self):
-        mb = self.heavy()
-        if mb is not None:
-            return self.reload_page(mb)
+        why = self.heavy()
+        if why:
+            return self.reload_page(why)
         clicked = self.js("""(() => { const B = window.__piBridge;
             const sel = %s; let b = sel ? document.querySelector(sel) : B.buttons(%s)[0];
             if (b && B.visible(b)) { b.click(); return B.label(b); } return null; })()""" % (

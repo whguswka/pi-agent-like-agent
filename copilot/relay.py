@@ -1127,11 +1127,11 @@ class Relay:
         if cop is None:
             return
         try:
-            mb = cop.heavy()
-            if mb is None:
+            why = cop.heavy()
+            if why is None:
                 return
             self.log("pi 세션 끝 ({}) -> Copilot 탭 정리".format(reason or "?"))
-            cop.reload_page(mb)
+            cop.reload_page(why)
             self.link.model_now = self.link.model_failed = None  # 새로 읽은 화면은 모델이 '자동' 으로 돌아감
         except (bridge.BridgeError, OSError, TimeoutError) as e:
             self.log("탭을 새로 읽지 못함:", e)
