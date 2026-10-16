@@ -3,6 +3,16 @@
 버전 번호는 `VERSION` 에 있습니다. 새 버전으로 바꾸면(`update.sh`) 끝에 그 버전의 항목을 보여 줍니다.
 버전마다 바탕이 된 [pi-agent-like-agent](https://github.com/whguswka/pi-agent-like-agent) 의 버전을 함께 적습니다.
 
+## 2026-10-16.2
+안내 글의 '판' 을 '버전' 으로 바꿨습니다. 바탕: pi-agent-like-agent 2026-10-16.2.
+- **'판' 대신 '버전'**: 동작은 같습니다.
+  - `update.sh`·`install.sh` 의 메시지 (`이미 같은 버전(...)입니다`, `지금 버전: … -> 새 버전: …`, `이 버전에서 바뀐 점` 등), `/kit`·`/doctor` 의 머리줄 (`상태 요약 (버전 …)`).
+  - README·문서와 GitHub Release 제목 (`버전 2026-10-16.2`).
+  - 이번에 바꾸는 동안의 메시지는 지금 깔린 `update.sh` 가 내므로 아직 '판' 으로 나옵니다 (다음 업데이트부터 '버전').
+- 2026-10-16.1 에서는 Releases 의 가벼운 zip 으로 바꿀 수 있습니다. 2026-10-15.x 의 `update.sh` 는 가벼운 zip 을 모르므로 전체 zip 으로 바꿉니다.
+- 확인한 환경: 개발 PC 에서 설치·업데이트(2026-10-16.1 에서 가벼운 zip, 전체 zip, tar.gz)를 돌렸습니다. Kubeflow 노트북에서는 돌려 보지 않았습니다.
+- 할 일: 없음.
+
 ## 2026-10-16.1
 가벼운 업데이트 zip 을 더했습니다. 바탕: pi-agent-like-agent 2026-10-16.1.
 - **가벼운 업데이트 zip**: 버전마다 GitHub 저장소의 **Releases** 에 `pi-agent-like-agent-api-<버전>-update.zip` 을 올립니다. pi 본체(`runtime/`, 2.8MB·835개 파일)를 뺀 약 0.2MB 라 반입이 가볍습니다 (전체 zip 은 3.0MB) ([README 7장](README.md#7-새-버전으로-바꾸기)).
