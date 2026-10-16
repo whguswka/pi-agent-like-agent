@@ -69,6 +69,11 @@ DEFAULT_CONFIG = {
     "service_name": "Copilot",  # 안내·로그에 쓰는 이름 (사내AI 중계 서버는 "사내AI")
     "extra_rules": [],  # 새 대화의 첫 메시지(진행 방식)에 덧붙일 규칙 (사내AI: 자기 도구로 직접 실행하지 말 것)
     "collect_events": True,  # 끊김·제한 기록 (내용 없이 횟수·시간만, 이 PC 의 파일에만. diag.py --limits 로 요약)
+    # 메모리: 전용 창의 웹 앱은 페이지를 새로 읽기 전에는 메모리를 거의 돌려주지 않는다
+    #  tab_reload_mb: 새 대화를 열 때·pi 세션이 끝날 때(/new 등) 이 탭이 이만큼(MB) 넘게 쓰고 있으면 단추 대신 페이지를 새로 읽음 (0 이면 끔)
+    #  memory_warn_mb: pi + 중계 서버 + 전용 창을 합친 메모리가 이만큼(MB) 넘으면 pi 상태 줄에서 /new 를 권함 (0 이면 끔)
+    "tab_reload_mb": 400,
+    "memory_warn_mb": 2500,
     "open_tab_if_missing": False,  # 전용 창에 이 서비스의 탭이 없으면 새로 연다 (사내AI)
     # 끝난 대화 삭제: 중계 서버가 만든 대화(copilot-chats.json 에 기록)만 왼쪽 목록에서 '… > 삭제 > 확인' 으로 지운다
     "delete_finished_chats": True,
@@ -420,6 +425,66 @@ def list_tabs(port):
 
 
 # ---------------------------------------------------------------------------
+# 메모리 (pi 상태 줄·/doctor 의 '메모리'). 프로세스의 커밋(작업 관리자의 '커밋 크기') 기준, Windows 만
+# ---------------------------------------------------------------------------
+
+def process_memory(pid):
+    """프로세스 하나의 커밋 바이트 (Windows 가 아니거나 읽지 못하면 None)"""
+    if os.name != "nt":
+        return None
+    import ctypes
+    import ctypes.wintypes as wt
+
+    class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS_EX
+        _fields_ = [("cb", wt.DWORD), ("PageFaultCount", wt.DWORD)] + [(n, ctypes.c_size_t) for n in (
+            "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage",
+            "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage", "PrivateUsage")]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wt.HANDLE
+    k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    k32.K32GetProcessMemoryInfo.argtypes = [wt.HANDLE, ctypes.POINTER(Counters), wt.DWORD]
+    k32.CloseHandle.argtypes = [wt.HANDLE]
+    h = k32.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    try:
+        c = Counters()
+        c.cb = ctypes.sizeof(Counters)
+        return c.PrivateUsage if k32.K32GetProcessMemoryInfo(h, ctypes.byref(c), c.cb) else None
+    finally:
+        k32.CloseHandle(h)
+
+
+def browser_memory(port, timeout=5):
+    """전용 창(원격 디버깅 포트의 브라우저) 전체의 메모리: 브라우저에 프로세스 목록을 묻고(SystemInfo.getProcessInfo) 커밋을 더함
+    {"mb": 합계, "top_mb": 가장 큰 프로세스(보통 Copilot 탭), "procs": 개수}. 탭 연결은 쓰지 않음 (요청 처리 중이어도 됨)"""
+    if os.name != "nt":
+        return None
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:{}/json/version".format(port), timeout=timeout) as r:
+            ws = WebSocket(json.load(r)["webSocketDebuggerUrl"])
+    except (OSError, ValueError, KeyError):
+        return None
+    deadline = time.time() + timeout
+    try:
+        ws.send(json.dumps({"id": 1, "method": "SystemInfo.getProcessInfo"}))
+        while True:
+            msg = json.loads(ws.recv(max(0.1, deadline - time.time())))
+            if msg.get("id") == 1:
+                break
+    except (OSError, ValueError, socket.timeout, BridgeError):
+        return None
+    finally:
+        ws.close()
+    sizes = [process_memory(p.get("id")) for p in (msg.get("result") or {}).get("processInfo") or []]
+    sizes = [s for s in sizes if s]
+    if not sizes:
+        return None
+    return {"mb": round(sum(sizes) / 1048576), "top_mb": round(max(sizes) / 1048576), "procs": len(sizes)}
+
+
+# ---------------------------------------------------------------------------
 # Copilot 탭 조작
 # ---------------------------------------------------------------------------
 
@@ -748,7 +813,33 @@ class Copilot:
             time.sleep(0.5)
         raise BridgeError("Copilot 입력창을 찾지 못했습니다. Copilot 페이지가 열려 있는지, input_selector 설정을 확인하세요.")
 
+    def heap_mb(self):
+        """이 탭(웹 앱)이 쓰는 메모리 MB: 살아 있는 JS 객체 + 화면 객체(DOM 등). 읽지 못하면 None"""
+        try:
+            r = self.tab.call("Runtime.getHeapUsage", timeout=10)
+        except (BridgeError, TimeoutError, OSError):
+            return None
+        return round(sum(r.get(k) or 0 for k in ("usedSize", "embedderHeapUsedSize", "backingStorageSize")) / 1048576)
+
+    def heavy(self):
+        """tab_reload_mb 를 넘었으면 그 크기(MB), 아니면 None (0 이면 끔)"""
+        limit = float(self.cfg.get("tab_reload_mb") or 0)
+        mb = self.heap_mb() if limit > 0 else None
+        return mb if mb is not None and mb >= limit else None
+
+    def reload_page(self, mb):
+        """페이지를 새로 읽어 웹 앱이 쌓은 메모리를 비움 (새 대화 화면이 됨). 단추로 새 대화를 열면 페이지는 그대로라 줄지 않음"""
+        log("Copilot: 탭 메모리 {}MB -> 페이지를 새로 읽음 (새 대화 화면)".format(mb))
+        self.tab.call("Page.navigate", {"url": self.cfg["copilot_new_chat_url"]})
+        time.sleep(3.5)
+        self.wait_input(60)
+        self.thread_url = None
+        self.turns_left = None
+
     def new_chat(self):
+        mb = self.heavy()
+        if mb is not None:
+            return self.reload_page(mb)
         clicked = self.js("""(() => { const B = window.__piBridge;
             const sel = %s; let b = sel ? document.querySelector(sel) : B.buttons(%s)[0];
             if (b && B.visible(b)) { b.click(); return B.label(b); } return null; })()""" % (

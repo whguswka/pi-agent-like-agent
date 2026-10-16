@@ -456,6 +456,9 @@ class FakeCop:
         self.deleted.append(cid)
         return True, "ok"
 
+    def heavy(self):  # 세션 끝의 탭 새로 읽기(tab_reload_mb): 이 시험에서는 늘 가벼움
+        return None
+
 
 link14 = FakeLink([])
 link14.cfg = {"delete_finished_chats": True}
@@ -1116,6 +1119,43 @@ _body, _c, _e = relay.parse_reply({"text": "남기겠습니다.\n```text\n" + _w
 check("코드 블록 안이면 그대로", _c and _c["name"] == "wiki_write" and _c["arguments"]["title"] == "회의 요약 정리", (_c, _e))
 _c, _e = relay.parse_block("@tool bash\nls -la", "text", {"bash", "read"})
 check("이름만 있는 도구 목록(set)도 예전처럼 bash 는 command", _c == {"name": "bash", "arguments": {"command": "ls -la"}}, (_c, _e))
+
+# 메모리: pi 상태 줄·/doctor 의 숫자 (Windows 의 커밋 크기), 탭을 새로 읽는 기준 (tab_reload_mb)
+B = relay.bridge
+if os.name == "nt":
+    _m = B.process_memory(os.getpid())
+    check("process_memory: 이 프로세스의 커밋 바이트", isinstance(_m, int) and (5 << 20) < _m < (4 << 30), _m)
+check("process_memory: 없는 프로세스는 None", B.process_memory(0x7FFFFFF0) is None)
+check("browser_memory: 브라우저가 없으면 None (오류 없이)", B.browser_memory(9, timeout=1) is None)
+
+
+class _HeapTab:
+    """Runtime.getHeapUsage 만 답하는 가짜 탭 (MB 단위로 줌, None 이면 실패)"""
+    events = None
+
+    def __init__(self, used_mb):
+        self.used_mb, self.calls = used_mb, []
+
+    def call(self, method, params=None, timeout=30):
+        self.calls.append(method)
+        if method == "Runtime.getHeapUsage":
+            if self.used_mb is None:
+                raise B.BridgeError("Runtime.getHeapUsage: 연결 끊김")
+            return {"usedSize": self.used_mb << 20, "totalSize": (self.used_mb + 300) << 20, "embedderHeapUsedSize": 40 << 20,
+                    "backingStorageSize": 0}
+        return {}
+
+
+def _cop(used_mb, limit):
+    return B.Copilot(_HeapTab(used_mb), dict(B.DEFAULT_CONFIG, use_stream=False, tab_reload_mb=limit))
+
+
+check("heap_mb: 살아 있는 JS + 화면 객체 (totalSize 는 빼고)", _cop(500, 400).heap_mb() == 540)
+check("heavy: 기준을 넘으면 그 크기", _cop(500, 400).heavy() == 540)
+check("heavy: 기준 아래면 None", _cop(100, 400).heavy() is None)
+_c0 = _cop(5000, 0)
+check("heavy: 0 이면 끔 (탭에 묻지도 않음)", _c0.heavy() is None and "Runtime.getHeapUsage" not in _c0.tab.calls, _c0.tab.calls)
+check("heavy: 탭에 묻지 못하면 None (새로 읽지 않음)", _cop(None, 400).heavy() is None)
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

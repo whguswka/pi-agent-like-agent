@@ -87,6 +87,8 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `collect_events` | 기본 true. 끊김·제한 기록: 요청마다 걸린 시간·글자 수·답이 끝난 방법·다시 부탁한 까닭·오류 종류(사용량 제한이면 직전 사용량)를 내용 없이 `~/.pi/agent/relay-events.jsonl` 에 한 줄씩 (`relay.py --events <파일>` 로 바꿈. 사내AI 중계 서버는 `inhouse-events.jsonl`). 요약: `diag.py --limits` |
 | `max_questions_per_chat` | 기본 100. 이 수만큼 질문하면 새 대화로 넘어감 (0 이면 Copilot 한도(600)까지 한 대화). 시험에서 규칙 요약 없이 80개를 넘기자 Copilot 이 진행 규칙을 놓쳤고, 규칙 요약을 넣은 뒤 60개까지는 문제가 없었음. 새 대화에는 최근 기록과 그 앞 요약만 들어가므로 아주 오래된 내용은 Copilot 이 기억하지 못함 (필요하면 파일을 다시 읽게 하세요) |
 | `max_questions_per_minute` | 0 이면 끔. 숫자를 넣으면 분당 그 수를 넘지 않게 기다렸다 보냄 (Copilot 사용량 제한 예방, 아래 참고) |
+| `tab_reload_mb` | 기본 400. 새 대화를 열 때와 pi 세션이 끝날 때(`/new`, 종료) Copilot 탭의 웹 앱이 이만큼(MB, 살아 있는 JS·화면 객체) 넘게 쓰고 있으면 '새 채팅' 단추 대신 페이지를 새로 읽음. 웹 앱은 페이지를 새로 읽기 전에는 메모리를 거의 돌려주지 않아, 하루 쓰면 탭 하나가 2GB 를 넘기도 함 (2026-10-16 회사 PC). 0 이면 끔 |
+| `memory_warn_mb` | 기본 2500. pi + 중계 서버 + 전용 창(모든 프로세스의 커밋)을 합친 메모리가 이만큼(MB) 넘으면 pi 상태 줄의 '메모리' 에 `/new 로 정리` 를 붙이고 한 번 알림. 0 이면 끔 (메모리 표시는 그대로) |
 | `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |
 | `tool_result_chars` | 도구 결과 하나를 보낼 최대 글자 수 (기본 6000, 가운데 생략) |
 | `max_tabs` | 기본 1. 2 이상이면 요청 머리글 `X-Pi-Session`(pi 확장 copilot-session.ts 가 pi 프로세스마다 붙임)별로 Copilot 창을 따로 씀. 창 1 은 처음부터 열려 있던 Copilot 탭, 나머지는 필요할 때 새 창(뒤에서 열림). 대화 기록에는 창 번호(owner)를 남겨 각 창은 자기 대화만 '끝난 대화' 로 돌림. 창이 모두 쓰이는 중이면 가장 오래 쉰 창을 넘겨받음. 분당 질문 수 제한은 모든 창을 합쳐서 셈. jupyter 모드의 노트북 명령도 창마다 터미널을 따로 씀 (창 1: pibridge, 창 2: pibridge2 …. jupyter.ts 도 같은 X-Pi-Session 을 보냄) |
@@ -128,7 +130,9 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
     사용자·어시스턴트 메시지를 지우거나 바꾸면 새 채팅을 열고 지침과 최근 기록을 다시 넣습니다 (질문 7개 안팎, 1~2분).
 - `GET /health`, `POST /reset` (다음 요청을 새 채팅으로)
 - 창이 여러 개일 때(`max_tabs`): `/v1/chat/completions` 의 머리글 `X-Pi-Session`, `/v1/session/end` 의 `session`, `/status?session=` 으로 세션(창)을 구분. `/health` 의 `windows` 에 창별 세션·사용 중 여부
-- `GET /status` → `busy`, `phase`(지금 하는 일: 새 대화 여는 중, 모델 고르는 중, 보내는 중 (i/n), 답 기다리는 중 등), `seconds`(그 일을 한 시간), `total_seconds`(이번 요청 전체). 잠금·브라우저 조작 없이 바로 답함. 참고 구현: `~/.pi/agent/extensions/copilot-session.ts` (상태 줄 표시)
+- `GET /status` → `busy`, `phase`(지금 하는 일: 새 대화 여는 중, 모델 고르는 중, 보내는 중 (i/n), 답 기다리는 중 등), `seconds`(그 일을 한 시간), `total_seconds`(이번 요청 전체).
+- `GET /memory` → `browser_mb`(전용 창의 모든 프로세스 커밋 합계), `browser_top_mb`(가장 큰 프로세스, 보통 Copilot 탭), `browser_procs`, `relay_mb`, `warn_mb`(`memory_warn_mb`), `service`.
+  20초에 한 번만 재고 탭 연결은 쓰지 않음 (요청을 처리하는 중이어도 바로 답함). Windows 가 아니면 값이 `null`. 참고 구현: `copilot-session.ts` 의 상태 줄 '메모리' 잠금·브라우저 조작 없이 바로 답함. 참고 구현: `~/.pi/agent/extensions/copilot-session.ts` (상태 줄 표시)
 - `POST /v1/session/end` `{"reason": "quit"}` → 작업(세션)이 끝났음을 알림. 바로 `{"ok": true}` 로 답하고, 쓰던 Copilot 대화를 뒤에서 지웁니다
   (`reason` 이 `reload` 면 무시). 알리지 않아도 다음에 새 채팅을 열 때 지웁니다. 참고 구현: `~/.pi/agent/extensions/copilot-session.ts`
 

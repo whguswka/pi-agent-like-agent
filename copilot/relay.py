@@ -43,10 +43,12 @@ MSG_KINDS = {"throttle", "privacy", "login", "config", "browser", "tab", "no_rep
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-14.2"
+RELAY_VERSION = "2026-10-16.3"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
+# 메모리: GET /memory 가 20초에 한 번만 잼 (pi 확장이 30초마다 물음. 탭 연결은 쓰지 않으므로 요청 처리 중이어도 됨)
+MEMORY = {"at": 0.0, "browser": None, "relay": None}
 STARTED = 0  # 중계 서버를 켠 시각 (설정 파일을 읽기 직전, 초). /health 로 알려 bin/pi 가 그 뒤에 바뀐 설정을 알아봄
 _tls = threading.local()  # 지금 스레드가 일하는 창의 상태 (max_tabs 가 2 이상이면 창마다 따로)
 
@@ -1095,23 +1097,44 @@ class Relay:
                 self.log("pi 세션 끝 ({}) -> 그사이 새 요청이 와서 대화 정리는 건너뜁니다".format(reason or "?"))
                 return
             self.sent, self.fresh = [], True
-            link = self.link
-            registry = getattr(link, "registry", None)
-            if registry is None:
+            self.finish_chats(reason)
+            self.refresh_tab(reason)
+
+    def finish_chats(self, reason):
+        """끝난 세션의 Copilot 대화를 삭제 대상으로 돌리고 지움 (delete_finished_chats)"""
+        link = self.link
+        registry = getattr(link, "registry", None)
+        if registry is None:
+            return
+        registry.finish_all(getattr(link, "owner", None))
+        if not link.cfg.get("delete_finished_chats", True) or not registry.pending():
+            return
+        self.log("pi 세션 끝 ({}) -> 지난 Copilot 대화 정리".format(reason or "?"))
+        try:
+            if link.cop is None:
+                link.connect()
+            link.cleanup()
+        except (RelayError, bridge.BridgeError, OSError, TimeoutError) as e:
+            self.log("대화 정리 실패:", e)
+        if link.cop:
+            link.cop.thread_url = None
+        link.model_now = link.model_failed = None
+
+    def refresh_tab(self, reason):
+        """세션이 끝날 때 이 서비스의 탭이 tab_reload_mb 를 넘게 쓰면 페이지를 새로 읽음 (다음 세션은 가벼운 페이지에서 시작).
+        이 중계 서버가 이미 탭에 붙어 있을 때만 (쓰지 않던 서비스의 탭을 새로 열지 않음)"""
+        cop = getattr(self.link, "cop", None)
+        if cop is None:
+            return
+        try:
+            mb = cop.heavy()
+            if mb is None:
                 return
-            registry.finish_all(getattr(link, "owner", None))
-            if not link.cfg.get("delete_finished_chats", True) or not registry.pending():
-                return
-            self.log("pi 세션 끝 ({}) -> 지난 Copilot 대화 정리".format(reason or "?"))
-            try:
-                if link.cop is None:
-                    link.connect()
-                link.cleanup()
-            except (RelayError, bridge.BridgeError, OSError, TimeoutError) as e:
-                self.log("대화 정리 실패:", e)
-            if link.cop:
-                link.cop.thread_url = None
-            link.model_now = link.model_failed = None
+            self.log("pi 세션 끝 ({}) -> Copilot 탭 정리".format(reason or "?"))
+            cop.reload_page(mb)
+            self.link.model_now = self.link.model_failed = None  # 새로 읽은 화면은 모델이 '자동' 으로 돌아감
+        except (bridge.BridgeError, OSError, TimeoutError) as e:
+            self.log("탭을 새로 읽지 못함:", e)
 
     def handle(self, body):
         with self.lock:
@@ -1512,9 +1535,20 @@ def make_handler(relay, jup, cfg, lanes=None):
                 out["browser_error"] = str(e)
             return out
 
+        def memory(self):
+            """전용 창 전체와 이 중계 서버의 메모리(커밋 MB), pi 가 /new 를 권할 기준 (Windows 가 아니면 None)"""
+            if time.time() - MEMORY["at"] > 20:
+                MEMORY.update(at=time.time(), browser=bridge.browser_memory(cfg["cdp_port"]), relay=bridge.process_memory(os.getpid()))
+            b = MEMORY["browser"] or {}
+            return {"browser_mb": b.get("mb"), "browser_top_mb": b.get("top_mb"), "browser_procs": b.get("procs"),
+                    "relay_mb": round(MEMORY["relay"] / 1048576) if MEMORY["relay"] else None,
+                    "warn_mb": int(cfg.get("memory_warn_mb") or 0), "service": cfg.get("service_name") or "Copilot"}
+
         def do_GET(self):
             u = urllib.parse.urlsplit(self.path)
             q = urllib.parse.parse_qs(u.query)
+            if u.path == "/memory":
+                return self.send_json(200, self.memory())
             if u.path.rstrip("/").endswith("/models"):
                 # max_model_len: vLLM 과 같은 이름의 맥락 한도. 대화 기억은 Copilot 대화창이 갖고 중계 서버는 새로 추가된 부분만
                 # 보내므로, 에이전트가 맥락을 줄이느라 앞부분을 바꾸지 않도록 크게 알려 준다

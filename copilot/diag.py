@@ -183,9 +183,18 @@ def report(cfg):
         jl = [t for t in tabs if want in t.get("url", "")]
         show("전용 창", "{} (포트 {}) / Copilot 탭 {} / JupyterLab 탭 {}".format(
             browser, cfg["cdp_port"], "있음" if cop else "없음 (로그인 필요?)", "있음" if jl else "없음"))
-        if cop:
-            st = bridge.Copilot(bridge.Tab(cop[0]), cfg).model_state()
+        c = bridge.Copilot(bridge.Tab(cop[0]), cfg) if cop else None
+        if c:
+            st = c.model_state()
             show("Copilot 모델", "'{}'".format(st.get("text")) if st.get("found") else "모델 버튼 못 찾음")
+        mem = bridge.browser_memory(cfg["cdp_port"])
+        if mem:
+            gb = lambda mb: "{:.1f}GB".format(mb / 1024)  # noqa: E731
+            heap = c.heap_mb() if c else None
+            show("메모리", "전용 창 {} (프로세스 {}개, 가장 큰 것 {}){} / pi 상태 줄이 /new 를 권하는 기준 {}".format(
+                gb(mem["mb"]), mem["procs"], gb(mem["top_mb"]),
+                " / Copilot 탭 웹 앱 {}MB (세션이 끝날 때 새로 읽는 기준 {}MB)".format(heap, cfg.get("tab_reload_mb")) if heap is not None else "",
+                gb(cfg.get("memory_warn_mb") or 0) if cfg.get("memory_warn_mb") else "끔"))
     except (bridge.BridgeError, OSError, ValueError, TimeoutError):
         show("전용 창", "꺼져 있음 ({})".format("pi 를 실행하면 자동으로 띄움" if cfg.get("auto_start_browser", True)
                                            else "start-chrome.cmd 로 띄우세요"))
