@@ -43,7 +43,7 @@ MSG_KINDS = {"throttle", "privacy", "login", "config", "browser", "tab", "no_rep
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-16.3"
+RELAY_VERSION = "2026-10-16.4"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -220,19 +220,75 @@ PRIVACY_REFUSAL_RE = re.compile(
 REFUSED_STATUS = 422  # pi 에 돌려주는 오류 번호 (인증 오류처럼 보이지 않게 401/403 은 쓰지 않음)
 
 
-def privacy_refusal(reply):
+def privacy_refusal(reply, mid=False):
+    """mid: 나눠 보낸 메시지의 중간 조각에 온 답. 'OK' 만 답해야 하므로, 막는 문구 뒤에 다른 글이 섞여 길어져도
+    (예: 막힌 뒤 전용 창에 직접 입력한 말과 그 답) 앞부분으로 알아본다. 놓치면 막힌 조각을 빼고 나머지 조각만 보내게 됨"""
     text = (reply.get("text") or "").strip()
+    if mid and PRIVACY_TERM_RE.search(text[:300]) and PRIVACY_REFUSAL_RE.search(text[:300]):
+        return True
     if not text or len(text) > 500 or reply.get("code_blocks") or sum(1 for ln in text.split("\n") if ln.strip()) > 8:
         return False
     return bool(PRIVACY_TERM_RE.search(text) and PRIVACY_REFUSAL_RE.search(text))
 
 
-class PrivacyRefused(Exception):
-    """서비스가 개인정보·민감 정보 확인으로 답하지 않음. part/total: 나눠 보낸 메시지에서 거절한 조각 (마지막 조각이면 None)"""
+# 막힌 조각에서 개인정보 모양 글 찾기: 보내는 글은 바꾸지 않고, 어디에 있는지만 pi 에 알려 사람이 빼도록 한다
+PERSONAL_RES = [
+    ("이메일 주소", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")),
+    ("전화번호", re.compile(r"(?<!\d)01[016789][- .]?\d{3,4}[- .]?\d{4}(?!\d)")),
+    ("주민등록번호 모양 번호", re.compile(r"(?<!\d)\d{6}-[1-4]\d{6}(?!\d)")),
+]
 
-    def __init__(self, text, part=None, total=None):
+
+def personal_spots(text, limit=3):
+    """보낸 글에서 개인정보 모양 글이 있는 곳 (예: '~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (se…@example.com)').
+    pi 지침 파일(<project_instructions path=…>)이면 파일과 줄, 스킬 설명·도구 결과·요청 글이면 그 이름"""
+    home = os.path.expanduser("~").replace("\\", "/").rstrip("/")
+
+    def short(p):
+        q = p.replace("\\", "/")
+        return "~" + q[len(home):] if home and q.lower().startswith(home.lower() + "/") else q
+
+    def hint(kind, v):
+        if kind == "이메일 주소":
+            user, _, domain = v.partition("@")
+            return " ({}…@{})".format(user[:2], domain)
+        return " ({}…{})".format(v[:3], v[-2:]) if kind == "전화번호" else ""
+
+    def where(s):
+        tag = text.rfind("<project_instructions path=", 0, s)
+        if tag >= 0 and text.find("</project_instructions>", tag, s) < 0:
+            m = re.match(r'<project_instructions path="([^"]*)">\r?\n?', text[tag:])
+            if m:
+                return "{} {}번째 줄".format(short(m.group(1)), text.count("\n", tag + m.end(), s) + 1)
+        sk = text.rfind("<skill>", 0, s)
+        if sk >= 0 and text.find("</skill>", sk, s) < 0:
+            loc = re.search(r"<location>([^<]*)</location>", text[sk:sk + 3000])
+            return "스킬 {}".format(short(loc.group(1))) if loc else "스킬 설명"
+        heads = {"TOOL_RESULT (": None, "[요청]": "요청 글", "[이전 답변]": "앞 답변", "[답변]": "앞 답변"}
+        pos, label = max(((text.rfind(h, 0, s), h) for h in heads), key=lambda x: x[0])
+        if pos < 0:
+            return "보낸 글"
+        if label == "TOOL_RESULT (":
+            name = re.match(r"TOOL_RESULT \(([^)]*)\)", text[pos:])
+            return "도구 결과 ({})".format(name.group(1) if name else "?")
+        return heads[label]
+
+    found = []
+    for kind, rx in PERSONAL_RES:
+        for m in rx.finditer(text):
+            spot = "{}의 {}{}".format(where(m.start()), kind, hint(kind, m.group(0)))
+            if spot not in found:
+                found.append(spot)
+    return found[:limit] + (["외 {}곳".format(len(found) - limit)] if len(found) > limit else [])
+
+
+class PrivacyRefused(Exception):
+    """서비스가 개인정보·민감 정보 확인으로 답하지 않음. part/total: 나눠 보낸 메시지에서 거절한 조각 (마지막 조각이면 None).
+    sent: 막힌 조각의 글 (개인정보 모양 글이 어디 있는지 찾는 데만 씀. 모르면 None)"""
+
+    def __init__(self, text, part=None, total=None, sent=None):
         super().__init__(text)
-        self.text, self.part, self.total = text, part, total
+        self.text, self.part, self.total, self.sent = text, part, total, sent
 
 
 # pi 가 맥락 한도에 닿아 앞 대화를 요약할 때(compaction, /compact) 보내는 요청: 대화 전체가 메시지 하나(<conversation>)에 들어 있다.
@@ -992,8 +1048,8 @@ class CopilotLink:
                         bridge.log("  (화면에서 보낸 메시지를 찾지 못해 이 대화는 삭제 목록에 넣지 않습니다: {})".format(
                             self.cop.thread_url))
                 if i < len(parts):  # 중간 조각은 'OK' 만 답하라고 했음
-                    if privacy_refusal(reply):
-                        raise PrivacyRefused(reply.get("text", ""), i, len(parts))
+                    if privacy_refusal(reply, mid=True):
+                        raise PrivacyRefused(reply.get("text", ""), i, len(parts), sent=part)
                     said = norm(reply.get("text", ""))
                     if len(said) > 20 or "ok" not in said.lower():
                         bridge.log("  (Copilot 이 중간 조각에 OK 대신 답함: {})".format(said[:100]))
@@ -1061,11 +1117,21 @@ class Relay:
         name = (getattr(self.link, "cfg", None) or {}).get("service_name") or "Copilot"
         where = " (긴 메시지 {}/{})".format(e.part, e.total) if e.part else ""
         rest = " 나머지 {}개 조각은 보내지 않았습니다.".format(e.total - e.part) if e.part and e.total and e.total > e.part else ""
-        self.log("{}: 개인정보·민감 정보 확인으로 답하지 않음{} -> 멈춤 (다시 보내지 않음)".format(name, where))
+        # 막힌 글은 그 대화에 남지 않으므로 같은 글로 다시 하면 또 막힌다 -> 개인정보 모양 글이 어디 있는지 알려 사람이 빼도록
+        # (보낸 글을 고쳐 다시 보내지는 않음. 무엇을 뺄지는 사람이 정함)
+        spots = personal_spots(e.sent) if e.sent else None
+        if spots:
+            found = " 보낸 글에서 찾은 곳: {}. 꼭 필요한 정보가 아니면 빼고 /new 로 다시 하세요.".format(", ".join(spots))
+        elif spots is not None:
+            found = " 보낸 글에서 이메일·전화번호 모양 글은 찾지 못했습니다 (경로의 사용자 폴더 이름 등 다른 글이 걸렸을 수 있음)."
+        else:
+            found = ""
+        self.log("{}: 개인정보·민감 정보 확인으로 답하지 않음{} -> 멈춤 (다시 보내지 않음){}".format(
+            name, where, ". 찾은 곳: " + ", ".join(re.sub(r" \([^)]*…[^)]*\)$", "", s) for s in spots) if spots else ""))
         self.fresh = True  # 다음 요청은 새 대화로 (거절당한 대화에 같은 글을 다시 밀어 넣지 않음)
         self.redo_same_chat = False
-        return RelayError(REFUSED_STATUS, "{}: 개인정보·민감 정보 확인으로 답하지 않았습니다{}. 답: «{}»{}".format(
-            name, where, norm(e.text)[:300], rest))
+        return RelayError(REFUSED_STATUS, "{}: 개인정보·민감 정보 확인으로 답하지 않았습니다{}. 답: «{}»{} 막힌 글은 {} 대화에 남지 않아, "
+                                          "같은 글로 다시 하면 또 막힙니다.{}".format(name, where, norm(e.text)[:300], rest, name, found))
 
     def ask_again(self, text):
         """같은 대화에 이어서 다시 부탁 (형식 오류·거절·반복 등). 첫 질문은 이미 들어갔으므로, 여기서 사용량 제한(429)에
@@ -1271,7 +1337,7 @@ class Relay:
         body_text, call, err = parse_reply(reply, tool_names)
         self.note_reply(reply)
         if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
-            raise PrivacyRefused(reply.get("text", ""))
+            raise PrivacyRefused(reply.get("text", ""), sent=parts[-1])
         retries, nudged, code_nudged, cont_nudged = 0, False, False, False
         no_tools = bool(NO_TOOLS_RE.search(last_user_text(messages)))
         while call is None and retries < 2:

@@ -926,11 +926,44 @@ check("나눠 보낸 중간 조각이 거절되면 멈춤 (나머지 조각은 �
       and len(_lp.cop.sent) == 1, (_pr and (_pr.part, _pr.total), len(_lp.cop.sent)))
 _rq = relay.Relay(A(), _lp)
 _err = _quiet(lambda: _rq.refused(_pr))
-check("거절 알림: 몇째 조각인지 + 받은 답 + 나머지 조각을 보내지 않았다는 것만 + 다음은 새 대화", _err.status == 422
+check("거절 알림: 몇째 조각인지 + 받은 답 + 나머지 조각을 보내지 않았다는 것 + 같은 글은 또 막힌다는 것 + 다음은 새 대화", _err.status == 422
       and str(_err).startswith("사내AI: ") and "(긴 메시지 1/2)" in str(_err) and "나머지 1개 조각은 보내지 않았습니다" in str(_err)
-      and _rq.fresh is True and _rq.redo_same_chat is False, str(_err))
+      and "같은 글로 다시 하면 또 막힙니다" in str(_err) and _rq.fresh is True and _rq.redo_same_chat is False, str(_err))
+check("거절 알림: 막힌 조각에 개인정보 모양 글이 없으면 그렇다고", "이메일·전화번호 모양 글은 찾지 못했습니다" in str(_err) and _pr.sent == _parts[0],
+      str(_err))
 _lp.cop = _CopParts(["OK", "끝"])
 check("중간 조각에 OK 면 다음 조각까지 보냄", (_quiet(lambda: _lp.request(_parts, True)) or {}).get("text") == "끝" and len(_lp.cop.sent) == 2)
+# 막는 문구 뒤에 다른 글이 섞여 길어진 답 (막힌 뒤 전용 창에 직접 'ㅇㅇ' 을 쳐서 인사가 붙음): 중간 조각이면 막힘으로 보고 멈춤
+_mixed = _REFUSALS[0] + " ㅇㅇ 안녕하세요! 무엇을 도와드릴까요? 궁금한 점이나 필요한 작업이 있으시면 말씀해 주세요." + "\n설명" * 30
+_lp.cop = _CopParts([_mixed, "끝"])
+try:
+    _quiet(lambda: _lp.request(_parts, True))
+    _pm = None
+except relay.PrivacyRefused as _e:
+    _pm = _e
+check("중간 조각: 막는 문구 뒤에 다른 글이 섞여도 막힘으로 보고 멈춤 (막힌 조각을 빼고 나머지만 보내지 않음)",
+      _pm is not None and (_pm.part, _pm.total) == (1, 2) and len(_lp.cop.sent) == 1, (_pm and (_pm.part, _pm.total), len(_lp.cop.sent)))
+check("마지막 답은 지금처럼 짧은 거절만 (막는 문구로 시작하는 긴 보통 답은 거절로 보지 않음)", not relay.privacy_refusal({"text": _mixed}))
+# 막힌 조각에서 개인정보 모양 글이 있는 곳 찾기 (pi 지침 파일의 줄, 스킬, 도구 결과, 요청 글)
+_home = os.path.expanduser("~")
+_first = ("작업 규칙 (참고)\n<project_context>\n<project_instructions path=\"" + os.path.join(_home, ".pi", "agent", "AGENTS.md") + "\">\n"
+          + "".join("{}번째 줄\n".format(i) for i in range(1, 19)) + "- Git 작성자는 `홍길동 <hong.gd@example.com>`\n</project_instructions>\n"
+          "<available_skills>\n  <skill>\n    <name>team</name>\n    <description>문의 ab.cd@corp.example.com</description>\n"
+          "    <location>/team/skills/team/SKILL.md</location>\n  </skill>\n</available_skills>\n\n"
+          "[요청]\n연락처 010-1234-5678 로 알려 주세요\n\nTOOL_RESULT (bash):\n```text\nAuthor: Kim <kim@example.org>\n```\n")
+_sp = relay.personal_spots(_first, limit=10)
+check("찾은 곳: 지침 파일은 ~ 로 줄인 경로와 줄 번호", _sp and _sp[0] == "~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ho…@example.com)", _sp)
+check("찾은 곳: 스킬·도구 결과·요청 글", "스킬 /team/skills/team/SKILL.md의 이메일 주소 (ab…@corp.example.com)" in _sp
+      and "도구 결과 (bash)의 이메일 주소 (ki…@example.org)" in _sp and "요청 글의 전화번호 (010…78)" in _sp, _sp)
+check("찾은 곳: 없으면 빈 목록, 많으면 3곳 + 나머지 수", relay.personal_spots("[요청]\n안녕하세요") == []
+      and relay.personal_spots(" ".join("u{}@example.com".format(i) for i in range(5)))[-1] == "외 2곳")
+_e2 = _quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0], 1, 8, sent=_first)))
+check("거절 알림: 찾은 곳과 함께 빼고 /new 로 다시 하라고 (보낸 글은 고치지 않음)",
+      "보낸 글에서 찾은 곳: ~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ho…@example.com)" in str(_e2) and "/new" in str(_e2)
+      and "나머지 7개 조각은 보내지 않았습니다" in str(_e2), str(_e2))
+check("거절 알림: 다시 부탁한 글처럼 막힌 글을 모르면 찾은 곳은 말하지 않음",
+      "찾은 곳" not in str(_quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0])))) and
+      "찾지 못했습니다" not in str(_quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0])))))
 # HTTP: 422 로 알리고 대화는 지우지 않음 + /health 에 켠 시각과 일하는 중인지
 _rh = relay.Relay(A(), FakeLink([_REFUSALS[0]]))
 import types as _types  # noqa: E402
