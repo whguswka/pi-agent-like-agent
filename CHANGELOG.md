@@ -9,6 +9,32 @@
 - 2026-10-14.2 뒤의 버전부터 항목 앞에 `[공통]` 또는 `[Copilot]` 을 붙입니다. `[공통]` 은 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))에도 들어가는 것,
   `[Copilot]` 은 이 키트(업무 PC·Copilot)에만 있는 것입니다.
 
+## 2026-10-17.1 (중계 서버 2026-10-17.1)
+- [공통] **실행 환경 알려 두기 `/kit env`** ([README 3-2](README.md#3-2-화면에서-쓰는-키와-명령)):
+  - 지금 실행 위치(jupyter 모드면 노트북)의 OS, Python, 주요 패키지(kfp, torch, tensorflow, scikit-learn, pandas, mlflow, transformers 등), GPU, 드라이버·CUDA, 노트북 이미지 이름:태그, kubectl 버전을 조사해 보여 줍니다. 읽기만 합니다.
+  - 고르면 내 지침(`~/.pi/agent/AGENTS.md`)의 '실행 환경' 부분에 적어, 다음 요청부터 pi 가 그 버전에 맞춰 코드와 명령을 씁니다. 다시 조사하면 그 부분만 바뀝니다.
+- [공통] **긴 학습 지켜보기 `/watch`** ([README 3-8](README.md#3-8-긴-학습-지켜보기-watch)):
+  - pi 에게 학습을 백그라운드로 돌려 달라고 하면 `kubeflow-notebook` 스킬의 방식으로 띄우고 그 로그를 저절로 지켜봅니다. 직접 띄운 작업은 `/watch <로그 파일>`.
+  - 30초마다 확인해 화면 아래 상태 줄에 로그의 마지막 줄을 보여 주고(예: `지켜보기: train_1017_0930.log · 12분 · epoch 3/10 loss 0.231`), 끝나면 터미널 벨과 알림. pi 가 쉬고 있으면 로그 끝부분을 pi 에게 보내 결과를 정리할지 묻습니다.
+  - 오류로 끝나면 경고로, 로그가 20분 동안 그대로면 한 번 알립니다. `/watch` 상태, `/watch 보내기 [요청]`, `/watch 끄기` (지켜보기만 멈추고 작업은 그대로).
+  - 노트북의 로그는 Jupyter 파일 기능으로 끝부분만 읽어, 노트북 터미널을 쓰는 pi 의 명령을 막지 않습니다.
+- [공통] `kubeflow-notebook` 스킬: 버전 먼저 확인(`/kit env`, kfp 1.x·2.x 차이), 백그라운드 실행 방식(끝나면 `[pi-done] exit=N`, `kill $(cat logs/train.pid)` 로 멈춤),
+  `.ipynb` 실행(papermill, 없으면 nbconvert), 셀마다 오류·출력 끝부분만 보는 요약 스크립트, 셀 고치기(jupytext, nbformat). `data-analysis` 스킬: 그림 파일을 read 로 열어 확인.
+- [공통] 업데이트할 때 설정 합치기(`merge-config`)가 이미 있는 모델에도 새로 생긴 항목을 더합니다 (아래 그림 입력 `input`). 직접 지운 항목은 다시 넣지 않습니다.
+- [Copilot] **살펴보기 블록 여러 개를 한 번에** ([README 6장](README.md#6-주의할-점)의 '속도'):
+  - Copilot 이 한 답에 살펴보기만 하는 작업(파일 읽기, `ls`·`cat`·`grep`·`git status`·`kubectl get`·`pip list` 처럼 읽기만 하는 명령)을 여러 개 주면 5개까지 한 번에 실행합니다. 왕복이 줄어 조사가 빨라집니다.
+  - 파일을 바꾸거나 명령을 실행하는 블록은 전처럼 하나씩입니다. 읽기만 하는지는 좁은 목록으로 보고, 모르는 명령은 하나씩 돌립니다 (위험 명령 확인과 작업 모드는 명령마다 그대로).
+  - 한 답의 블록 중 실행하지 않은 것이 있으면 다음 메시지에 "앞의 k개만 실행했습니다" 를 붙입니다 (전에는 말없이 버렸음).
+  - 2026-10-02.7 부터 있던 `multi_read`(기본 꺼짐)를 넓혀 기본으로 켰습니다. 끄려면 `bridge.json` 에 `"multi_read": false`. 사내AI 는 꺼져 있습니다.
+- [Copilot] **그림을 Copilot 에 보내기** ([README 4-2](README.md#4-2-copilot-대화-관리)의 '그림'):
+  - pi 가 그림 파일을 열면(예: "results/loss.png 를 보고 설명해줘") 중계 서버가 그 그림을 전용 창의 Copilot 입력창에 붙여 함께 보냅니다 (한 번에 4개까지, 하나에 5MB 까지).
+  - 붙여넣기, 끌어다 놓기, 파일 선택 칸 순서로 해 보고 된 방법을 다음에도 씁니다. 못 붙이면 메시지에 "그림을 붙이지 못했습니다" 를 적어 그림 없이 보냅니다.
+  - 회사 Copilot 에서 되는지는 아직 확인하지 않았습니다. `diag.py --image` 로 확인합니다 (시험 그림을 새 대화에 붙여 보내고 답을 읽음).
+  - pi 설정: Copilot 모델에 그림 입력(`models.json` 의 `input`), `settings.json` 에 `images.autoResize: false` (키트의 pi 에는 그림을 줄이는 도구가 없어, 켜 두면 그림이 빠짐). 업데이트할 때 저절로 들어갑니다.
+  - 사내AI 에는 그림을 보내지 않습니다. 끄려면 `bridge.json` 에 `"send_images": false`.
+- [Copilot] 중계기 코드가 2026-10-17.1 로 바뀌어, 업데이트 뒤 pi 를 실행하면 중계 서버가 새 코드로 다시 켜집니다 (자동).
+- 할 일: pi 가 일하지 않을 때 `python ~/tools/pi/copilot/diag.py --image` 를 한 번 실행해 마지막 줄이 `결과: 정상` 인지 보고, 아니면 그 화면을 찍어 보내 주세요.
+
 ## 2026-10-16.4 (중계 서버 2026-10-16.4)
 - [Copilot] **사내AI 가 개인정보 확인으로 막았을 때 원인 위치 알림** ([README 4-1](README.md#4-1-사내ai-모델-2026-10-063-부터)):
   - 오류 끝에 막힌 조각에서 찾은 이메일·전화번호 모양 글의 위치가 나옵니다 (예: `찾은 곳: ~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ab…@example.com)`). 지침 파일은 줄 번호, 스킬·명령 결과·요청 글은 그 이름.
