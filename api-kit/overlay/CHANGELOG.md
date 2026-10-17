@@ -3,6 +3,23 @@
 버전 번호는 `VERSION` 에 있습니다. 새 버전으로 바꾸면(`update.sh`) 끝에 그 버전의 항목을 보여 줍니다.
 버전마다 바탕이 된 [pi-agent-like-agent](https://github.com/whguswka/pi-agent-like-agent) 의 버전을 함께 적습니다.
 
+## 2026-10-17.1
+노트북 작업을 돕는 명령 두 개와 스킬 보강. 바탕: pi-agent-like-agent 2026-10-17.1.
+- **실행 환경 알려 두기 `/kit env`** ([README 3-2](README.md#3-2-화면에서-쓰는-키와-명령)):
+  - 이 노트북의 OS, Python, 주요 패키지(kfp, torch, tensorflow, scikit-learn, pandas, mlflow, transformers 등), GPU, 드라이버·CUDA, 노트북 이미지 이름:태그, kubectl 버전을 조사해 보여 줍니다. 읽기만 합니다.
+  - 고르면 내 지침(`~/.pi/agent/AGENTS.md`)의 '실행 환경' 부분에 적어, 다음 요청부터 pi 가 그 버전에 맞춰 코드와 명령을 씁니다. 다시 조사하면 그 부분만 바뀝니다.
+- **긴 학습 지켜보기 `/watch`** ([README 3-8](README.md#3-8-긴-학습-지켜보기-watch)):
+  - pi 에게 학습을 백그라운드로 돌려 달라고 하면 `kubeflow-notebook` 스킬의 방식으로 띄우고 그 로그를 저절로 지켜봅니다. 직접 띄운 작업은 `/watch <로그 파일>`.
+  - 30초마다 확인해 화면 아래 상태 줄에 로그의 마지막 줄을 보여 주고(예: `지켜보기: train_1017_0930.log · 12분 · epoch 3/10 loss 0.231`), 끝나면 터미널 벨과 알림. pi 가 쉬고 있으면 로그 끝부분을 pi 에게 보내 결과를 정리할지 묻습니다.
+  - 오류로 끝나면 경고로, 로그가 20분 동안 그대로면 한 번 알립니다. `/watch` 상태, `/watch 보내기 [요청]`, `/watch 끄기` (지켜보기만 멈추고 작업은 그대로).
+- `kubeflow-notebook` 스킬: 버전 먼저 확인(`/kit env`, kfp 1.x·2.x 차이), 백그라운드 실행 방식(끝나면 `[pi-done] exit=N`, `kill $(cat logs/train.pid)` 로 멈춤),
+  `.ipynb` 실행(papermill, 없으면 nbconvert), 셀마다 오류·출력 끝부분만 보는 요약 스크립트, 셀 고치기(jupytext, nbformat).
+  `data-analysis` 스킬: 그림을 볼 수 있는 모델이면 그림 파일을 read 로 열어 확인.
+- 업데이트할 때 설정 합치기(`merge-config`)가 이미 있는 모델에도 새 버전에서 생긴 항목을 더합니다. 직접 지운 항목은 다시 넣지 않습니다.
+- Releases 의 가벼운 zip 으로 바꿀 수 있습니다 (pi 본체는 그대로).
+- 확인한 환경: 개발 PC 에서 설치·업데이트와 `/watch`(가짜 pi 로 로그 읽기·끝남 알림, 실제 pi 명령)를 돌렸습니다. Kubeflow 노트북에서는 돌려 보지 않았습니다.
+- 할 일: 없음.
+
 ## 2026-10-16.2
 안내 글의 '판' 을 '버전' 으로 바꿨습니다. 바탕: pi-agent-like-agent 2026-10-16.2.
 - **'판' 대신 '버전'**: 동작은 같습니다.
