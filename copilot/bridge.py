@@ -803,7 +803,7 @@ class Copilot:
         self.turns_left = None  # Copilot 이 알려주는 이 대화의 남은 질문 수
         self.last_throttling = None  # WebSocket 답의 throttling 숫자 (끊김·제한 기록에 함께 남김)
         self.stream_ok = False  # WebSocket 으로 답을 받은 적이 있으면 True
-        self.images_unsupported = ""  # 그림을 붙이지 못했으면 그 까닭 (이 탭에서는 다시 해 보지 않음: 요청마다 기다리지 않게)
+        self.images_unsupported = ""  # 그림을 붙이지 못했으면 그 까닭 (이 대화에서는 다시 해 보지 않음: 요청마다 기다리지 않게. 새 대화에서 다시)
         self.temp_dirs = []  # 파일 선택 칸으로 붙인 그림의 임시 폴더 (보낸 뒤 지움)
         self.last_attach = (None, "")  # 마지막으로 그림을 붙인 결과 (방법 또는 None, 설명). diag.py --image 가 봄
         self.attach_ok = None  # 그림이 붙은 방법 (다음에는 그 방법부터: 안 되는 방법마다 몇 초씩 기다리지 않게)
@@ -925,6 +925,7 @@ class Copilot:
         self.turns_left = None
 
     def new_chat(self):
+        self.images_unsupported = ""  # 그림을 못 붙였어도 새 대화에서는 다시 해 봄 (그때 화면이 덜 준비됐을 수도 있음)
         why = self.heavy()
         if why:
             return self.reload_page(why)
@@ -1005,6 +1006,7 @@ class Copilot:
         (입력창에 포커스가 없으면 Ctrl+A 는 화면 전체를 고르므로 누르지 않는다.
         이미 비었으면 누르지 않는다: 빈 입력창의 Backspace 는 먼저 붙인 그림을 지우는 화면이 많음)"""
         if self.input_len(sel) == 0:
+            self.focus_input(sel)  # 뒤에서 치는 글(Input.insertText)이 입력창에 들어가도록 포커스는 줌
             return
         if self.focus_input(sel):
             self.key("a", "KeyA", 65, modifiers=2)
