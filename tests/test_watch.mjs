@@ -28,7 +28,7 @@ const until = async (f, ms = 3000) => {
 // 가짜 중계 서버: /jupyter/fs (stat, read_range), /jupyter/exec (bash 로 바로 실행). 노트북 경로 = 이 PC 의 Git Bash 경로 (/c/...)
 const winPath = (p) => (process.platform === "win32" ? p.replace(/^\/([a-zA-Z])\//, (_, d) => `${d.toUpperCase()}:/`) : p);
 const bashPath = (p) => (process.platform === "win32" ? p.split("\\").join("/").replace(/^([A-Za-z]):\//, (_, d) => `/${d.toLowerCase()}/`) : p);
-const S = { stat: 0, range: 0, exec: 0, nosize: false };
+const S = { stat: 0, range: 0, exec: 0, nosize: false, norange: false };
 const runs = new Map();
 const server = createServer((req, res) => {
 	let body = "";
@@ -54,7 +54,9 @@ const server = createServer((req, res) => {
 			}
 			if (b.op === "read_range") {
 				S.range++;
+				if (S.norange) return send(400, { ok: false, code: "EINVAL", error: "노트북 홈 밖이나 숨김 경로의 큰 파일은 나눠 받을 수 없습니다" });
 				const all = readFileSync(p);
+				if (!all.length) return send(502, { ok: false, code: "EIO", error: "나눠 받기를 지원하지 않습니다 (416)" });
 				return send(200, { data: all.subarray(b.start, b.end + 1).toString("base64"), total: all.length });
 			}
 			return send(400, { ok: false, code: "EINVAL", error: "op" });
@@ -186,11 +188,15 @@ await until(() => S.stat >= s0 + 2);
 check("크기가 그대로면 stat 만 (끝부분은 다시 읽지 않음)", S.range === r0, S);
 appendFileSync(R, "x".repeat(20000) + "\nstep 2\n");
 check("늘어나면 끝부분만 다시 (8KB)", await until(() => (ctx.status || "").endsWith("step 2")) && S.range === r0 + 1 && S.exec === 0, [ctx.status, S]);
-// 크기를 알려 주지 않는 경로(노트북 홈 밖·숨김): 노트북 터미널로
+// 크기를 알려 주지 않는 Jupyter: 첫 바이트를 나눠 받아 전체 크기를 앎 (터미널은 쓰지 않음)
 S.nosize = true;
 writeFileSync(R, "a\nb\n");
 await watch("logs/remote.log", ctx);
-check("크기를 모르면 터미널로 읽음", (ctx.status || "").endsWith("· b") && S.exec >= 1, [ctx.status, S]);
+check("크기를 모르면 첫 바이트를 나눠 받아 크기를 앎 (터미널 쓰지 않음)", (ctx.status || "").endsWith("· b") && S.exec === 0, [ctx.status, S]);
+// 나눠 읽을 수도 없는 경로(노트북 홈 밖·숨김): 노트북 터미널로
+S.norange = true;
+await watch("logs/remote.log", ctx);
+check("나눠 읽을 수 없는 경로면 터미널로 읽음", (ctx.status || "").endsWith("· b") && S.exec >= 1, [ctx.status, S]);
 ctx.answer = false;
 appendFileSync(R, "c\n[pi-done] exit=0\n");
 check("터미널로 읽어도 끝남을 알아챔 (물음에 아니요: 상태 줄은 남김)", await until(() => (ctx.status || "").includes("끝남")) && sent.length === 3, [ctx.status, sent.length]);

@@ -212,19 +212,29 @@ async function readTail(w: Watch): Promise<Tail> {
 			throw e;
 		}
 		if (st.kind === "directory") return null;
-		if (typeof st.size === "number") {
-			if (st.size === w.size) return { size: st.size };
-			if (st.size === 0) return { size: 0, text: "" };
-			const start = Math.max(0, st.size - TAIL_BYTES);
+		let size = typeof st.size === "number" ? st.size : Number.NaN;
+		if (!Number.isFinite(size)) {
+			// 크기를 알려 주지 않는 Jupyter: 첫 바이트를 나눠 받으면 전체 크기가 함께 옴 (터미널을 쓰지 않으려고)
 			try {
-				const r = await call("/jupyter/fs", { op: "read_range", path: t.abs, start, end: st.size - 1 });
-				return { size: st.size, text: Buffer.from(r.data || "", "base64").toString("utf8"), fromMiddle: start > 0 };
+				size = Number((await call("/jupyter/fs", { op: "read_range", path: t.abs, start: 0, end: 0 })).total);
+			} catch (e) {
+				if ((e as RelayError).code === "ENOENT") return null;
+				if ((e as RelayError).code === "EINVAL") w.shell = true; // 나눠 읽을 수 없는 경로 (노트북 홈 밖·숨김)
+			}
+		}
+		if (!w.shell && Number.isFinite(size) && size > 0) {
+			if (size === w.size) return { size };
+			const start = Math.max(0, size - TAIL_BYTES);
+			try {
+				const r = await call("/jupyter/fs", { op: "read_range", path: t.abs, start, end: size - 1 });
+				return { size, text: Buffer.from(r.data || "", "base64").toString("utf8"), fromMiddle: start > 0 };
 			} catch (e) {
 				if ((e as RelayError).code === "ENOENT") return null;
 				if ((e as RelayError).code !== "EINVAL") throw e;
+				w.shell = true;
 			}
-		}
-		w.shell = true; // 크기를 알려 주지 않거나 나눠 읽을 수 없는 경로
+		} else if (size === 0) return { size: 0, text: "" };
+		// 여기까지 오면 이번에는 터미널로 (빈 파일이라 나눠 받기가 안 된 경우 등. 나눠 읽을 수 없는 경로면 다음에도)
 	}
 	const q = shq(t.abs);
 	const r = await nbRun(
