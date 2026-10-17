@@ -125,12 +125,13 @@ python ~/tools/pi/copilot/diag.py --report
 | `--delete-test` | + 시험 대화를 하나 만들어 지워 보기 (다른 대화는 건드리지 않음) |
 | `--jupyter` | + JupyterLab 터미널에서 시험 명령 실행 ([3-3](#3-3-실행-위치-바꾸기-pc-와-jupyter-노트북)을 쓸 때) |
 | `--input-limit` | + 입력창이 한 번에 받는 글자 수 확인 (붙여 넣어 보기만 하고 보내지 않음). 권장 `max_chars` 를 알려 줌 |
+| `--image` | + 시험 그림(빨간 동그라미 3개)을 새 대화에 붙여 보내고 답 읽기. 그림 보내기가 되는지와 붙인 방법을 알려 줌 ([4-2](#4-2-copilot-대화-관리)의 '그림') |
 | `--report` | **한 화면 상태 요약**: 버전 번호, Node, 중계 서버, 전용 창, 현재 모델, 메모리, 설정, 최근 요청 통계(평균 시간, 새 대화, 조각 나눔), 최근 로그 (읽기만 함) |
 
 - `--report` 는 요약만 보여 줍니다. 나머지 진단은 마지막 줄에 `결과: 정상` 이 나오면 됩니다.
 - **문제가 생기면 `--report` 화면을 찍어 보내 주세요.** 상황 대부분이 한 장에 담깁니다. pi 를 쓰는 중이면 `/doctor` 로 같은 내용을 볼 수 있습니다.
-- `--send`, `--model`, `--delete-test`, `--input-limit` 은 전용 창의 Copilot 탭을 직접 움직입니다. **pi 가 일하지 않을 때** 실행하고,
-  `--send` 가 만든 시험 대화는 Copilot 목록에서 직접 지우세요.
+- `--send`, `--model`, `--delete-test`, `--input-limit`, `--image` 는 전용 창의 Copilot 탭을 직접 움직입니다. **pi 가 일하지 않을 때** 실행하고,
+  `--send`·`--image` 가 만든 시험 대화는 Copilot 목록에서 직접 지우세요.
 - `python` 이 Microsoft Store 를 띄우거나 실행되지 않으면 pi 안에서 `/doctor` 를 쓰세요 (pi 는 Python 을 따로 찾아 씀).
 
 ### 2-7. Jupyter 용 pi (사내 vLLM, 보류)
@@ -396,6 +397,10 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
   - 합계가 2.5GB 를 넘으면 `메모리 2.7GB · /new 로 정리` 로 바뀌고 한 번 알립니다. 하던 일이 끝나면 `/new` 로 새 세션을 여세요.
     세션이 끝날 때 중계 서버가 Copilot 탭이 크면(웹 앱이 300MB 넘게 쓰거나 전용 창 전체가 2.5GB 를 넘음) 페이지를 새로 읽습니다. 새 대화를 열 때도 같습니다.
   - 기준은 `bridge.json` 의 `memory_warn_mb`(2500), `tab_reload_mb`(300). 0 이면 끕니다. 지금 숫자는 `/doctor` 의 '메모리' 줄에도 나옵니다.
+- **그림 (2026-10-17.1 부터):** pi 가 그림을 다루면 Copilot 에도 그 그림을 붙여 보냅니다. 예: "results/loss.png 를 보고 설명해줘" 처럼 pi 가 그림 파일을 열 때.
+  - 중계 서버가 글을 넣기 전에 전용 창의 Copilot 입력창에 그림을 붙입니다 (한 번에 4개까지). 붙여넣기, 끌어다 놓기, 파일 선택 칸 순서로 해 보고 된 방법을 다음에도 씁니다.
+  - 붙이지 못하면 그 메시지에 "그림을 붙이지 못했습니다" 를 적어 그림 없이 보내고, pi 를 다시 시작할 때까지는 다시 해 보지 않습니다.
+  - 회사 Copilot 에서 되는지는 `diag.py --image` 로 확인합니다 ([2-6](#2-6-진단)). 사내AI 에는 그림을 보내지 않습니다. 끄려면 `bridge.json` 의 `"send_images": false`.
 <!-- /api -->
 
 ## 5. 지침, 스킬, 메모리
@@ -691,6 +696,8 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | `max_chars` | `10000` | Copilot 메시지 하나의 최대 글자 수. 넘으면 나눠 보내고 조각마다 왕복이 한 번 더 듭니다 (`diag.py --input-limit` 로 확인) | <!-- api= -->
 | `tool_result_chars` | `6000` | 명령 결과·파일 내용 하나를 Copilot 에 보낼 최대 글자 수. 넘으면 앞·끝만 남기고 가운데를 줄인 뒤 그 자리에 다시 보는 방법을 적음 (pi 도 명령 결과는 끝 50KB 만 넘기고 전체는 `Full output:` 파일로). 늘리려면 `max_chars` 보다 작게 (예: 8000) | <!-- api= -->
 | `max_tabs` | `1` | 2 이상이면 pi 를 여러 개 동시에 쓸 때 pi 마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶, [6장](#6-주의할-점)) | <!-- api= -->
+| `send_images` | `true` | pi 가 보낸 그림(그래프 등)을 Copilot 입력창에 붙여 함께 보냄 ([4-2](#4-2-copilot-대화-관리)). 사내AI 는 `false` | <!-- api= -->
+| `image_attach` | `"auto"` | 그림을 붙이는 방법: `auto`(붙여넣기, 끌어다 놓기, 파일 선택 칸 차례로), `paste`, `drop`, `file`, `none`. `diag.py --image` 가 알려 준 방법으로 고정해도 됨 | <!-- api= -->
 | `multi_read` | `true` | 살펴보기만 하는 작업(파일 읽기, 읽기만 하는 명령)을 한 답에 여러 개(5개까지) 받아 한 번에 실행 (왕복 줄이기). 고치기·명령 실행은 그대로 하나씩. 사내AI 는 `false` (`inhouse.json`) | <!-- api= -->
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 | <!-- api= -->
 | `copilot_models` | 4장의 표 | pi 모델 id → Copilot 화면의 모델 이름 | <!-- api= -->

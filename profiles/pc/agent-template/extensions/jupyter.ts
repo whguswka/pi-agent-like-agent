@@ -36,6 +36,9 @@ const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/
 // 이 pi 의 세션 값 (copilot-session.ts 와 같은 값). 중계 서버에서 max_tabs 가 2 이상이면 창마다 노트북 터미널도 따로 씀
 const SESSION: string = ((globalThis as any).__piSession ||=
 	process.env.PI_COPILOT_SESSION || `${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
+// read 로 연 그림은 줄이지 않고 그대로 (키트의 pi 에는 그림을 줄이는 도구가 없어, 줄이기를 켜 두면 그림이 모두 빠짐.
+// settings.json 의 images.autoResize 도 꺼 둠. 너무 큰 그림은 중계 서버가 붙이지 않고 알림)
+const READ_OPTS = { autoResizeImages: false };
 
 type Remote = { arg: string; cwd: string; home: string; root: string };
 
@@ -247,7 +250,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	})();
 	const makeLocal = (dir: string) => ({
-		read: createReadTool(dir),
+		read: createReadTool(dir, READ_OPTS),
 		write: createWriteTool(dir),
 		edit: createEditTool(dir),
 		bash: createBashTool(dir),
@@ -338,7 +341,7 @@ export default function (pi: ExtensionAPI) {
 			const r = await ready();
 			const w = where(params, r, false);
 			if (w.pc) return local.read.execute(id, w.params, signal, onUpdate);
-			const tool = createReadTool(startDir, { operations: readOps(makeMapper(startDir, r), pcResolver) });
+			const tool = createReadTool(startDir, { ...READ_OPTS, operations: readOps(makeMapper(startDir, r), pcResolver) });
 			return tool.execute(id, w.params, signal, onUpdate);
 		},
 	});

@@ -69,7 +69,8 @@ function mergeObj(u, t, p, changes, where) {
 	return u;
 }
 
-/** models.json: provider 는 위와 같고, models 목록은 id 기준으로 새 모델만 끝에 추가 */
+/** models.json: provider 는 위와 같고, models 목록은 id 기준으로 새 모델만 끝에 추가.
+ *  이미 있는 모델은 새로 생긴 항목만 더함 (예: 그림 입력 input). 지난 템플릿의 같은 모델에 있던 항목을 사용자가 지웠으면 다시 넣지 않음 */
 function mergeModels(u, t, p, changes) {
 	u.providers = isObj(u.providers) ? u.providers : {};
 	for (const [name, tp] of Object.entries(t.providers || {})) {
@@ -86,9 +87,17 @@ function mergeModels(u, t, p, changes) {
 		mergeObj(up, tRest, isObj(pp) ? pRest : undefined, changes, name);
 		up.models = Array.isArray(up.models) ? up.models : [];
 		const have = new Set(up.models.map((m) => m?.id));
-		const before = new Set((Array.isArray(pp?.models) ? pp.models : []).map((m) => m?.id));
+		const prevModels = Array.isArray(pp?.models) ? pp.models : [];
+		const before = new Set(prevModels.map((m) => m?.id));
 		for (const m of tModels) {
-			if (have.has(m.id) || before.has(m.id)) continue;
+			if (have.has(m.id)) {
+				const um = up.models.find((x) => x?.id === m.id);
+				const pm = prevModels.find((x) => x?.id === m.id);
+				// 지난 템플릿 기록이 없으면(처음 합치기·아주 예전 설치) 그 모델에 없는 항목을 모두 더함
+				if (isObj(um)) mergeObj(um, m, isObj(pm) ? pm : undefined, changes, `모델 ${m.id}`);
+				continue;
+			}
+			if (before.has(m.id)) continue;
 			up.models.push(m);
 			changes.push(`모델 ${m.id} 추가`);
 		}

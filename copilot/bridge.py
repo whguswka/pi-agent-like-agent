@@ -11,9 +11,11 @@ import base64
 import json
 import os
 import re
+import shutil
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -61,6 +63,11 @@ DEFAULT_CONFIG = {
     # 살펴보기만 하는 작업(read, 읽기만 하는 bash 명령 등) 블록을 한 답에 여러 개(5개까지) 받아 한 번에 실행 (왕복 횟수 줄이기).
     #  고치기·명령 실행은 그대로 하나씩. 사내AI(inhouse.json)는 꺼 둠
     "multi_read": True,
+    # 그림: pi 가 보낸 그림(그래프 등)을 Copilot 입력창에 붙여 함께 보냄 (사내AI 는 inhouse.json 에서 끔).
+    #  image_attach: auto(붙여넣기 -> 끌어다 놓기 -> 파일 선택 칸 차례로) | paste | drop | file | none
+    "send_images": True,
+    "image_attach": "auto",
+    "image_upload_wait_seconds": 60,
     "max_tabs": 1,  # 2 이상이면 pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶)
     # 모델 선택: Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 화면의 모델 메뉴에서 고른다
     "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT-6 Sol"). 비우면 화면 그대로
@@ -491,6 +498,70 @@ def browser_memory(port, timeout=5):
 # Copilot 탭 조작
 # ---------------------------------------------------------------------------
 
+IMAGE_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+# 그림 붙이기용 페이지 도우미: window.__piImages 의 파일을 붙여넣기·끌어다 놓기로 입력창에, 파일 선택 칸 찾기, 붙었는지 보기
+IMG_LIB = r"""
+(() => {
+  const B = window.__piBridge;
+  if (window.__piImg && window.__piImg.v === 1) return true;
+  const files = () => (window.__piImages || []).map(x => {
+    const bin = atob(x.b64), u = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return new File([u], x.name, {type: x.type});
+  });
+  // 입력창과 그 둘레 (첨부 표시는 보통 입력창 위·옆에 생김)
+  const area = (sel) => {
+    const inp = B.findInput(sel);
+    let r = inp;
+    for (let i = 0; i < 6 && r && r.parentElement && r.parentElement !== document.body; i++) r = r.parentElement;
+    return {inp, r};
+  };
+  const transfer = () => { const dt = new DataTransfer(); for (const f of files()) dt.items.add(f); return dt; };
+  window.__piImg = {
+    v: 1,
+    state(sel, names) {
+      const {r} = area(sel);
+      if (!r) return null;
+      const imgs = [...r.querySelectorAll('img')].filter(B.visible).length;
+      const attrs = [...r.querySelectorAll('[aria-label], [title], [alt]')]
+        .map(e => [e.getAttribute('aria-label'), e.getAttribute('title'), e.getAttribute('alt')].join(' ')).join(' ');
+      const text = (r.innerText || '') + ' ' + attrs;
+      const named = names.filter(n => text.includes(n) || text.includes(n.replace(/\.\w+$/, ''))).length;
+      const busy = !![...r.querySelectorAll('[role="progressbar"], [aria-busy="true"], progress')].find(B.visible);
+      return {imgs, named, busy, size: r.innerHTML.length};
+    },
+    paste(sel) {
+      const {inp} = area(sel);
+      if (!inp) return false;
+      inp.focus();
+      inp.dispatchEvent(new ClipboardEvent('paste', {clipboardData: transfer(), bubbles: true, cancelable: true}));
+      return true;
+    },
+    drop(sel) {
+      const {inp} = area(sel);
+      if (!inp) return false;
+      const dt = transfer();
+      for (const t of ['dragenter', 'dragover', 'drop']) inp.dispatchEvent(new DragEvent(t, {dataTransfer: dt, bubbles: true, cancelable: true}));
+      return true;
+    },
+    info(sel) {
+      const {r} = area(sel);
+      const fis = [...document.querySelectorAll('input[type="file"]')];
+      const btns = r ? [...r.querySelectorAll('button, [role="button"]')].filter(B.visible).map(b => B.label(b).slice(0, 30)).filter(Boolean) : [];
+      return {file_inputs: fis.length, accepts: fis.map(e => e.accept || '*').slice(0, 4), buttons: [...new Set(btns)].slice(0, 12)};
+    },
+    fileInput(sel) {
+      const {r} = area(sel);
+      const all = [...document.querySelectorAll('input[type="file"]')]
+        .filter(e => !e.disabled && (!e.accept || /image|\*|png|jpe?g/i.test(e.accept)));
+      const near = r ? all.filter(e => r.contains(e)) : [];
+      return near[0] || all[0] || null;
+    },
+  };
+  return true;
+})()
+"""
+
 PAGE_LIB = r"""
 (() => {
   const V = 4;
@@ -732,6 +803,10 @@ class Copilot:
         self.turns_left = None  # Copilot 이 알려주는 이 대화의 남은 질문 수
         self.last_throttling = None  # WebSocket 답의 throttling 숫자 (끊김·제한 기록에 함께 남김)
         self.stream_ok = False  # WebSocket 으로 답을 받은 적이 있으면 True
+        self.images_unsupported = ""  # 그림을 붙이지 못했으면 그 까닭 (이 탭에서는 다시 해 보지 않음: 요청마다 기다리지 않게)
+        self.temp_dirs = []  # 파일 선택 칸으로 붙인 그림의 임시 폴더 (보낸 뒤 지움)
+        self.last_attach = (None, "")  # 마지막으로 그림을 붙인 결과 (방법 또는 None, 설명). diag.py --image 가 봄
+        self.attach_ok = None  # 그림이 붙은 방법 (다음에는 그 방법부터: 안 되는 방법마다 몇 초씩 기다리지 않게)
         try:
             tab.call("Emulation.setFocusEmulationEnabled", {"enabled": True})  # 뒤쪽 탭이어도 포커스가 있는 것처럼
         except BridgeError:
@@ -927,7 +1002,10 @@ class Copilot:
 
     def clear_input(self, sel):
         """비우기: 실제 키 입력(Ctrl+A, Backspace) - Lexical 같은 편집기도 정상 처리. 안 되면 execCommand
-        (입력창에 포커스가 없으면 Ctrl+A 는 화면 전체를 고르므로 누르지 않는다)"""
+        (입력창에 포커스가 없으면 Ctrl+A 는 화면 전체를 고르므로 누르지 않는다.
+        이미 비었으면 누르지 않는다: 빈 입력창의 Backspace 는 먼저 붙인 그림을 지우는 화면이 많음)"""
+        if self.input_len(sel) == 0:
+            return
         if self.focus_input(sel):
             self.key("a", "KeyA", 65, modifiers=2)
             self.key("Backspace", "Backspace", 8)
@@ -1011,7 +1089,14 @@ class Copilot:
             elif time.time() - last_change >= 2.0 or time.time() >= deadline:
                 return got
 
-    def send(self, text):
+    def send(self, text, images=None):
+        """글(끝에 marker)을 입력창에 넣고 보낸다. images([{"mime", "data"}]): 글보다 먼저 붙이고, 못 붙이면 marker 앞에 그렇다고 적음"""
+        try:
+            self._send(text, images)
+        finally:
+            self.drop_temp()
+
+    def _send(self, text, images):
         self.wait_input(30)
         if self.tab.events is not None:
             self.tab.events = []  # 이전 프레임 버림
@@ -1020,6 +1105,17 @@ class Copilot:
             el.scrollIntoView({block: 'center'}); el.focus(); return true; })()""" % sel
         if not self.js(focus):
             raise BridgeError("Copilot 입력창을 찾지 못했습니다")
+        attached = None
+        if images:
+            self.clear_input(sel)
+            attached, info = self.attach_images(images)
+            self.last_attach = (attached, info)
+            log("  그림 {}개: {}".format(len(images), "붙임 ({}, {})".format(attached, info) if attached else info))
+            if not attached:
+                note = "(그림 {}개를 함께 보내려 했지만 붙이지 못했습니다. 그림 없이 답해 주세요.)".format(len(images))
+                m = re.search(r"\[pi[-#][0-9a-f]+\]\s*$", text)
+                text = text[:m.start()] + note + "\n" + text[m.start():] if m else text + "\n" + note
+            self.js(focus)
         want = len(re.sub(r"\s+", "", text))
         got = 0
         # 일반 입력칸(textarea, 사내AI 등): 붙여넣기 이벤트로는 글이 들어가지 않고, Shift+Enter 키로는 줄바꿈이 생기지 않는다
@@ -1070,6 +1166,10 @@ class Copilot:
                                   "내 설정 파일의 max_chars 를 줄이세요 (확인: diag.py --input-limit).".format(got, len(text)))
             raise BridgeError("Copilot 입력창이 글을 받지 않습니다{} ({}/{}자). 전용 창의 Copilot 화면이 정상인지 보고 "
                               "같은 요청을 다시 보내 주세요.".format(self.state_note(st), got, len(text)))
+        if attached:
+            deadline = time.time() + float(self.cfg.get("image_upload_wait_seconds") or 60)
+            while self.send_ready(sel) is False and time.time() < deadline:
+                time.sleep(0.5)
         if self.cfg["send_button_selector"]:
             self.click_send(self.cfg["send_button_selector"])
         else:
@@ -1088,6 +1188,121 @@ class Copilot:
             if i == 6:
                 self.click_send(None)
         raise BridgeError("메시지가 전송되지 않았습니다 (입력창이 비워지지 않음). send_button_selector 설정을 확인하세요.")
+
+    # ── 그림 붙이기 ─────────────────────────────────────────────────────────────
+    # pi 가 보낸 그림(그래프 등)을 글보다 먼저 입력창에 붙인다 (글을 먼저 넣으면 '안 된다' 는 안내를 marker 앞에 넣을 수 없음).
+    # 방법(image_attach, 기본 auto 는 차례로): 붙여넣기(글을 넣는 것과 같은 이벤트) -> 끌어다 놓기 -> 파일 선택 칸(input[type=file]).
+    # 붙었는지는 입력창 근처에 그 파일 이름이나 그림이 새로 생겼는지로 보고, 올리는 중 표시가 사라지고 화면이 잠잠해질 때까지 기다린다
+    ATTACH_METHODS = ("paste", "drop", "file")
+
+    def attach_info(self):
+        """진단용: 입력창 둘레의 파일 선택 칸과 단추 이름 (그림 붙이기가 안 될 때 화면을 알아보려고)"""
+        self.js(IMG_LIB)
+        return self.js("window.__piImg.info(%s)" % self.q(self.cfg["input_selector"])) or {}
+
+    def img_state(self, sel, names):
+        return self.js("window.__piImg.state(%s, %s)" % (sel, self.q(names))) or {}
+
+    def attach_images(self, images):
+        """images: [{"mime", "data"(base64)}] -> (붙인 방법 또는 None, 설명). 붙인 뒤 올리기가 끝날 때까지 기다린다"""
+        want = str(self.cfg.get("image_attach") or "auto").lower()
+        if want == "none":
+            return None, "image_attach 가 none"
+        if self.images_unsupported:
+            return None, "앞에서 붙이지 못함 ({})".format(self.images_unsupported)
+        methods = self.ATTACH_METHODS if want == "auto" else (want,)
+        if want == "auto" and self.attach_ok in methods:
+            methods = (self.attach_ok,) + tuple(m for m in methods if m != self.attach_ok)
+        tag = os.urandom(2).hex()  # 보낼 때마다 다른 이름: 앞 메시지에 같은 이름이 보여도 새로 붙은 것을 알아보게
+        files = [{"name": "pi-image-{}-{}.{}".format(tag, i + 1, IMAGE_EXT.get(im.get("mime"), "png")), "type": im.get("mime") or "image/png",
+                  "b64": im.get("data") or ""} for i, im in enumerate(images)]
+        names = [f["name"] for f in files]
+        sel = self.q(self.cfg["input_selector"])
+        self.js(IMG_LIB)
+        self.tab.eval("window.__piImages = %s; true" % json.dumps(files), timeout=60)
+        tried = []
+        try:
+            for how in methods:
+                before = self.img_state(sel, names)
+                if how == "file":
+                    ok = self.attach_by_file_input(sel, files)
+                else:
+                    ok = self.js("window.__piImg.%s(%s)" % ("paste" if how == "paste" else "drop", sel))
+                if not ok:
+                    tried.append("{} (대상 없음)".format(how))
+                    continue
+                st = self.attach_seen(sel, names, before, 6.0)
+                if st:
+                    self.attach_ok = how
+                    self.upload_wait(sel, names, float(self.cfg.get("image_upload_wait_seconds") or 60))
+                    return how, "그림 {}개".format(len(files))
+                tried.append(how)
+        finally:
+            self.tab.eval("window.__piImages = null; true")
+        self.images_unsupported = ", ".join(tried) or "방법 없음"
+        return None, "붙지 않음: " + self.images_unsupported
+
+    def attach_seen(self, sel, names, before, seconds):
+        """입력창 근처에 파일 이름이나 그림이 새로 생겼으면 그 상태, seconds 안에 없으면 None"""
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            time.sleep(0.4)
+            st = self.img_state(sel, names)
+            if st and (st.get("named", 0) > before.get("named", 0) or st.get("imgs", 0) > before.get("imgs", 0)):
+                return st
+        return None
+
+    def upload_wait(self, sel, names, seconds):
+        """올리는 중 표시(progressbar, aria-busy)가 없고 입력창 근처가 1.5초 동안 그대로일 때까지 (최대 seconds)"""
+        deadline, last, since = time.time() + seconds, None, time.time()
+        while time.time() < deadline:
+            time.sleep(0.5)
+            st = self.img_state(sel, names)
+            sig = (st.get("imgs"), st.get("named"), st.get("busy"), st.get("size"))
+            if sig != last:
+                last, since = sig, time.time()
+            elif not st.get("busy") and time.time() - since >= 1.5:
+                return True
+        log("  (그림 올리기가 {}초 안에 끝나지 않은 것 같음. 그대로 보냄)".format(int(seconds)))
+        return False
+
+    def attach_by_file_input(self, sel, files):
+        """입력창에서 가장 가까운 파일 선택 칸(input[type=file])에 임시 파일을 넣는다 (DOM.setFileInputFiles). 칸이 없으면 False"""
+        r = self.tab.call("Runtime.evaluate", {"expression": "window.__piImg.fileInput(%s)" % sel, "returnByValue": False})
+        res = r.get("result") or {}
+        oid = res.get("objectId") if res.get("subtype") != "null" else None
+        if not oid:
+            return False
+        many = self.tab.call("Runtime.callFunctionOn", {"objectId": oid, "functionDeclaration": "function() { return !!this.multiple; }",
+                                                        "returnByValue": True}).get("result", {}).get("value")
+        d = tempfile.mkdtemp(prefix="pi-images-")
+        self.temp_dirs.append(d)
+        paths = []
+        for f in files:
+            p = os.path.join(d, f["name"])
+            with open(p, "wb") as out:
+                out.write(base64.b64decode(f["b64"]))
+            paths.append(p)
+        for group in ([paths] if many or len(paths) == 1 else [[p] for p in paths]):
+            self.tab.call("DOM.setFileInputFiles", {"files": group, "objectId": oid})
+            if len(group) < len(paths):
+                time.sleep(1.0)
+        return True
+
+    def drop_temp(self):
+        for d in self.temp_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+        self.temp_dirs = []
+
+    def send_ready(self, sel):
+        """보내기 버튼이 눌리는 상태인지 (True/False, 못 찾으면 None)"""
+        return self.js("""(() => { const B = window.__piBridge; const inp = B.findInput(%s);
+            const custom = %s; const re = new RegExp(%s, 'i');
+            const all = custom ? [document.querySelector(custom)].filter(Boolean)
+                : [...document.querySelectorAll('button, [role="button"]')].filter(b => B.visible(b) && re.test(B.label(b)));
+            const b = B.nearest(all, inp);
+            return b ? !(b.disabled || b.getAttribute('aria-disabled') === 'true') : null; })()""" % (
+            sel, self.q(self.cfg["send_button_selector"]), self.q(self.cfg["send_button_pattern"])))
 
     def click_send(self, selector):
         self.js("""(() => { const B = window.__piBridge; const input = B.findInput(%s);

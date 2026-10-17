@@ -59,7 +59,8 @@ EOF
   `jupytext --update --to notebook x.py` (출력은 남음). 없으면 nbformat 으로:
   `python -c "import nbformat as n; nb=n.read('x.ipynb',4); nb.cells[3].source=nb.cells[3].source.replace('lr=0.1','lr=0.01'); n.write(nb,'x.ipynb')"`
 - 사용자가 JupyterLab 에서 그 노트북을 열어 두었으면 저장할 때 서로 덮어쓸 수 있으므로 고치기 전에 알린다.
-- 그림 출력은 글로 읽을 수 없으므로, 확인할 그림은 `plt.savefig("results/<이름>.png")` 처럼 파일로 저장하고 경로를 알린다.
+- 셀의 그림 출력은 글로 읽을 수 없다. 확인할 그림은 `plt.savefig("results/<이름>.png")` 처럼 파일로 저장해 경로를 알리고,
+  그림을 볼 수 있는 모델이면 read 로 그 파일을 열어 직접 확인한다.
 
 ## 주의
 - 여러 사람이 같이 쓰는 데이터 폴더는 지우거나 덮어쓰지 않는다.

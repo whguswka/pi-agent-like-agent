@@ -89,6 +89,17 @@ out = run(null);
 let mj = readJson(A("models.json"));
 check("models.json 의 주석·끝 쉼표: 읽고 새 모델 추가 (문자열 안은 그대로)", mj.providers.copilot.models.map((m) => m.id).join() === "m1,m2"
 	&& mj.providers.copilot.models[0].name === "a,b // 문자열" && fs.existsSync(A("models.json.bak")), out);
+// 이미 있는 모델에 새로 생긴 항목(그림 입력 input)은 더하고, 고친 값은 그대로
+writeJson(path.join(tpl, "models.json"), { providers: { copilot: { baseUrl: "u", models: [{ id: "m1", name: "새 이름", input: ["text", "image"] }, { id: "m2" }] } } });
+out = run(null);
+mj = readJson(A("models.json"));
+check("있는 모델: 새 항목(input)만 더하고 고친 값(name)은 그대로", JSON.stringify(mj.providers.copilot.models[0].input) === '["text","image"]'
+	&& mj.providers.copilot.models[0].name === "a,b // 문자열" && out.includes("모델 m1.input 추가"), [mj.providers.copilot.models, out]);
+// 사용자가 그 항목을 지웠으면 다음 설치에서 다시 넣지 않음
+delete mj.providers.copilot.models[0].input;
+writeJson(A("models.json"), mj);
+run(null);
+check("있는 모델: 사용자가 지운 항목은 다시 넣지 않음", readJson(A("models.json")).providers.copilot.models[0].input === undefined, readJson(A("models.json")));
 // 형식이 틀린 settings.json: 이번 새 항목은 고친 뒤 다시 실행할 때 넣음 ('지운 것'으로 보지 않음)
 writeJson(path.join(tpl, "settings.json"), { defaultModel: "m1", retry: { provider: { timeoutMs: 1 } }, newKey: 1 });
 put(A("settings.json"), '{ "defaultModel": "x", }');

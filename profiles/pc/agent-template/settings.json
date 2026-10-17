@@ -8,5 +8,8 @@
       "timeoutMs": 900000,
       "maxRetries": 0
     }
+  },
+  "images": {
+    "autoResize": false
   }
 }

@@ -21,6 +21,7 @@ fig, ax = plt.subplots(figsize=(8, 4.5))
 ax.plot(x, y, marker="o"); ax.set_title("월별 추이"); ax.grid(alpha=0.3)
 fig.tight_layout(); fig.savefig("그림_월별추이.png", dpi=120); plt.close(fig)
 ```
+- 그림이 의도대로인지(축·범례·한글 깨짐) 보려면, 그림을 볼 수 있는 모델이면 read 로 그 파일을 열어 확인한다.
 - 한글 글꼴: Windows 는 `plt.rcParams["font.family"] = "Malgun Gothic"`. 리눅스(노트북)는 `fc-list :lang=ko` 로 한글 글꼴이 있는지 보고, 없으면 제목·축 이름을 영어로 쓴다. 한글 글꼴을 쓸 때는 `plt.rcParams["axes.unicode_minus"] = False`.
 - jupyter 모드에서 그린 그림은 노트북에 생긴다. PC 에서 보려면 사용자에게 `/download 그림파일` 로 받으라고 알린다 (/download 는 사용자가 치는 명령).
 

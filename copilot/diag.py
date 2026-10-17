@@ -11,6 +11,7 @@
          python diag.py --delete-test   (+ 시험 대화를 하나 만들어 '… > 삭제 > 확인' 으로 지워 봄. 다른 대화는 건드리지 않음)
          python diag.py --report    (한 화면 상태 요약: 버전·중계 서버·전용 창·설정·최근 로그. 아무것도 바꾸지 않음)
          python diag.py --input-limit   (+ 입력창이 한 번에 받는 글자 수 확인. 붙여 넣어 보기만 하고 보내지 않음)
+         python diag.py --image     (+ 시험 그림(빨간 동그라미 3개)을 새 대화에 붙여 보내고 답 읽기: 그림 보내기 확인)
          python diag.py --inhouse --send   (위 확인을 사내AI 탭으로: 사내AI 중계 서버와 같은 설정 copilot/inhouse.json)
 """
 import argparse
@@ -27,6 +28,25 @@ sys.path.insert(0, HERE)
 import bridge  # noqa: E402
 
 TEST_BLOCK = '{"tool": "bash", "arguments": {"command": "echo diag-ok \\"quoted\\""}}'
+
+
+def diag_png(w=240, h=120):
+    """시험 그림: 흰 바탕에 빨간 동그라미 3개 (PIL 없이 PNG, base64)"""
+    import struct
+    import zlib
+    centers = [(50, 60), (120, 60), (190, 60)]
+    rows = []
+    for y in range(h):
+        row = bytearray(b"\x00")
+        for x in range(w):
+            row += b"\xdc\x1e\x1e" if any((x - cx) ** 2 + (y - cy) ** 2 <= 26 ** 2 for cx, cy in centers) else b"\xff\xff\xff"
+        rows.append(bytes(row))
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    data = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"".join(rows))) + chunk(b"IEND", b""))
+    return base64.b64encode(data).decode()
 
 
 def show(title, value):
@@ -278,6 +298,7 @@ def main():
     ap.add_argument("--delete-test", action="store_true", help="시험 대화를 만들어 삭제해 봄")
     ap.add_argument("--report", action="store_true", help="한 화면 상태 요약 (읽기만 함)")
     ap.add_argument("--input-limit", action="store_true", help="입력창이 한 번에 받는 글자 수 확인 (보내지 않음)")
+    ap.add_argument("--image", action="store_true", help="시험 그림을 새 대화에 붙여 보내고 답 읽기 (그림 보내기 확인)")
     ap.add_argument("--inhouse", action="store_true", help="사내AI 탭을 확인 (copilot/inhouse.json + 내 설정 ~/.pi/agent/inhouse.json)")
     ap.add_argument("--limits", action="store_true", help="끊김·제한 기록 요약 (내용 없이 횟수·시간만, 사진 한 장용. 읽기만 함)")
     ap.add_argument("--days", type=int, default=7, help="--limits 로 볼 기간 (일, 기본 7)")
@@ -458,6 +479,29 @@ def main():
         else:
             show("권장 max_chars", "X 확인하지 못함 (입력창에 글이 들어가지 않음)")
             ok = False
+
+    if args.image:
+        print("\n[10] 그림 붙이기 (시험 그림을 새 대화에 붙여 보내고 답 읽기. pi 가 일하지 않을 때 실행하세요)")
+        info = copilot.attach_info()
+        show("입력창 둘레", "파일 선택 칸 {}개{} / 단추: {}".format(
+            info.get("file_inputs", 0), " (accept {})".format(", ".join(info["accepts"])) if info.get("accepts") else "",
+            ", ".join(info.get("buttons") or []) or "(없음)"))
+        copilot.new_chat()
+        marker = "[pi-1a9e00]"
+        t0 = time.time()
+        copilot.send("진단 테스트입니다. 붙인 그림에 빨간 동그라미가 몇 개 있는지 숫자 하나로만 답해 주세요. "
+                     "그림이 보이지 않으면 '그림 없음' 이라고만 답해 주세요.\n\n" + marker, images=[{"mime": "image/png", "data": diag_png()}])
+        how, why = copilot.last_attach
+        show("붙이기", "OK {} ({:.1f}초)".format(how, time.time() - t0) if how else "X " + why)
+        reply = copilot.wait_reply(marker)
+        said = re.sub(r"\s+", " ", reply.get("text", "")).strip()
+        good = bool(how) and bool(re.search(r"(?<!\d)3(?!\d)|세 ?개", said))
+        show("답 (정답 3)", ("OK " if good else "X ") + said[:200])
+        ok = ok and good
+        if good:
+            show("설정", "그림 보내기가 됩니다 (방법 {}). pi 에서 그림 파일을 읽거나 붙이면 Copilot 이 함께 봅니다".format(how))
+        else:
+            show("설정", "그림이 Copilot 에 닿지 않았습니다. 이 화면을 찍어 보내 주세요 (그동안 pi 는 그림 대신 '붙이지 못했습니다' 를 적어 보냄)")
 
     print("\n결과:", "정상" if ok else "확인 필요 (위의 X 항목)")
     if not ok:

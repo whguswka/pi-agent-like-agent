@@ -1245,5 +1245,80 @@ try:  # 전용 창 전체: 탭(웹 앱)은 작아도 전용 창 전체가 memory
 finally:
     B.browser_memory = _bm
 
+# 그림: 이번에 새로 온 메시지의 그림만 마지막 조각과 함께 (send_images), 도구 결과의 그림 메시지는 요청이 아니라 덧붙임
+_png = "iVBORw0KGgoAAAANSUhEUg=="
+_img = lambda d=_png, mime="image/png": {"type": "image_url", "image_url": {"url": "data:{};base64,{}".format(mime, d)}}  # noqa: E731
+check("그림 읽기: data: 주소만", relay.message_images({"role": "user", "content": [{"type": "text", "text": "x"}, _img(),
+                                                                         {"type": "image_url", "image_url": {"url": "https://x/a.png"}}]})
+      == [{"mime": "image/png", "data": _png}])
+_timg = {"role": "user", "content": [{"type": "text", "text": "Attached image(s) from tool result:"}, _img()]}
+check("도구 결과의 그림 메시지 알아보기", relay.tool_image_message(_timg) and not relay.tool_image_message({"role": "user", "content": [_img()]}))
+check("글로 바꿀 때 그림 자리는 [그림]", relay.content_text([{"type": "text", "text": "이 그래프"}, _img()]) == "이 그래프\n[그림]")
+check("도구 결과의 그림 메시지는 [요청] 이 아님", relay.Renderer(6000).message(_timg, {}) == "(앞 도구 결과의 그림 1개)")
+_hist = [{"role": "user", "content": "loss.png 를 보고 설명해줘"},
+         {"role": "assistant", "content": None, "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "read", "arguments": "{}"}}]},
+         {"role": "tool", "tool_call_id": "t1", "content": "Read image file [image/png]"}, _timg]
+check("마지막 요청: 도구 결과의 그림 메시지는 건너뜀", relay.last_user_text(_hist) == "loss.png 를 보고 설명해줘" and relay.tools_used_since_user(_hist))
+
+
+class _ImgLink(FakeLink):
+    def request(self, parts, new_thread, model="", images=None):
+        r = FakeLink.request(self, parts, new_thread, model)
+        self.sent_log[-1]["images"] = images
+        return r
+
+
+_li = _ImgLink(["그래프는 손실이 줄어드는 모양입니다.", "```json\n{\"tool\": \"read\", \"arguments\": {\"path\": \"loss.png\"}}\n```", "줄어듭니다."])
+_li.cfg = {"send_images": True}
+_ri = relay.Relay(A(), _li)
+_u1 = {"role": "user", "content": [{"type": "text", "text": "이 그래프를 설명해줘"}, _img()]}
+_quiet(lambda: _ri.handle({"messages": [sys_msg, _u1], "tools": tools}))
+check("사용자 메시지의 그림: 새 대화 마지막 조각과 함께, 글에는 [그림]", _li.sent_log[0]["images"] == [{"mime": "image/png", "data": _png}]
+      and "이 그래프를 설명해줘\n[그림]" in _li.sent_log[0]["parts"][-1], _li.sent_log[0])
+# 다음 요청(같은 대화): 앞 그림은 다시 붙이지 않고, 도구 결과의 그림만
+_a1 = {"role": "assistant", "content": "그래프는 손실이 줄어드는 모양입니다."}
+_u2 = {"role": "user", "content": "loss.png 도 봐줘"}
+_a2 = _quiet(lambda: _ri.handle({"messages": [sys_msg, _u1, _a1, _u2], "tools": tools}))
+check("다음 요청: 앞에서 붙인 그림은 다시 붙이지 않음", not _li.sent_log[1].get("images") and not _li.sent_log[1]["new_thread"], _li.sent_log[1])
+_tr = {"role": "tool", "tool_call_id": _a2["tool_calls"][0]["id"], "content": "Read image file [image/png]"}
+_quiet(lambda: _ri.handle({"messages": [sys_msg, _u1, _a1, _u2, _a2, _tr, _timg], "tools": tools}))
+check("도구 결과의 그림: 그 결과와 함께 붙임 (요청으로 보이지 않게)", _li.sent_log[2]["images"] == [{"mime": "image/png", "data": _png}]
+      and "(앞 도구 결과의 그림 1개)" in _li.sent_log[2]["parts"][-1] and "[요청]" not in _li.sent_log[2]["parts"][-1], _li.sent_log[2])
+_lo = _ImgLink(["답"])
+_lo.cfg = {"send_images": False}
+_quiet(lambda: relay.Relay(A(), _lo).handle({"messages": [sys_msg, _u1], "tools": tools}))
+check("send_images 끔: 그림은 보내지 않고 글로 알림", not _lo.sent_log[0].get("images")
+      and "그림 1개는 보내지 않았습니다" in _lo.sent_log[0]["parts"][-1], _lo.sent_log[0])
+_l6 = _ImgLink(["답"])
+_l6.cfg = {"send_images": True}
+_quiet(lambda: relay.Relay(A(), _l6).handle({"messages": [sys_msg, {"role": "user", "content": [_img("QQ==" * (i + 1)) for i in range(6)]}],
+                                              "tools": tools}))
+_lb = _ImgLink(["답"])
+_lb.cfg = {"send_images": True}
+_quiet(lambda: relay.Relay(A(), _lb).handle({"messages": [sys_msg, {"role": "user", "content": [_img("QUFB" * (relay.MAX_IMAGE_BYTES // 3 + 10)), _img()]}],
+                                              "tools": tools}))
+check("5MB 가 넘는 그림은 붙이지 않고 글로 알림 (나머지는 붙임)", _lb.sent_log[0]["images"] == [{"mime": "image/png", "data": _png}]
+      and "그림 1개는 5MB 가 넘어 붙이지 않았습니다" in _lb.sent_log[0]["parts"][-1], (_lb.sent_log[0]["parts"][-1][-300:],))
+check("그림은 4개까지, 넘으면 글로 알림", len(_l6.sent_log[0]["images"]) == 4 and "그림 6개 중 앞의 4개만 붙였습니다" in _l6.sent_log[0]["parts"][-1],
+      _l6.sent_log[0])
+
+
+class _ImgCop(_RegCop):
+    def __init__(self):
+        _RegCop.__init__(self, "c-img", "ours")
+        self.sends = []
+
+    def send(self, text, images=None):
+        self.sends.append(images)
+
+
+_lk2 = relay.CopilotLink({}, None)
+_lk2.cop = _ImgCop()
+_quiet(lambda: _lk2.request(["앞 조각\n\n[pi-aaaaaa]", "질문\n\n[pi-bbbbbb]"], True, images=[{"mime": "image/png", "data": _png}]))
+check("CopilotLink: 그림은 마지막 조각에만", _lk2.cop.sends == [None, [{"mime": "image/png", "data": _png}]], _lk2.cop.sends)
+check("그림 보내기 기본값: Copilot 켜짐, 사내AI 꺼짐", relay.bridge.DEFAULT_CONFIG.get("send_images") is True
+      and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("send_images") is False)
+
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

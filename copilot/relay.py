@@ -84,8 +84,38 @@ def content_text(content):
             if part.get("type") == "text":
                 texts.append(part.get("text", ""))
             elif part.get("type") in ("image_url", "input_image"):
-                texts.append("[image omitted]")
+                texts.append("[그림]")
     return "\n".join(texts)
+
+
+# 그림: pi 는 그림을 볼 수 있는 모델(models.json 의 input 에 image)이면 사용자 메시지와 도구 결과의 그림을 image_url(data: 주소)로 보낸다.
+#  도구 결과(read 로 연 그림 파일 등)의 그림은 결과 뒤에 이 글로 시작하는 사용자 메시지로 따로 온다
+TOOL_IMAGE_TEXT = "Attached image(s) from tool result"
+MAX_IMAGES = 4  # 한 번에 붙이는 그림 수
+# 그림 하나의 최대 크기. pi 는 그림을 줄이지 않고 보낸다 (키트의 pi 에는 줄이는 도구가 없어 settings.json 의 images.autoResize 를 끔)
+MAX_IMAGE_BYTES = 5 * 1048576
+
+
+def message_images(m):
+    """메시지 안의 그림 -> [{"mime", "data"(base64)}] (data: 주소만)"""
+    out = []
+    c = m.get("content")
+    for part in c if isinstance(c, list) else []:
+        if not isinstance(part, dict) or part.get("type") not in ("image_url", "input_image"):
+            continue
+        url = part.get("image_url")
+        url = url.get("url") if isinstance(url, dict) else (url or part.get("url") or "")
+        mm = re.match(r"^data:(image/[\w.+-]+);base64,(.+)$", str(url or ""), re.S)
+        if mm:
+            out.append({"mime": mm.group(1), "data": mm.group(2).strip()})
+    return out
+
+
+def tool_image_message(m):
+    """pi 가 도구 결과의 그림을 담아 보내는 사용자 메시지인지 (사람이 쓴 요청이 아님)"""
+    c = m.get("content")
+    return (m.get("role") == "user" and isinstance(c, list) and bool(c) and isinstance(c[0], dict)
+            and str(c[0].get("text") or "").startswith(TOOL_IMAGE_TEXT))
 
 
 def norm(text):
@@ -326,14 +356,14 @@ def shorten_summary_request(messages):
 
 def last_user_text(messages):
     for m in reversed(messages):
-        if m.get("role") == "user":
+        if m.get("role") == "user" and not tool_image_message(m):
             return content_text(m.get("content"))
     return ""
 
 
 def tools_used_since_user(messages):
     """마지막 사용자 요청 뒤로 도구를 쓴 적이 있으면 True (도구 호출 또는 도구 결과)"""
-    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user" and not tool_image_message(m)), default=-1)
     return any(m.get("tool_calls") or m.get("role") == "tool" for m in messages[last_user + 1:])
 
 
@@ -414,6 +444,8 @@ class Renderer:
     def message(self, m, names, limit=None):
         role = m.get("role")
         text = content_text(m.get("content")).strip()
+        if tool_image_message(m):
+            return "(앞 도구 결과의 그림 {}개)".format(len(message_images(m)) or text.count("[그림]"))
         if role == "user":
             return "[요청]\n" + text
         if role == "tool":
@@ -1241,8 +1273,9 @@ class CopilotLink:
             if not ok:
                 EVENTS.write({"ev": "warn", "kind": "delete"})  # 안내 문구에는 대화 제목(첫 질문에서 만들어짐)이 들어갈 수 있어 남기지 않음
 
-    def request(self, parts, new_thread, model=""):
-        """조각들을 차례로 Copilot 에 보내고 마지막 답을 돌려준다. model 은 Copilot 화면의 모델 이름 ("" 이면 그대로)"""
+    def request(self, parts, new_thread, model="", images=None):
+        """조각들을 차례로 Copilot 에 보내고 마지막 답을 돌려준다. model 은 Copilot 화면의 모델 이름 ("" 이면 그대로).
+        images: 마지막 조각(질문)과 함께 붙일 그림 [{"mime", "data"}]"""
         reconnected = self.cop is None
         if reconnected:
             self.connect()
@@ -1281,7 +1314,11 @@ class CopilotLink:
                 self.pace()
                 bridge.log("  -> Copilot 에 보냄 ({}/{}, {}자)".format(i, len(parts), len(part)))
                 set_phase("보내는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
-                self.cop.send(part)
+                if images and i == len(parts):
+                    set_phase("그림 붙이는 중")
+                    self.cop.send(part, images=images)
+                else:
+                    self.cop.send(part)
                 self.asked += 1
                 set_phase("답 기다리는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
                 reply = self.cop.wait_reply(m.group(0).strip())
@@ -1347,7 +1384,7 @@ class Relay:
     def log(self, *a):
         bridge.log(*a)
 
-    def ask(self, parts, new_thread):
+    def ask(self, parts, new_thread, images=None):
         self.log("요청 (새 대화={}, 조각 {}개, {}자{})".format(new_thread, len(parts), sum(len(p) for p in parts),
                                                        ", 모델 " + self.model_label if self.model_label else ""))
         st = self.stat
@@ -1357,7 +1394,9 @@ class Relay:
             st["new"] = st["new"] or new_thread
             st["chars"] = st.get("chars", 0) + sum(len(p) for p in parts)
             st["split"] = st.get("split") or len(parts) > 1
-        reply = self.link.request(parts, new_thread, model=self.model_label)
+        if images:
+            self.log("  그림 {}개를 마지막 조각과 함께 보냄".format(len(images)))
+        reply = self.link.request(parts, new_thread, model=self.model_label, **({"images": images} if images else {}))
         if st is not None and isinstance(reply, dict):  # 끊김·제한 기록: 조각마다 답이 어떻게 끝났는지
             st.setdefault("waits", []).extend(w for w in reply.get("_waits") or [] if w)
             st["mid_not_ok"] = st.get("mid_not_ok", 0) + (reply.get("_mid_not_ok") or 0)
@@ -1563,9 +1602,27 @@ class Relay:
         redo, self.redo_same_chat = self.redo_same_chat and not force_new, False
         delta = (not force_new) and (not redo) and (not self.fresh) and n and len(fps) > n and fps[:n] == self.sent
         marker = "[pi-{}]".format(uuid.uuid4().hex[:6])
+        # 그림: 이번에 새로 온 메시지(새 대화면 마지막 답 뒤의 메시지)의 것만 붙인다 (앞에서 붙인 그림은 이미 대화에 있음)
+        last_a = max((i for i, m in enumerate(messages) if m.get("role") == "assistant"), default=-1)
+        turn = messages[n:] if delta else messages[last_a + 1:]
+        images = [im for m in turn for im in message_images(m)]
+        notes = []
+        if images and not (getattr(self.link, "cfg", None) or {}).get("send_images"):
+            notes.append("(그림 {}개는 보내지 않았습니다: 이 서비스에는 그림을 보내지 않게 설정됨)".format(len(images)))
+            images = []
+        big = [im for im in images if len(im["data"]) * 3 // 4 > MAX_IMAGE_BYTES]
+        if big:
+            notes.append("(그림 {}개는 {}MB 가 넘어 붙이지 않았습니다)".format(len(big), MAX_IMAGE_BYTES // 1048576))
+            images = [im for im in images if im not in big]
+        if len(images) > MAX_IMAGES:
+            notes.append("(그림 {}개 중 앞의 {}개만 붙였습니다)".format(len(images), MAX_IMAGES))
+            images = images[:MAX_IMAGES]
+        img_note = " ".join(notes)
         if delta:
             new = messages[n:]
             text = "\n\n".join(self.renderer.message(m, names) for m in new)
+            if img_note:
+                text += "\n\n" + img_note
             if any(m.get("role") == "tool" for m in new):
                 if self.unrun_note:
                     text += "\n\n" + self.unrun_note
@@ -1581,12 +1638,12 @@ class Relay:
             parts = build_parts(text, self.args.max_chars, marker)
             new_thread = False
         else:
-            parts = self.full_parts(messages, tools, names, marker)
+            parts = self.full_parts(messages, tools, names, marker, img_note)
             new_thread = not redo  # 개인정보 확인으로 멈춘 뒤에는 같은 대화에 처음부터 다시
             self.unrun_note = ""
         was_fresh, self.fresh = self.fresh, True  # 도중에 실패하면 다음 요청은 새 대화로 (성공하면 아래에서 False)
         try:
-            reply = self.ask(parts, new_thread)
+            reply = self.ask(parts, new_thread, images)
         except RelayError as e:
             if e.status == 429:  # 사용량 제한은 대화를 바꾸지 않음: 풀린 뒤 같은 대화에 이어서
                 self.fresh = was_fresh
@@ -1665,7 +1722,7 @@ class Relay:
         self.log("답: {}{}".format("도구 " + call["name"] if call else "본문 {}자".format(len(body_text)), self.stat_text()))
         return assistant
 
-    def full_parts(self, messages, tools, names, marker):
+    def full_parts(self, messages, tools, names, marker, note=""):
         system = "\n\n".join(content_text(m.get("content")) for m in messages if m.get("role") in ("system", "developer"))
         rules = (getattr(self.link, "cfg", None) or {}).get("extra_rules") or []  # 서비스별로 덧붙일 진행 규칙
         rules = [rules] if isinstance(rules, str) else rules
@@ -1699,6 +1756,8 @@ class Relay:
         if briefs:
             convo_text += "(이전 기록 요약)\n" + "\n".join(briefs) + "\n\n(최근 기록)\n\n"
         convo_text += "\n\n".join(kept)
+        if note:
+            convo_text += "\n\n" + note
         body = (head + "\n대화 내용\n" + convo_text +
                 "\n\n(마지막 요청에 대해 다음 작업 블록 하나를 주시거나, 이미 끝났다면 최종 답을 주세요.)")
         return build_parts(body, self.args.max_chars, marker)
