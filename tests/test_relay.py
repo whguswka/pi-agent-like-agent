@@ -520,34 +520,80 @@ check("diag 통계: 새 대화·조각 나눔·다시 보냄·오류", _st["new"
       and _st["retry"] == 1 and _st["errors"] == 1, _st)
 check("diag 통계: 기록 없으면 None", diag.request_stats(["10:00:00 답: 도구 read"]) is None)
 
-# multi_read (bridge.json, 기본 꺼짐): 맨 앞부터 이어지는 read 블록 여러 개를 한 번에 tool_calls 로
-_rb = ('```json\n{"tool": "read", "arguments": {"path": "a.py"}}\n```\n'
-       '```json\n{"tool": "read", "arguments": {"path": "b.py"}}\n```\n'
-       '```json\n{"tool": "bash", "arguments": {"command": "ls"}}\n```')
-_calls = relay.leading_reads({"text": _rb}, TOOLS)
-check("leading_reads: 앞의 read 2개만 (bash 앞에서 멈춤)", [c["arguments"]["path"] for c in _calls] == ["a.py", "b.py"], _calls)
-check("leading_reads: 첫 블록이 read 가 아니면 없음", relay.leading_reads(
-    {"text": '```json\n{"tool": "bash", "arguments": {"command": "ls"}}\n```\n```json\n{"tool": "read", "arguments": {"path": "a"}}\n```'},
-    TOOLS) == [])
-_mr = FakeLink([_rb, "비교했습니다."])
+# multi_read (기본 켜짐, 사내AI 는 꺼짐): 맨 앞부터 이어지는 살펴보기 블록(read, 읽기만 하는 bash 등) 여러 개를 한 번에 tool_calls 로
+for _c in ["ls -la", "cat a.py | grep def | wc -l", "git status && git log --oneline -5", "kubectl get pods -n kubeflow -o wide",
+           "kubectl -n ns logs pod-1 --tail=50", "pip list 2>/dev/null | grep -i torch", "python -m pip show torch",
+           "nvidia-smi --query-gpu=name,memory.used --format=csv", "sed -n '10,20p' train.py", "sed 's/,/ /g' a.csv",
+           "head -n 30 logs/train.log; tail -5 logs/train.log", "find . -name '*.py' -newer x | head", "du -sh ~/* 2>/dev/null | sort -h | tail",
+           "cd work && ls", "command -v nvcc", "awk -F, '{print $1}' data.csv | head", 'grep -rn "a|b;c" src', "echo 'a;b' && pwd",
+           "python --version", "helm list -A", "conda env list", "kubectl config current-context", "ls >/dev/null 2>&1", "ls -la;",
+           "git -C repo diff --stat", "jupyter kernelspec list", "df -h ~", "free -h", "env", "ps aux | grep python"]:
+    check("읽기만 하는 명령: " + _c, relay.read_only_command(_c), relay.shell_words(_c))
+for _c in ["rm -rf x", "ls > out.txt", "cat a >> b", "sed -i 's/a/b/' f", "sed -n '1w out' f", "sed 's/a/b/w out' f", "sed -f s.sed f",
+           "find . -name x -delete", "find . -exec rm {} \\;", "tail -f log", "tail -fn 20 log", "kubectl logs -f pod", "kubectl get pods -w",
+           "kubectl apply -f x.yaml", "kubectl delete pod x", "kubectl exec -it p -- ls", "git checkout main", "git -c core.pager=x log",
+           "git branch -D x", "git diff --output=x", "pip install torch", "python train.py", "python -c 'print(1)'",
+           "nohup python train.py > log 2>&1 &", "ls $(pwd)", "ls `pwd`", "ls\nrm x", "sort -o out in", "sort -uo out in", "X=1 ls", "./ls",
+           "/bin/rm x", "cat <<EOF\nx\nEOF", "sudo ls", "echo hi | tee out", "ls & rm x", "awk '{print > \"f\"}' a",
+           "awk 'BEGIN{system(\"rm x\")}'", "uniq a b", "nvidia-smi -pm 1", "nvidia-smi -l 5", "env FOO=1 python x", "date -s 2020",
+           "(ls)", "ls |", "ls 'unclosed", "docker logs -f c", "helm template x --output-dir out", "xargs rm < list", "cat a >&file",
+           "file -C -m magic", "echo a > /dev/null2", "command ls", "", "   "]:
+    check("읽기만 하는 명령 아님: " + repr(_c), not relay.read_only_command(_c), relay.shell_words(_c))
+check("읽기 도구: read·grep·wiki_search, bash 는 명령을 봄", relay.look_call({"name": "read", "arguments": {"path": "a"}})
+      and relay.look_call({"name": "wiki_search", "arguments": {}}) and relay.look_call({"name": "bash", "arguments": {"command": "ls"}})
+      and not relay.look_call({"name": "bash", "arguments": {"command": "rm x"}}) and not relay.look_call({"name": "write", "arguments": {}})
+      and not relay.look_call({"name": "bash", "arguments": {}}))
+_blk = lambda name, **a: '```json\n' + json.dumps({"tool": name, "arguments": a}) + '\n```\n'  # noqa: E731
+_rb = _blk("read", path="a.py") + "예시:\n```python\nprint(1)\n```\n" + _blk("bash", command="git status") + _blk("read", path="b.py") \
+    + _blk("write", path="c.py", content="x") + _blk("read", path="d.py")
+_calls = relay.reply_calls({"text": _rb}, TOOLS)
+check("reply_calls: 도구 블록만 차례대로 (예시 코드는 건너뜀)", [c["name"] for c in _calls] == ["read", "bash", "read", "write", "read"], _calls)
+_mr = FakeLink([_rb, "c.py 를 쓰겠습니다.", "끝"])
 _mr.cfg = {"multi_read": True}
 _rm = relay.Relay(A(), _mr)
-_u = {"role": "user", "content": "a.py 와 b.py 를 비교해줘"}
+_u = {"role": "user", "content": "a.py 와 b.py 를 비교해 c.py 를 만들어줘"}
 with _cl.redirect_stdout(_io.StringIO()):
     _am = _rm.handle({"messages": [_u], "tools": tools})
-check("multi_read 켬: tool_calls 2개 (read 만)", [tc["function"]["name"] for tc in _am.get("tool_calls", [])] == ["read", "read"], _am)
-check("multi_read 켬: 지침에 read 여러 개 허용 안내", relay.MULTI_READ_RULE.strip() in _mr.sent_log[0]["parts"][0])
+check("multi_read 켬: 앞의 살펴보기 3개를 한 번에 (write 앞에서 멈춤)",
+      [tc["function"]["name"] for tc in _am.get("tool_calls", [])] == ["read", "bash", "read"], _am)
+check("multi_read 켬: 지침에 살펴보기 여러 개 허용 안내 (5개까지)", relay.MULTI_READ_RULE.format(n=5).strip() in _mr.sent_log[0]["parts"][0]
+      and "5개까지" in _mr.sent_log[0]["parts"][0])
 _res = [{"role": "tool", "tool_call_id": tc["id"], "content": "내용 {}".format(i)} for i, tc in enumerate(_am["tool_calls"])]
 with _cl.redirect_stdout(_io.StringIO()):
     _a2 = _rm.handle({"messages": [_u, _am] + _res, "tools": tools})
-check("multi_read 켬: 결과 두 개를 같은 대화에 한 메시지로", not _mr.sent_log[1]["new_thread"]
-      and _mr.sent_log[1]["parts"][0].count("TOOL_RESULT (read)") == 2 and _a2.get("content") == "비교했습니다.", _mr.sent_log[1])
+_p1 = _mr.sent_log[1]["parts"][0]
+check("multi_read 켬: 결과 세 개를 같은 대화에 한 메시지로", not _mr.sent_log[1]["new_thread"] and _p1.count("TOOL_RESULT (read)") == 2
+      and _p1.count("TOOL_RESULT (bash)") == 1 and _a2.get("content") == "c.py 를 쓰겠습니다.", _mr.sent_log[1])
+check("실행하지 않은 블록 안내: 다음 메시지에 한 번", "도구 블록 5개 중 앞의 3개만 실행했습니다" in _p1, _p1)
+with _cl.redirect_stdout(_io.StringIO()):
+    _rm.handle({"messages": [_u, _am] + _res + [_a2, {"role": "user", "content": "좋아"}], "tools": tools})
+check("실행하지 않은 블록 안내: 그다음 메시지에는 없음", "실행했습니다" not in _mr.sent_log[2]["parts"][0], _mr.sent_log[2])
+# 첫 블록이 바꾸는 작업이면 그것 하나만 (뒤의 읽기도 실행하지 않음)
+_fw = FakeLink([_blk("write", path="c.py", content="x") + _blk("read", path="c.py"), "끝"])
+_fw.cfg = {"multi_read": True}
+_rw = relay.Relay(A(), _fw)
+with _cl.redirect_stdout(_io.StringIO()):
+    _aw = _rw.handle({"messages": [_u], "tools": tools})
+    _rw.handle({"messages": [_u, _aw, {"role": "tool", "tool_call_id": _aw["tool_calls"][0]["id"], "content": "ok"}], "tools": tools})
+check("첫 블록이 write: 그것 하나만, 다음 메시지에 '첫 번째만' 안내",
+      [tc["function"]["name"] for tc in _aw["tool_calls"]] == ["write"] and "도구 블록 2개 중 첫 번째만 실행했습니다" in _fw.sent_log[1]["parts"][0],
+      (_aw, _fw.sent_log[1]))
+# 한 번에 5개까지
+_f7 = FakeLink(["".join(_blk("read", path="f{}.py".format(i)) for i in range(7)), "끝"])
+_f7.cfg = {"multi_read": True}
+with _cl.redirect_stdout(_io.StringIO()):
+    _a7 = relay.Relay(A(), _f7).handle({"messages": [_u], "tools": tools})
+check("살펴보기는 5개까지 한 번에", len(_a7["tool_calls"]) == 5, _a7)
 _off = FakeLink([_rb])
 _off.cfg = {}
 with _cl.redirect_stdout(_io.StringIO()):
     _ao = relay.Relay(A(), _off).handle({"messages": [_u], "tools": tools})
-check("multi_read 끔(기본): 첫 블록 하나만, 안내 없음",
-      len(_ao["tool_calls"]) == 1 and relay.MULTI_READ_RULE.strip() not in _off.sent_log[0]["parts"][0], _ao)
+check("multi_read 끔(사내AI 기본): 첫 블록 하나만, 안내 없음",
+      len(_ao["tool_calls"]) == 1 and relay.MULTI_READ_RULE.format(n=5).strip() not in _off.sent_log[0]["parts"][0], _ao)
+import bridge as _bridge  # noqa: E402
+check("multi_read 기본값: Copilot 켜짐", _bridge.DEFAULT_CONFIG.get("multi_read") is True)
+with open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8") as _f:
+    check("multi_read: 사내AI 설정은 꺼짐", json.load(_f).get("multi_read") is False)
 
 # GET /status: 요청을 처리하는 중(잠금이 잡혀 있어도) 바로 지금 하는 일을 돌려줌
 _r17 = relay.Relay(A(), FakeLink([]))

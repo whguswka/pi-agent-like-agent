@@ -58,7 +58,9 @@ DEFAULT_CONFIG = {
     "tool_result_chars": 6000,
     "resend_recent_chars": 20000,
     "resend_summary_chars": 40000,
-    "multi_read": False,  # True 면 Copilot 이 파일 읽기(read) 블록을 여러 개 한 번에 줄 수 있음 (왕복 횟수 줄이기)
+    # 살펴보기만 하는 작업(read, 읽기만 하는 bash 명령 등) 블록을 한 답에 여러 개(5개까지) 받아 한 번에 실행 (왕복 횟수 줄이기).
+    #  고치기·명령 실행은 그대로 하나씩. 사내AI(inhouse.json)는 꺼 둠
+    "multi_read": True,
     "max_tabs": 1,  # 2 이상이면 pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶)
     # 모델 선택: Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 화면의 모델 메뉴에서 고른다
     "copilot_model": "",  # pi 모델 id 'copilot' 일 때 고를 화면 이름 (예: "GPT-6 Sol"). 비우면 화면 그대로

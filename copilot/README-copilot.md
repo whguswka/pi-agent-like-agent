@@ -92,7 +92,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |
 | `tool_result_chars` | 도구 결과 하나를 보낼 최대 글자 수 (기본 6000, 가운데 생략) |
 | `max_tabs` | 기본 1. 2 이상이면 요청 머리글 `X-Pi-Session`(pi 확장 copilot-session.ts 가 pi 프로세스마다 붙임)별로 Copilot 창을 따로 씀. 창 1 은 처음부터 열려 있던 Copilot 탭, 나머지는 필요할 때 새 창(뒤에서 열림). 대화 기록에는 창 번호(owner)를 남겨 각 창은 자기 대화만 '끝난 대화' 로 돌림. 창이 모두 쓰이는 중이면 가장 오래 쉰 창을 넘겨받음. 분당 질문 수 제한은 모든 창을 합쳐서 셈. jupyter 모드의 노트북 명령도 창마다 터미널을 따로 씀 (창 1: pibridge, 창 2: pibridge2 …. jupyter.ts 도 같은 X-Pi-Session 을 보냄) |
-| `multi_read` | 기본 false. true 면 진행 규칙에 "여러 파일을 읽을 때는 read 블록 여러 개를 한 번에 써도 된다" 를 넣고, 답의 맨 앞부터 이어지는 read 블록을 모두 tool_calls 로 돌려줌 (pi 는 한 답의 도구들을 동시에 실행하므로 read 만) |
+| `multi_read` | 기본 true (사내AI `inhouse.json` 은 false). 진행 규칙에 "살펴보기만 하는 작업은 블록 여러 개(5개까지)를 한 번에 써도 된다" 를 넣고, 답의 맨 앞부터 이어지는 살펴보기 블록(read·grep·find·ls·wiki_search·wiki_read 도구, `relay.read_only_command` 가 읽기만 한다고 본 bash 명령)을 5개까지 tool_calls 로 돌려줌 (pi 는 한 답의 도구들을 동시에 실행하므로 순서가 중요한 쓰기·명령 실행은 하나씩). 실행하지 않은 블록이 있으면 다음 메시지에 "블록 n개 중 앞의 k개만 실행했습니다" 를 한 번 붙임 (false 여도) |
 | `resend_recent_chars` / `resend_summary_chars` | 새 대화를 열 때 다시 넣는 기록: 최근 것은 이 글자 수만큼 그대로, 그 앞은 이 글자 수만큼 한 줄 요약 (기본 20000 / 40000). `max_chars` 를 늘려도 이 양은 그대로 |
 
 중계 서버 옵션 (`python relay.py --help`): `--max-chars`, `--tool-result-chars` 를 주면 위 설정보다 먼저 씁니다.

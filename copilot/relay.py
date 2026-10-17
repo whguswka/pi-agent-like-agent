@@ -167,10 +167,11 @@ REMIND_EVERY = 10
 PROTOCOL_REMINDER = ("(참고 - 진행 방식: 요청이 끝났으면 코드 블록 없이 최종 답을 주세요. 더 할 작업이 있으면 다음 작업 하나만 "
                      "```json {{\"tool\": \"<도구>\", \"arguments\": {{...}}}}``` 블록으로 주세요 (파일 전체 쓰기는 "
                      "```text @tool write path=<경로> ...```).{multi_read} 이미 한 작업을 똑같이 반복하지 마세요. 도구: {tools}.)")
-# multi_read (bridge.json, 기본 꺼짐): 파일 읽기(read)는 블록 여러 개를 한 번에 받는다 (왕복 횟수 줄이기).
-#  pi 는 한 답의 도구들을 동시에 실행하므로, 순서가 중요한 쓰기·명령 실행은 지금처럼 하나씩
-MULTI_READ_RULE = " 단, 여러 파일을 읽어야 하면 read 블록은 여러 개를 한 번에 써도 됩니다 (결과를 한꺼번에 드립니다)."
-MULTI_READ_HINT = " 여러 파일 읽기는 read 블록 여러 개를 한 번에 써도 됩니다."
+# multi_read (bridge.json, 기본 켜짐. 사내AI 는 꺼짐): 살펴보기만 하는 작업(read, 읽기만 하는 bash 명령 등)은 블록 여러 개를
+#  한 번에 받는다 (왕복 횟수 줄이기). pi 는 한 답의 도구들을 동시에 실행하므로, 순서가 중요한 쓰기·명령 실행은 지금처럼 하나씩
+MULTI_READ_RULE = (" 단, 살펴보기만 하는 작업(read, 그리고 ls·cat·grep·git status·kubectl get·pip list 처럼 읽기만 하는 bash 명령)은 "
+                   "블록 여러 개({n}개까지)를 한 번에 써도 됩니다 (결과를 한꺼번에 드립니다). 파일을 바꾸거나 앞 결과를 보고 정할 작업은 하나씩 써 주세요.")
+MULTI_READ_HINT = " 살펴보기만 하는 작업(read, 읽기만 하는 명령)은 블록 여러 개를 한 번에 써도 됩니다."
 
 # 같은 도구 호출(도구·인자 같음)이 연달아 반복되면 끊는다 (시험: 같은 write 를 8초마다 60번 넘게 반복한 일이 있었음)
 LOOP_LIMIT = 2  # 직전에 이미 연속 2번 같은 호출이 있었으면 3번째는 반복으로 본다
@@ -747,18 +748,269 @@ def find_tool_json(text):
     return None
 
 
-def leading_reads(reply, tool_names):
-    """multi_read 용: 답의 코드 블록 중 맨 앞부터 이어지는 read 호출 목록 (read 가 아닌 블록이 나오면 거기서 멈춤)"""
+def reply_calls(reply, tool_names):
+    """답의 코드 블록 중 도구 호출 목록 (도구 블록이 아닌 코드는 건너뜀, 형식이 틀린 블록에서 멈춤)"""
     blocks = reply.get("code_blocks") or fenced_blocks(reply.get("text") or "")
     calls = []
     for b in blocks:
         call, err = parse_block(b.get("text", ""), b.get("lang", ""), tool_names)
         if call is None and err is None:  # 도구 블록이 아닌 코드 (예시 등)
             continue
-        if not call or call["name"] != "read":
+        if not call:
             break
         calls.append(call)
     return calls
+
+
+# ── 읽기만 하는 명령 (multi_read 로 한 번에 돌려도 되는 것) ─────────────────────────
+# pi 쪽 modes.ts 의 판단(계획 모드)보다 좁게: 모르는 명령·문법이면 '아님' (그러면 지금처럼 하나씩).
+# 잘못 '읽기만' 으로 봐도 pi 의 위험 명령 확인·작업 모드는 명령마다 그대로 걸리고, 순서만 어긋날 수 있다
+BATCH_MAX = 5
+LOOK_TOOLS = {"read", "grep", "find", "ls", "wiki_search", "wiki_read"}
+READ_CMDS = set((
+    "ls pwd cd cat head tail grep egrep fgrep rg wc du df stat file which whereis type realpath readlink basename dirname "
+    "diff cmp comm cut tr nl column jq echo printf true false test [ seq date id whoami groups uname ps pgrep free uptime "
+    "nproc lscpu lsblk md5sum sha1sum sha256sum sha512sum cksum od hexdump strings printenv locale sort uniq tree find sed "
+    "awk gawk hostname").split())
+VERSION_ONLY = set("python python3 node java javac go gcc g++ make cmake rustc cargo perl ruby uv nvcc npm conda pip pip3 "
+                   "kubectl helm docker git jupyter".split())
+# 이름은 읽기용이지만 쓰거나 다른 프로그램을 실행하거나 끝나지 않는 옵션 (짧은 옵션은 붙여 쓸 수 있으므로 글자 묶음 안에서도 찾음)
+WRITE_FLAG = {
+    "sort": re.compile(r"^-[bcCdfghiMmnRrsuVz]*o|^--(o|co)"),
+    "date": re.compile(r"^-[uR]*s|^--s"),
+    "tree": re.compile(r"^-[a-zA-Z]*o"),
+    "rg": re.compile(r"^--pre"),
+    "file": re.compile(r"^-[a-zA-Z]*C|^--compile"),
+    "tail": re.compile(r"^-[a-zA-Z0-9]*[fF]|^--(f|retry)"),  # -f 따라가기: 끝나지 않음
+}
+SHELL_OPS = ("&&", "||", "|&", ">>", "&>", ">&", "<&", ">|", ";;", "|", ";", "&", ">", "<", "(", ")")
+
+
+def shell_words(cmd):
+    """셸 명령 -> 단순 명령마다 낱말 목록 (| && || ; 로 나눔). 읽기만 하는지 볼 수 없는 문법이면 None:
+    여러 줄, 명령 치환 $( ) ``, <( ) >( ), here-doc, 뒤에서 돌리기 &, ( ) 묶음, /dev/null 이 아닌 곳으로 출력"""
+    if not cmd.strip() or any(x in cmd for x in ("\n", "\r", "`", "$(", "<(", ">(", "<<")):
+        return None
+    toks, word, has, i, n = [], [], False, 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c in " \t":
+            if has:
+                toks.append(("w", "".join(word)))
+            word, has, i = [], False, i + 1
+        elif c == "'":
+            j = cmd.find("'", i + 1)
+            if j < 0:
+                return None
+            word.append(cmd[i + 1:j])
+            has, i = True, j + 1
+        elif c == '"':
+            j, buf = i + 1, []
+            while j < n and cmd[j] != '"':
+                if cmd[j] == "\\" and j + 1 < n:
+                    buf.append(cmd[j + 1] if cmd[j + 1] in '"\\$' else cmd[j:j + 2])
+                    j += 2
+                else:
+                    buf.append(cmd[j])
+                    j += 1
+            if j >= n:
+                return None
+            word.append("".join(buf))
+            has, i = True, j + 1
+        elif c == "\\":
+            if i + 1 >= n:
+                return None
+            word.append(cmd[i + 1])
+            has, i = True, i + 2
+        else:
+            op = next((o for o in SHELL_OPS if cmd.startswith(o, i)), None)
+            if op:
+                if has:
+                    toks.append(("w", "".join(word)))
+                word, has = [], False
+                toks.append(("op", op))
+                i += len(op)
+            else:
+                word.append(c)
+                has, i = True, i + 1
+    if has:
+        toks.append(("w", "".join(word)))
+    out, words, k = [], [], 0
+    while k < len(toks):
+        kind, t = toks[k]
+        nxt = toks[k + 1] if k + 1 < len(toks) else ("op", "")
+        if kind == "w":
+            words.append(t)
+        elif t in ("|", "||", "&&", ";", "|&"):
+            if not words:
+                return None
+            out.append(words)
+            words = []
+        elif t in (">", ">>", ">|", "&>"):
+            if nxt != ("w", "/dev/null"):
+                return None
+            k += 1
+        elif t in (">&", "<&"):
+            if nxt[0] != "w" or nxt[1] not in ("1", "2", "-"):
+                return None
+            k += 1
+        elif t == "<":
+            if nxt[0] != "w":
+                return None
+            k += 1
+        else:
+            return None
+        k += 1
+    if not words:  # 끝이 | && || 이면 아님 (끝의 ; 하나는 됨: "ls -la;")
+        return out if out and toks[-1] == ("op", ";") else None
+    out.append(words)
+    return out
+
+
+def _sub(args, with_value=()):
+    """옵션을 건너뛴 첫 낱말과 그 뒤 (kubectl -n ns get pods -> get, [pods])"""
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if not a.startswith("-") or a == "-":
+            return a, args[k + 1:]
+        if "=" not in a and a in with_value:
+            k += 1
+        k += 1
+    return "", []
+
+
+def _git_read(args):
+    name, rest = _sub(args, ("-C", "--git-dir", "--work-tree", "--namespace"))
+    if any(a == "-c" or a.startswith("--config-env") or a.startswith("--exec-path") for a in args[:len(args) - len(rest)]):
+        return False  # 하위 명령 앞의 설정(-c) 은 다른 프로그램을 실행하게 할 수 있음
+    if any(re.match(r"^--output(=|$)|^--ext-diff$|^-O|^--open-files-in-pager", a) for a in rest):
+        return False
+    if name in ("status", "log", "diff", "show", "blame", "ls-files", "ls-tree", "rev-parse", "describe", "shortlog", "grep",
+                "cat-file", "show-ref", "for-each-ref", "rev-list", "merge-base", "version"):
+        return True
+    pos = [a for a in rest if not a.startswith("-")]
+    flags = [a for a in rest if a.startswith("-")]
+    if name == "branch":
+        return not pos and all(f in ("-a", "-r", "-v", "-vv", "--list", "-l", "--show-current", "--all", "--remotes") for f in flags)
+    if name in ("remote", "tag"):
+        return not pos and all(f in ("-v", "--verbose", "-l", "--list") for f in flags)
+    if name == "stash":
+        return pos[:1] == ["list"]
+    if name == "config":
+        return any(f in ("--get", "--get-all", "--list", "-l", "--get-regexp") for f in flags) and len(pos) <= 1
+    return False
+
+
+_KUBE_VALUE = ("-n", "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "-s", "--server")
+# sed 는 줄 범위·패턴 보기(-n '10,20p', '/x/p', '5q')와 s/../../ 바꿔 보이기만 (w 파일로 쓰기, e 명령 실행은 아님)
+_SED_PRINT = re.compile(r"^\s*(?:(?:\d+|\$)(?:\s*,\s*(?:\d+|\$|\+\d+))?\s*p|\d+q|/(?:[^/\\\n]|\\.)*/p"
+                        r"|s/(?:[^/\\\n]|\\.)*/(?:[^/\\\n]|\\.)*/[gpiI0-9]*)\s*$")
+
+
+def _sed_read(args):
+    """sed: 아는 옵션만 (-i 고치기, -f 스크립트 파일은 아님), 스크립트는 _SED_PRINT 만"""
+    scripts, files, k = [], [], 0
+    while k < len(args):
+        a = args[k]
+        if a in ("-e", "--expression"):
+            if k + 1 >= len(args):
+                return False
+            scripts.append(args[k + 1])
+            k += 2
+            continue
+        if a.startswith("--expression="):
+            scripts.append(a.split("=", 1)[1])
+        elif a.startswith("-") and a != "-":
+            if a not in ("--quiet", "--silent", "--regexp-extended") and not re.match(r"^-[nErsuz]+$", a):
+                return False
+        else:
+            files.append(a)
+        k += 1
+    if not scripts:
+        if not files:
+            return False
+        scripts.append(files.pop(0))
+    return all(_SED_PRINT.match(x) for sc in scripts for x in sc.split(";") if x.strip())
+
+
+def read_only_words(w):
+    """단순 명령 하나(낱말 목록)가 읽기만 하는지 (모르면 False)"""
+    if not w or "/" in w[0] or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w[0]):
+        return False  # 경로로 부른 프로그램(./ls), 변수 대입 (X=1 cmd)
+    name, args = w[0], w[1:]
+    if name in VERSION_ONLY and args in (["--version"], ["-V"]):
+        return True
+    if name == "command":
+        return args[:1] in (["-v"], ["-V"])  # command -v 이름 (있는지 보기). 그냥 command 는 그 명령을 실행
+    if name == "env":
+        return not args  # env 이름=값 명령 은 그 명령을 실행
+    if name in ("python", "python3") and args[:2] == ["-m", "pip"]:
+        name, args = "pip", args[2:]
+    if name in ("pip", "pip3"):
+        return _sub(args)[0] in ("list", "show", "freeze", "check")
+    if name == "conda":
+        sub, rest = _sub(args, ("-n", "--name", "-p", "--prefix"))
+        return sub in ("list", "info") or (sub == "env" and rest[:1] == ["list"])
+    if name == "git":
+        return _git_read(args)
+    if name == "kubectl":
+        if any(re.match(r"^(-w|-f|--watch|--follow)(=|$)|^--watch-only", a) for a in args):
+            return False  # 따라가기(끝나지 않음). get -f 파일 도 같은 글자라 함께 뺌
+        sub, rest = _sub(args, _KUBE_VALUE)
+        nxt = _sub(rest, _KUBE_VALUE)[0]
+        return (sub in ("get", "describe", "logs", "top", "version", "explain", "api-resources", "api-versions", "cluster-info", "events")
+                or (sub == "config" and nxt in ("view", "get-contexts", "current-context"))
+                or (sub == "auth" and nxt == "can-i"))
+    if name == "helm":
+        if any(re.match(r"^--(output-dir|post-renderer|dependency-update)(=|$)", a) for a in args):
+            return False
+        return _sub(args, ("-n", "--namespace", "--kube-context", "--kubeconfig"))[0] in (
+            "list", "ls", "status", "get", "history", "show", "version", "env", "template", "lint", "search")
+    if name == "docker":
+        if any(re.match(r"^(-f|--follow)$", a) for a in args):
+            return False
+        return _sub(args, ("-H", "--host", "--context", "--config"))[0] in ("ps", "images", "logs", "inspect", "version", "info")
+    if name == "jupyter":
+        return args[:1] in (["--version"], ["--paths"]) or (len(args) >= 2 and args[1] == "list")
+    if name == "nvidia-smi":
+        return not any(re.match(r"^-(pm|e|p|c|r|ac|rac|acp|pl|am|caa|lgc|rgc|lmc|rmc|mig|cgi|dgi|cci|dci|l|lms)$|^--(persistence-mode|"
+                                r"ecc-config|reset-ecc|compute-mode|gpu-reset|applications-clocks|reset-applications-clocks|"
+                                r"power-limit|lock-|reset-|loop)", a) for a in args)
+    if name not in READ_CMDS:
+        return False
+    if name in WRITE_FLAG and any(WRITE_FLAG[name].search(a) for a in args):
+        return False
+    pos = [a for a in args if not a.startswith("-")]
+    if name == "sed":
+        return _sed_read(args)
+    if name in ("awk", "gawk"):
+        k = 0
+        while k < len(args) and args[k].startswith("-") and args[k] not in ("-", "--"):
+            if not re.match(r"^-[Fv]", args[k]):
+                return False  # -f 프로그램 파일, -i 불러오기 등
+            k += 2 if len(args[k]) == 2 else 1
+        prog = args[k] if k < len(args) else ""
+        return not re.search(r"[|>@]|system|getline|close\(|fflush", prog)
+    if name == "find":
+        return not any(re.match(r"^-(delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$", a) for a in args)
+    if name == "uniq":
+        return len(pos) <= 1  # 두 번째 이름은 출력 파일
+    if name == "hostname":
+        return not args
+    return True
+
+
+def read_only_command(cmd):
+    """bash 명령이 읽기만 하는지 (모르면 False)"""
+    parts = shell_words(str(cmd or ""))
+    return bool(parts) and all(read_only_words(w) for w in parts)
+
+
+def look_call(call):
+    """살펴보기만 하는 도구 호출인지 (multi_read 로 한 번에 돌려도 되는 것)"""
+    args = call.get("arguments") or {}
+    return call["name"] in LOOK_TOOLS or (call["name"] == "bash" and read_only_command(args.get("command")))
 
 
 # ---------------------------------------------------------------------------
@@ -1090,6 +1342,7 @@ class Relay:
         self.stat = None  # 이번 요청의 통계 (걸린 시간, 보낸 조각 수, 새 대화, Copilot 에 보낸 횟수) -> '답:' 로그 줄 끝에
         self.status = STATUS  # 진행 상태 (GET /status). 창이 여러 개면 Lanes 가 창마다 따로 줌
         self.requests = 0  # 받은 요청 수 (세션 끝 알림 뒤, 정리하기 전에 새 세션의 요청이 먼저 들어왔는지 보려고)
+        self.unrun_note = ""  # 앞 답의 도구 블록 중 실행하지 않은 것이 있으면 다음 메시지에 한 번 알림
 
     def log(self, *a):
         bridge.log(*a)
@@ -1314,7 +1567,10 @@ class Relay:
             new = messages[n:]
             text = "\n\n".join(self.renderer.message(m, names) for m in new)
             if any(m.get("role") == "tool" for m in new):
+                if self.unrun_note:
+                    text += "\n\n" + self.unrun_note
                 text += "\n\n(다음 작업 블록 하나를 주시거나, 요청이 끝났으면 최종 답을 주세요.)"
+            self.unrun_note = ""
             asked = getattr(self.link, "asked", 0)
             if asked < self.reminded_at:  # 새 대화로 바뀌었으면 다시 센다
                 self.reminded_at = 0
@@ -1327,6 +1583,7 @@ class Relay:
         else:
             parts = self.full_parts(messages, tools, names, marker)
             new_thread = not redo  # 개인정보 확인으로 멈춘 뒤에는 같은 대화에 처음부터 다시
+            self.unrun_note = ""
         was_fresh, self.fresh = self.fresh, True  # 도중에 실패하면 다음 요청은 새 대화로 (성공하면 아래에서 False)
         try:
             reply = self.ask(parts, new_thread)
@@ -1383,11 +1640,21 @@ class Relay:
                 body_text, call = LOOP_STOP.format(name=call["name"]), None
         if call:
             calls = [call]
-            if call["name"] == "read" and self.multi_read():
-                more = leading_reads(reply, tool_names)
-                if len(more) > 1 and more[0] == call:
-                    calls = more
-                    self.log("  (read {}개를 한 번에)".format(len(calls)))
+            found = reply_calls(reply, tool_names)
+            if found and found[0] == call:
+                if self.multi_read() and look_call(call):
+                    k = 1
+                    while k < len(found) and k < BATCH_MAX and look_call(found[k]):
+                        k += 1
+                    calls = found[:k]
+                    if k > 1:
+                        self.log("  (살펴보기 {}개를 한 번에: {})".format(k, ", ".join(c["name"] for c in calls)))
+                left = len(found) - len(calls)
+                if left:  # 실행하지 않은 블록은 다음 메시지에 알림 (Copilot 이 실행된 줄로 알고 넘어가지 않게)
+                    self.log("  (도구 블록 {}개 중 {}개만 실행)".format(len(found), len(calls)))
+                    self.unrun_note = ("(앞 답의 도구 블록 {}개 중 {}만 실행했습니다. 파일을 바꾸거나 앞 결과를 보고 정할 작업은 하나씩 "
+                                       "주세요. 나머지가 아직 필요하면 다시 주세요.)").format(
+                        len(found), "첫 번째" if len(calls) == 1 else "앞의 {}개".format(len(calls)))
             assistant = {"role": "assistant", "content": body_text or None, "tool_calls": [{
                 "id": "call_" + uuid.uuid4().hex[:12], "type": "function",
                 "function": {"name": c["name"], "arguments": json.dumps(c["arguments"], ensure_ascii=False)}} for c in calls]}
@@ -1403,7 +1670,7 @@ class Relay:
         rules = (getattr(self.link, "cfg", None) or {}).get("extra_rules") or []  # 서비스별로 덧붙일 진행 규칙
         rules = [rules] if isinstance(rules, str) else rules
         head = PREAMBLE.format(tag=PROTOCOL_TAG, tools=render_tools(tools), system=system_for_copilot(system),
-                               multi_read=MULTI_READ_RULE if self.multi_read() and "read" in names_of(tools) else "",
+                               multi_read=MULTI_READ_RULE.format(n=BATCH_MAX) if self.multi_read() and "read" in names_of(tools) else "",
                                extra="".join("\n- " + r.strip() for r in rules if r and r.strip()))
         convo = [m for m in messages if m.get("role") not in ("system", "developer")]
         # 새 대화에 다시 넣는 기록: 최근 것은 그대로(full_budget), 그 앞은 한 줄 요약(brief_budget), 더 오래된 것은 생략

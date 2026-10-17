@@ -603,7 +603,8 @@ pi 에는 hook 설정 파일이 따로 없고, `~/.pi/agent/extensions/` 의 Typ
   실제로 얼마나 걸리는지는 `diag.py --report` 의 '최근 요청' 줄(평균 시간, 새 대화 횟수와 시간, 긴 메시지를 나눠 보낸 횟수)에서 볼 수 있습니다.
   새 대화를 열 때 1~2분 걸리는 것은 대부분 긴 메시지를 1만 자씩 나눠 보내기 때문입니다. `diag.py --input-limit` 로 입력창 한도를 확인하고,
   더 받는다면 내 설정 파일의 `max_chars` 를 늘리면 빨라집니다.
-  파일을 여러 개 읽는 작업이 많다면 `multi_read` 를 켜 보세요. Copilot 이 여러 파일 읽기를 한 번에 요청할 수 있어 왕복이 줄어듭니다 (시험 기능, 기본 꺼짐).
+  살펴보기만 하는 작업(파일 읽기, `ls`·`grep`·`git status`·`kubectl get`·`pip list` 처럼 읽기만 하는 명령)은 Copilot 이 한 답에 여러 개(5개까지) 주면 한 번에 실행해
+  왕복을 줄입니다 (2026-10-17.1 부터, `multi_read`). 파일을 바꾸거나 명령을 실행하는 작업은 그대로 하나씩입니다.
 - **사용량 제한:** 쉬지 않고 일하면 분당 질문 5개 정도가 나갑니다. 시험에서는 30분에 약 145개를 보냈을 때 약 1시간 동안 막혔습니다.
   이런 제한이 있는 계정이면 `bridge.json` 의 `max_questions_per_minute` 를 2 정도로 두세요. 제한이 없는 환경이면 기본값 0(끔) 그대로 둡니다.
   <!-- /api -->
@@ -690,7 +691,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | `max_chars` | `10000` | Copilot 메시지 하나의 최대 글자 수. 넘으면 나눠 보내고 조각마다 왕복이 한 번 더 듭니다 (`diag.py --input-limit` 로 확인) | <!-- api= -->
 | `tool_result_chars` | `6000` | 명령 결과·파일 내용 하나를 Copilot 에 보낼 최대 글자 수. 넘으면 앞·끝만 남기고 가운데를 줄인 뒤 그 자리에 다시 보는 방법을 적음 (pi 도 명령 결과는 끝 50KB 만 넘기고 전체는 `Full output:` 파일로). 늘리려면 `max_chars` 보다 작게 (예: 8000) | <!-- api= -->
 | `max_tabs` | `1` | 2 이상이면 pi 를 여러 개 동시에 쓸 때 pi 마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶, [6장](#6-주의할-점)) | <!-- api= -->
-| `multi_read` | `false` | `true` 면 Copilot 이 파일 읽기(read)를 여러 개 한 번에 요청할 수 있음 (왕복 줄이기, 시험 기능). 고치기·명령 실행은 그대로 하나씩 | <!-- api= -->
+| `multi_read` | `true` | 살펴보기만 하는 작업(파일 읽기, 읽기만 하는 명령)을 한 답에 여러 개(5개까지) 받아 한 번에 실행 (왕복 줄이기). 고치기·명령 실행은 그대로 하나씩. 사내AI 는 `false` (`inhouse.json`) | <!-- api= -->
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | `300` / `900` | 답이 시작될 때까지 / 끝날 때까지 기다리는 초. 늘릴 때는 `settings.json` 의 `retry.provider.timeoutMs`(밀리초) 도 함께 | <!-- api= -->
 | `copilot_models` | 4장의 표 | pi 모델 id → Copilot 화면의 모델 이름 | <!-- api= -->
 | `guard` | `true` | 위험할 수 있는 작업을 실행 전에 묻기 ([6장](#6-주의할-점)). `false` 면 끔 |
