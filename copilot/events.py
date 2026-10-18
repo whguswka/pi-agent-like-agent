@@ -104,8 +104,8 @@ RESET_KINDS = [
 
 
 def classify(text, kinds=ERROR_KINDS, status=None):
-    if status == 422:
-        return "privacy"
+    if status == 422:  # 서비스가 막음, 또는 지난번에 막힌 글이 그대로라 중계 서버가 보내지 않음
+        return "privacy_held" if "보내지 않았습니다" in (text or "") else "privacy"
     if status == 429:
         return "throttle"
     for kind, pat in kinds:
@@ -128,7 +128,7 @@ WAIT_NAMES = [("stream", "원문"), ("stream-late", "원문(늦게)"), ("dom", "
 NUDGE_NAMES = [("format", "형식"), ("refusal", "실행 거절"), ("code", "코드만"), ("continue", "멈춤"), ("loop", "반복")]
 ERROR_NAMES = [("throttle", "사용량 제한"), ("no_reply_start", "답 시작 안 됨"), ("reply_not_done", "답 안 끝남"),
                ("input", "입력"), ("send", "전송"), ("marker_missing", "보낸 글 못 찾음"), ("tab", "탭"), ("browser", "브라우저"),
-               ("login", "로그인"), ("config", "설정"), ("privacy", "개인정보 확인 거절"), ("reset_failed", "새 대화로도 실패"),
+               ("login", "로그인"), ("config", "설정"), ("privacy", "개인정보 확인 거절"), ("privacy_held", "막힌 글 그대로라 안 보냄"), ("reset_failed", "새 대화로도 실패"),
                ("internal", "중계기 내부"), ("other", "기타")]
 RESET_NAMES = [("thread_limit", "대화 한도"), ("thread_changed", "창 바뀜"), ("reconnect", "다시 연결"), ("turns_short", "남은 질문 부족"),
                ("q_limit", "질문 수 설정"), ("tab_lost", "연결 끊김"), ("other", "기타")]

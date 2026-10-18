@@ -37,7 +37,7 @@ from jupyter import FsError, Jupyter  # noqa: E402
 # 끊김·제한 기록 (events.py): 요청마다 어떻게 끝났는지를 내용 없이 한 줄씩. main() 이 파일을 정함 (시험에서는 꺼져 있음)
 EVENTS = events.EventLog()
 # 오류 기록에 안내 문구를 함께 남기는 종류 (서비스·중계 서버가 만든 정해진 문구라 요청·답의 글이 섞이지 않음)
-MSG_KINDS = {"throttle", "privacy", "login", "config", "browser", "tab", "no_reply_start", "reply_not_done", "input", "send",
+MSG_KINDS = {"throttle", "privacy", "privacy_held", "login", "config", "browser", "tab", "no_reply_start", "reply_not_done", "input", "send",
              "marker_missing"}
 
 MODEL_ID = "copilot"
@@ -270,9 +270,22 @@ PERSONAL_RES = [
 ]
 
 
-def personal_spots(text, limit=3):
+def personal_values(text):
+    """개인정보 모양 글 자체. 막힌 글을 다음 요청에 다시 보내지 않으려고 중계 서버 메모리에만 둔다 (로그·파일에는 남기지 않음)"""
+    return {m.group(0) for _, rx in PERSONAL_RES for m in rx.finditer(text or "")}
+
+
+def spot_advice(spots):
+    """찾은 곳에 따라 빼는 방법: 지침·스킬 파일은 고친 뒤 /reload, 앞 대화(명령 결과·요청 글 등)에 남은 것은 /new"""
+    files = any("번째 줄의" in s or s.startswith("스킬") for s in spots)
+    talk = any(s.startswith(("도구 결과", "앞 답변", "요청 글", "보낸 글")) for s in spots)
+    todo = (["지침·스킬 파일이면 고친 뒤 /reload"] if files else []) + (["앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작"] if talk else [])
+    return ", ".join(todo) or "/new 로 새로 시작"
+
+
+def personal_spots(text, limit=3, only=None):
     """보낸 글에서 개인정보 모양 글이 있는 곳 (예: '~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (se…@example.com)').
-    pi 지침 파일(<project_instructions path=…>)이면 파일과 줄, 스킬 설명·도구 결과·요청 글이면 그 이름"""
+    pi 지침 파일(<project_instructions path=…>)이면 파일과 줄, 스킬 설명·도구 결과·요청 글이면 그 이름. only: 이 글들만"""
     home = os.path.expanduser("~").replace("\\", "/").rstrip("/")
 
     def short(p):
@@ -307,6 +320,8 @@ def personal_spots(text, limit=3):
     found = []
     for kind, rx in PERSONAL_RES:
         for m in rx.finditer(text):
+            if only is not None and m.group(0) not in only:
+                continue
             spot = "{}의 {}{}".format(where(m.start()), kind, hint(kind, m.group(0)))
             if spot not in found:
                 found.append(spot)
@@ -1380,6 +1395,9 @@ class Relay:
         self.status = STATUS  # 진행 상태 (GET /status). 창이 여러 개면 Lanes 가 창마다 따로 줌
         self.requests = 0  # 받은 요청 수 (세션 끝 알림 뒤, 정리하기 전에 새 세션의 요청이 먼저 들어왔는지 보려고)
         self.unrun_note = ""  # 앞 답의 도구 블록 중 실행하지 않은 것이 있으면 다음 메시지에 한 번 알림
+        # 서비스가 개인정보 확인으로 막은 글에 있던 개인정보 모양 글. 다음 요청에 그대로 있으면 보내지 않고 바로 알린다
+        #  (같은 글을 다시 보내면 또 막혀, 새 대화만 계속 열림). 이 프로세스 메모리에만 두고 로그·파일에는 남기지 않음
+        self.blocked = set()
 
     def log(self, *a):
         bridge.log(*a)
@@ -1412,18 +1430,36 @@ class Relay:
         # 막힌 글은 그 대화에 남지 않으므로 같은 글로 다시 하면 또 막힌다 -> 개인정보 모양 글이 어디 있는지 알려 사람이 빼도록
         # (보낸 글을 고쳐 다시 보내지는 않음. 무엇을 뺄지는 사람이 정함)
         spots = personal_spots(e.sent) if e.sent else None
+        self.blocked = personal_values(e.sent) if e.sent else set()
         if spots:
-            found = " 보낸 글에서 찾은 곳: {}. 꼭 필요한 정보가 아니면 빼고 /new 로 다시 하세요.".format(", ".join(spots))
+            found = (" 보낸 글에서 찾은 곳: {}. 같은 글로 다시 하면 또 막히므로, 이 정보가 그대로 있으면 다음 요청은 보내지 않고 바로 알립니다. "
+                     "꼭 필요한 정보가 아니면 빼고 다시 하세요 ({}).").format(", ".join(spots), spot_advice(spots))
         elif spots is not None:
-            found = " 보낸 글에서 이메일·전화번호 모양 글은 찾지 못했습니다 (경로의 사용자 폴더 이름 등 다른 글이 걸렸을 수 있음)."
+            found = (" 같은 글로 다시 하면 또 막힐 수 있습니다. 보낸 글에서 이메일·전화번호 모양 글은 찾지 못했습니다 "
+                     "(경로의 사용자 폴더 이름 등 다른 글이 걸렸을 수 있음).")
         else:
-            found = ""
+            found = " 같은 글로 다시 하면 또 막힐 수 있습니다."
         self.log("{}: 개인정보·민감 정보 확인으로 답하지 않음{} -> 멈춤 (다시 보내지 않음){}".format(
             name, where, ". 찾은 곳: " + ", ".join(re.sub(r" \([^)]*…[^)]*\)$", "", s) for s in spots) if spots else ""))
         self.fresh = True  # 다음 요청은 새 대화로 (거절당한 대화에 같은 글을 다시 밀어 넣지 않음)
         self.redo_same_chat = False
-        return RelayError(REFUSED_STATUS, "{}: 개인정보·민감 정보 확인으로 답하지 않았습니다{}. 답: «{}»{} 막힌 글은 {} 대화에 남지 않아, "
-                                          "같은 글로 다시 하면 또 막힙니다.{}".format(name, where, norm(e.text)[:300], rest, name, found))
+        return RelayError(REFUSED_STATUS, "{}: 개인정보·민감 정보 확인으로 답하지 않았습니다{}. 답: «{}»{}{}".format(
+            name, where, norm(e.text)[:300], rest, found))
+
+    def held(self, text):
+        """지난번에 막힌 글의 개인정보 모양 글이 이번에 보낼 글에도 있으면, 보내지 않고(새 대화도 열지 않고) 돌려줄 오류. 없으면 None"""
+        if not self.blocked:
+            return None
+        if not any(v in text for v in self.blocked):
+            self.blocked = set()  # 뺐음 -> 보냄
+            return None
+        name = (getattr(self.link, "cfg", None) or {}).get("service_name") or "Copilot"
+        spots = personal_spots(text, only=self.blocked)
+        self.log("{}: 지난번에 막힌 글이 그대로 있어 보내지 않음. 찾은 곳: {}".format(
+            name, ", ".join(re.sub(r" \([^)]*…[^)]*\)$", "", s) for s in spots)))
+        return RelayError(REFUSED_STATUS, "{}: 지난번에 개인정보·민감 정보 확인으로 막힌 글이 이번 요청에도 그대로 있어 보내지 않았습니다 "
+                                          "(새 대화도 열지 않음). 찾은 곳: {}. 그 정보를 빼고 다시 하세요 ({}).".format(
+                                              name, ", ".join(spots), spot_advice(spots)))
 
     def ask_again(self, text):
         """같은 대화에 이어서 다시 부탁 (형식 오류·거절·반복 등). 첫 질문은 이미 들어갔으므로, 여기서 사용량 제한(429)에
@@ -1641,6 +1677,9 @@ class Relay:
             parts = self.full_parts(messages, tools, names, marker, img_note)
             new_thread = not redo  # 개인정보 확인으로 멈춘 뒤에는 같은 대화에 처음부터 다시
             self.unrun_note = ""
+        held = self.held("\n\n".join(parts))
+        if held:
+            raise held
         was_fresh, self.fresh = self.fresh, True  # 도중에 실패하면 다음 요청은 새 대화로 (성공하면 아래에서 False)
         try:
             reply = self.ask(parts, new_thread, images)
@@ -2008,7 +2047,8 @@ def make_handler(relay, jup, cfg, lanes=None):
             except RelayError as e:
                 if e.status != 429:  # 사용량 제한이면 지금 대화를 그대로 둔다 (풀린 뒤 이어서). 개인정보 거절은 refused() 가 새 대화로 정리함
                     relay.reset()
-                relay.log("오류:", e)
+                # 로그에는 찾은 곳만: pi 에 보내는 오류의 개인정보 일부 표시 '(ab…@example.com)' 는 뺌
+                relay.log("오류:", re.sub(r" \([^)]*…[^)]*\)", "", str(e)))
                 return self.send_json(e.status, {"error": {"message": bridge.service_text(e), "type": "copilot_relay_error"}})
             except ThreadReset as e:
                 relay.reset()

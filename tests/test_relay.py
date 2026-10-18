@@ -974,7 +974,7 @@ _rq = relay.Relay(A(), _lp)
 _err = _quiet(lambda: _rq.refused(_pr))
 check("거절 알림: 몇째 조각인지 + 받은 답 + 나머지 조각을 보내지 않았다는 것 + 같은 글은 또 막힌다는 것 + 다음은 새 대화", _err.status == 422
       and str(_err).startswith("사내AI: ") and "(긴 메시지 1/2)" in str(_err) and "나머지 1개 조각은 보내지 않았습니다" in str(_err)
-      and "같은 글로 다시 하면 또 막힙니다" in str(_err) and _rq.fresh is True and _rq.redo_same_chat is False, str(_err))
+      and "같은 글로 다시 하면 또 막힐 수 있습니다" in str(_err) and _rq.fresh is True and _rq.redo_same_chat is False, str(_err))
 check("거절 알림: 막힌 조각에 개인정보 모양 글이 없으면 그렇다고", "이메일·전화번호 모양 글은 찾지 못했습니다" in str(_err) and _pr.sent == _parts[0],
       str(_err))
 _lp.cop = _CopParts(["OK", "끝"])
@@ -1007,9 +1007,70 @@ _e2 = _quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0], 1, 8, sent=_
 check("거절 알림: 찾은 곳과 함께 빼고 /new 로 다시 하라고 (보낸 글은 고치지 않음)",
       "보낸 글에서 찾은 곳: ~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ho…@example.com)" in str(_e2) and "/new" in str(_e2)
       and "나머지 7개 조각은 보내지 않았습니다" in str(_e2), str(_e2))
+check("거절 알림: 지침·스킬 파일은 /reload, 앞 대화(명령 결과)는 /new, 그대로면 다음 요청은 보내지 않는다고",
+      "지침·스킬 파일이면 고친 뒤 /reload, 앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작" in str(_e2)
+      and "다음 요청은 보내지 않고 바로 알립니다" in str(_e2), str(_e2))
+check("할 일 안내: 지침 파일만이면 /reload 만, 앞 대화만이면 /new 만",
+      relay.spot_advice(["~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ho…@example.com)"]) == "지침·스킬 파일이면 고친 뒤 /reload"
+      and relay.spot_advice(["도구 결과 (bash)의 이메일 주소 (ki…@example.org)"]) == "앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작")
 check("거절 알림: 다시 부탁한 글처럼 막힌 글을 모르면 찾은 곳은 말하지 않음",
       "찾은 곳" not in str(_quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0])))) and
       "찾지 못했습니다" not in str(_quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0])))))
+# 막힌 글의 개인정보 모양 글이 다음 요청에 그대로 있으면 보내지 않고(새 대화도 열지 않고) 바로 알림. 빼면 다시 보냄
+_sysp = {"role": "system", "content": "<project_instructions path=\"" + os.path.join(_home, ".pi", "agent", "AGENTS.md") + "\">\n- 규칙\n"
+         "- Git 작성자 홍길동 <hong.gd@example.com>\n</project_instructions>"}
+_mh = [_sysp, {"role": "user", "content": "표를 정리해줘"}]
+
+
+def _try(r, msgs):
+    try:
+        return _quiet(lambda: r.handle({"messages": msgs, "tools": tools})), None
+    except relay.RelayError as e:
+        return None, e
+
+
+_lkh = FakeLink([_REFUSALS[0], "이메일을 뺀 뒤 답"])
+_lkh.cfg = {"service_name": "사내AI"}
+_rh2 = relay.Relay(A(), _lkh)
+_, _eh1 = _try(_rh2, _mh)
+check("막힘: 지침의 이메일 위치를 알림", _eh1 is not None and _eh1.status == 422 and "AGENTS.md 2번째 줄의 이메일 주소" in str(_eh1)
+      and len(_lkh.sent_log) == 1, (str(_eh1), len(_lkh.sent_log)))
+_, _eh2 = _try(_rh2, _mh + [{"role": "user", "content": "계속"}])
+check("같은 이메일이 그대로면 '계속' 이어도 보내지 않음 (새 대화도 열지 않음), 찾은 곳과 /reload 안내",
+      _eh2 is not None and _eh2.status == 422 and len(_lkh.sent_log) == 1 and "보내지 않았습니다 (새 대화도 열지 않음)" in str(_eh2)
+      and "AGENTS.md 2번째 줄의 이메일 주소 (ho…@example.com)" in str(_eh2) and "/reload" in str(_eh2), (str(_eh2), len(_lkh.sent_log)))
+check("보내지 않은 것은 끊김 기록에서 따로 (privacy_held)", relay.events.classify(str(_eh2), status=422) == "privacy_held"
+      and relay.events.classify(str(_eh1), status=422) == "privacy")
+_mh2 = [{"role": "system", "content": _sysp["content"].replace(" 홍길동 <hong.gd@example.com>", "")}, {"role": "user", "content": "표를 정리해줘"},
+        {"role": "user", "content": "계속"}]
+_ah3, _eh3 = _try(_rh2, _mh2)
+check("지침에서 빼고 /reload: 새 대화로 보내고 기억을 지움", _eh3 is None and (_ah3 or {}).get("content") == "이메일을 뺀 뒤 답"
+      and _lkh.sent_log[1]["new_thread"] and not _rh2.blocked, (_eh3, _lkh.sent_log[-1:]))
+_o = _io.StringIO()
+_lkh2 = FakeLink([_REFUSALS[0]])
+_lkh2.cfg = {"service_name": "사내AI"}
+_rh3 = relay.Relay(A(), _lkh2)
+with _cl.redirect_stdout(_o):
+    for _m in (_mh, _mh + [{"role": "user", "content": "계속"}]):
+        try:
+            _rh3.handle({"messages": _m, "tools": tools})
+        except relay.RelayError:
+            pass
+check("중계 서버 로그에는 찾은 곳만 (이메일 값·일부는 남기지 않음)", "hong.gd" not in _o.getvalue() and "ho…@" not in _o.getvalue()
+      and "보내지 않음" in _o.getvalue(), _o.getvalue()[-600:])
+_lkt = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "git log -1"}}\n```', _REFUSALS[0], "새 세션 답"])
+_lkt.cfg = {"service_name": "사내AI"}
+_rt = relay.Relay(A(), _lkt)
+_ut = {"role": "user", "content": "최근 커밋 보여줘"}
+_at, _ = _try(_rt, [sys_msg, _ut])
+_mt = [sys_msg, _ut, _at, {"role": "tool", "tool_call_id": _at["tool_calls"][0]["id"], "content": "commit abc\nAuthor: Kim <kim@example.org>"}]
+_, _et1 = _try(_rt, _mt)
+_, _et2 = _try(_rt, _mt + [{"role": "user", "content": "계속"}])
+check("명령 결과의 이메일로 막힌 뒤 '계속': 보내지 않고 /new 안내", _et1 is not None and _et2 is not None and "보내지 않았습니다" in str(_et2)
+      and "도구 결과 (bash)의 이메일 주소" in str(_et2) and "/new" in str(_et2) and len(_lkt.sent_log) == 2, (str(_et2), len(_lkt.sent_log)))
+_at3, _et3 = _try(_rt, [sys_msg, {"role": "user", "content": "다른 일"}])
+check("/new (그 결과가 없는 새 세션): 다시 보냄", _et3 is None and (_at3 or {}).get("content") == "새 세션 답" and len(_lkt.sent_log) == 3,
+      (_et3, len(_lkt.sent_log)))
 # HTTP: 422 로 알리고 대화는 지우지 않음 + /health 에 켠 시각과 일하는 중인지
 _rh = relay.Relay(A(), FakeLink([_REFUSALS[0]]))
 import types as _types  # noqa: E402
