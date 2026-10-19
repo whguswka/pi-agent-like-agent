@@ -66,6 +66,8 @@ DEFAULT_CONFIG = {
     # 그림: pi 가 보낸 그림(그래프 등)을 Copilot 입력창에 붙여 함께 보냄 (사내AI 는 inhouse.json 에서 끔).
     #  image_attach: auto(붙여넣기 -> 끌어다 놓기 -> 파일 선택 칸 차례로) | paste | drop | file | none
     "send_images": True,
+    # 이메일 감추기: 보내기 전에 이메일 주소를 [이메일N] 으로 바꾸고 답(도구 인자·본문)에서는 원래 주소로 되돌림 (사내AI 는 inhouse.json 에서 켬)
+    "redact_emails": False,
     "image_attach": "auto",
     "image_upload_wait_seconds": 60,
     "max_tabs": 1,  # 2 이상이면 pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶)

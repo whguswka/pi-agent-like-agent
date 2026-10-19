@@ -1383,5 +1383,64 @@ check("그림 보내기 기본값: Copilot 켜짐, 사내AI 꺼짐", relay.bridg
       and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("send_images") is False)
 
 
+# 이메일 감추기 (redact_emails, 사내AI): 보낼 때 [이메일N] (같은 주소는 같은 번호), 답의 도구 인자·본문은 원래 주소로
+_rd0 = relay.Redactor()
+_t = _rd0.redact("작성자 hong.gd@example.com, 검토 kim@corp.example.org, 다시 hong.gd@example.com")
+check("감추기: 주소마다 번호, 같은 주소는 같은 번호", _t == "작성자 [이메일1], 검토 [이메일2], 다시 [이메일1]", _t)
+check("되돌리기: 글·목록·사전 안의 번호를 원래 주소로, 모르는 번호는 그대로",
+      _rd0.restore({"path": "a.md", "edits": [{"oldText": "[이메일1]", "newText": "[이메일2] [이메일9]"}]})
+      == {"path": "a.md", "edits": [{"oldText": "hong.gd@example.com", "newText": "kim@corp.example.org [이메일9]"}]})
+check("감추기를 두 번 해도 같음 (번호는 주소 모양이 아님)", _rd0.redact(_t) == _t)
+_sysr = {"role": "system", "content": "<project_instructions path=\"/x/AGENTS.md\">\n- Git 작성자 홍길동 <hong.gd@example.com>\n</project_instructions>"}
+_ur = {"role": "user", "content": "docs/a.md 를 정리해서 docs/b.md 로 써줘"}
+_wr = '```text\n@tool write path=docs/b.md\n# 정리\n- 작성자: [이메일1]\n- 검토: [이메일2]\n```'
+_lkr = FakeLink(['```json\n{"tool": "read", "arguments": {"path": "docs/a.md"}}\n```', _wr,
+                 '```json\n{"tool": "edit", "arguments": {"path": "docs/b.md", "edits": [{"oldText": "[이메일2]", "newText": "[이메일2] (팀장)"}]}}\n```',
+                 '```json\n{"tool": "bash", "arguments": {"command": "grep -rn \'[이메일1]\' docs"}}\n```', "정리했습니다. 작성자는 [이메일1] 입니다."])
+_lkr.cfg = {"redact_emails": True, "service_name": "사내AI"}
+_rr = relay.Relay(A(), _lkr)
+_o = _io.StringIO()
+with _cl.redirect_stdout(_o):
+    _a1 = _rr.handle({"messages": [_sysr, _ur], "tools": tools})
+    _m = [_sysr, _ur, _a1, {"role": "tool", "tool_call_id": _a1["tool_calls"][0]["id"],
+                            "content": "author: hong.gd@example.com\nreviewer: kim@corp.example.org\n본문"}]
+    _a2 = _rr.handle({"messages": _m, "tools": tools})
+    _m += [_a2, {"role": "tool", "tool_call_id": _a2["tool_calls"][0]["id"], "content": "Successfully wrote"}]
+    _a3 = _rr.handle({"messages": _m, "tools": tools})
+    _m += [_a3, {"role": "tool", "tool_call_id": _a3["tool_calls"][0]["id"], "content": "Successfully replaced"}]
+    _a4 = _rr.handle({"messages": _m, "tools": tools})
+    _m += [_a4, {"role": "tool", "tool_call_id": _a4["tool_calls"][0]["id"], "content": "docs/b.md:2:- 작성자: hong.gd@example.com"}]
+    _a5 = _rr.handle({"messages": _m, "tools": tools})
+_sent = "\n".join(p for x in _lkr.sent_log for p in x["parts"])
+check("보낸 글에 이메일 주소가 없음 (지침·도구 결과 모두 [이메일N])", "@example.com" not in _sent and "@corp.example.org" not in _sent
+      and "Git 작성자 홍길동 <[이메일1]>" in _lkr.sent_log[0]["parts"][0] and "author: [이메일1]\nreviewer: [이메일2]" in _lkr.sent_log[1]["parts"][0],
+      _sent[-600:])
+_args = lambda a: json.loads(a["tool_calls"][0]["function"]["arguments"])  # noqa: E731
+check("write: 파일 내용은 원래 주소로", _args(_a2)["content"].rstrip("\n") == "# 정리\n- 작성자: hong.gd@example.com\n- 검토: kim@corp.example.org", _args(_a2))
+check("edit: 찾을 글·바꿀 글도 원래 주소로", _args(_a3)["edits"] == [{"oldText": "kim@corp.example.org", "newText": "kim@corp.example.org (팀장)"}], _args(_a3))
+check("bash: 명령 안의 번호도 원래 주소로", _args(_a4)["command"] == "grep -rn 'hong.gd@example.com' docs", _args(_a4))
+check("최종 답 본문도 원래 주소로 (pi 화면)", _a5.get("content") == "정리했습니다. 작성자는 hong.gd@example.com 입니다.", _a5)
+check("같은 세션이 이어짐 (원래 주소로 되돌린 답을 pi 가 다시 보내도 같은 대화)", all(not x["new_thread"] for x in _lkr.sent_log[1:]),
+      [x["new_thread"] for x in _lkr.sent_log])
+check("중계 서버 로그에 이메일 주소·짝이 남지 않음", "@example.com" not in _o.getvalue() and "@corp.example.org" not in _o.getvalue(), _o.getvalue()[-400:])
+_lkc = FakeLink(["답"])
+_lkc.cfg = {}
+_quiet(lambda: relay.Relay(A(), _lkc).handle({"messages": [_sysr, _ur], "tools": tools}))
+check("redact_emails 꺼짐(Copilot 기본): 그대로 보냄", "hong.gd@example.com" in _lkc.sent_log[0]["parts"][0])
+# 감추면 지침의 이메일로는 막히지 않으므로, 지난번 막힘을 기억하는 것(held)도 이메일로는 걸리지 않음 (전화번호 등은 그대로)
+_lkq = FakeLink([_REFUSALS[0], "다시 답"])
+_lkq.cfg = {"redact_emails": True, "service_name": "사내AI"}
+_rq2 = relay.Relay(A(), _lkq)
+_sysq = {"role": "system", "content": "<project_instructions path=\"/x/AGENTS.md\">\n- 연락처 010-1234-5678, hong.gd@example.com\n</project_instructions>"}
+try:
+    _quiet(lambda: _rq2.handle({"messages": [_sysq, _ur], "tools": tools}))
+    _eq = None
+except relay.RelayError as e:
+    _eq = e
+check("감춰도 다른 것(전화번호)으로 막히면: 그 찾은 곳만 알리고, 이메일은 찾은 곳에 없음", _eq is not None and "전화번호" in str(_eq)
+      and "이메일 주소" not in str(_eq).split("찾은 곳:")[-1] and _rq2.blocked == {"010-1234-5678"}, (str(_eq), _rq2.blocked))
+check("bridge 기본은 꺼짐, 사내AI 설정은 켜짐", relay.bridge.DEFAULT_CONFIG.get("redact_emails") is False
+      and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("redact_emails") is True)
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

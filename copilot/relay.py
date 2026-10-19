@@ -328,6 +328,38 @@ def personal_spots(text, limit=3, only=None):
     return found[:limit] + (["외 {}곳".format(len(found) - limit)] if len(found) > limit else [])
 
 
+# 이메일 감추기 (redact_emails, 사내AI): 보내기 직전에 이메일 주소를 [이메일N] 으로 바꾸고(같은 주소는 늘 같은 번호),
+#  답의 도구 인자(파일 내용, 고칠 글, 명령)와 본문에서는 원래 주소로 되돌린다. 주소는 PC 밖으로 나가지 않고, 주소와 번호의 짝은
+#  이 중계 서버 메모리에만 둔다 (로그·파일에 남기지 않음). 일부만 가리는 방식(ab***@…)은 주소의 일부가 나가므로 쓰지 않는다.
+#  회사의 개인정보 확인은 그대로 돈다 (다른 것이 걸리면 지금처럼 멈추고 알림)
+EMAIL_TOKEN_RE = re.compile(r"\[이메일\d+\]")
+
+
+class Redactor:
+    def __init__(self):
+        self.token_of, self.value_of = {}, {}
+
+    def redact(self, text):
+        def swap(m):
+            v = m.group(0)
+            t = self.token_of.get(v)
+            if t is None:
+                t = "[이메일{}]".format(len(self.token_of) + 1)
+                self.token_of[v], self.value_of[t] = t, v
+            return t
+        return PERSONAL_RES[0][1].sub(swap, text or "")
+
+    def restore(self, obj):
+        """[이메일N] -> 원래 주소 (글, 그리고 도구 인자처럼 안에 글이 든 목록·사전). 모르는 번호는 그대로"""
+        if isinstance(obj, str):
+            return EMAIL_TOKEN_RE.sub(lambda m: self.value_of.get(m.group(0), m.group(0)), obj) if self.value_of else obj
+        if isinstance(obj, list):
+            return [self.restore(x) for x in obj]
+        if isinstance(obj, dict):
+            return {k: self.restore(v) for k, v in obj.items()}
+        return obj
+
+
 class PrivacyRefused(Exception):
     """서비스가 개인정보·민감 정보 확인으로 답하지 않음. part/total: 나눠 보낸 메시지에서 거절한 조각 (마지막 조각이면 None).
     sent: 막힌 조각의 글 (개인정보 모양 글이 어디 있는지 찾는 데만 씀. 모르면 None)"""
@@ -1398,6 +1430,7 @@ class Relay:
         # 서비스가 개인정보 확인으로 막은 글에 있던 개인정보 모양 글. 다음 요청에 그대로 있으면 보내지 않고 바로 알린다
         #  (같은 글을 다시 보내면 또 막혀, 새 대화만 계속 열림). 이 프로세스 메모리에만 두고 로그·파일에는 남기지 않음
         self.blocked = set()
+        self.redactor = Redactor()  # redact_emails: 이메일 주소 <-> [이메일N] (메모리에만)
 
     def log(self, *a):
         bridge.log(*a)
@@ -1465,7 +1498,7 @@ class Relay:
         """같은 대화에 이어서 다시 부탁 (형식 오류·거절·반복 등). 첫 질문은 이미 들어갔으므로, 여기서 사용량 제한(429)에
         걸리면 새 대화로 바꾸지 않고 풀린 뒤 지금 대화에 이어서 보낸다"""
         try:
-            return self.ask(build_parts(text, self.args.max_chars, "[pi-{}]".format(uuid.uuid4().hex[:6])), False)
+            return self.ask(build_parts(self.out(text), self.args.max_chars, "[pi-{}]".format(uuid.uuid4().hex[:6])), False)
         except RelayError as e:
             if e.status == 429:
                 self.fresh = False
@@ -1473,6 +1506,19 @@ class Relay:
 
     def multi_read(self):
         return bool((getattr(self.link, "cfg", None) or {}).get("multi_read"))
+
+    def out(self, text):
+        """보낼 글. redact_emails 면 이메일 주소를 [이메일N] 으로"""
+        return self.redactor.redact(text) if (getattr(self.link, "cfg", None) or {}).get("redact_emails") else text
+
+    def parse(self, reply, tool_names):
+        """답 해석 + [이메일N] 을 원래 주소로 (도구 인자와 본문: 파일에는 원래 주소로 쓰이고, pi 화면에도 원래 주소로 보임)"""
+        text, call, err = parse_reply(reply, tool_names)
+        if self.redactor.value_of:
+            text = self.redactor.restore(text)
+            if call:
+                call = dict(call, arguments=self.redactor.restore(call["arguments"]))
+        return text, call, err
 
     def stat_text(self):
         """'답:' 줄 끝의 통계. diag.py --report 가 이 형식을 읽어 평균을 낸다: (12.3초 · 조각 2 · 새 대화 · 다시 보냄 1)"""
@@ -1671,7 +1717,7 @@ class Relay:
                 text += "\n\n" + PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)),
                                                          multi_read=MULTI_READ_HINT if self.multi_read() else "")
                 self.reminded_at = asked
-            parts = build_parts(text, self.args.max_chars, marker)
+            parts = build_parts(self.out(text), self.args.max_chars, marker)
             new_thread = False
         else:
             parts = self.full_parts(messages, tools, names, marker, img_note)
@@ -1687,7 +1733,7 @@ class Relay:
             if e.status == 429:  # 사용량 제한은 대화를 바꾸지 않음: 풀린 뒤 같은 대화에 이어서
                 self.fresh = was_fresh
             raise
-        body_text, call, err = parse_reply(reply, tool_names)
+        body_text, call, err = self.parse(reply, tool_names)
         self.note_reply(reply)
         if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
             raise PrivacyRefused(reply.get("text", ""), sent=parts[-1])
@@ -1718,7 +1764,7 @@ class Relay:
             retries += 1
             set_phase("다시 부탁하는 중")
             reply = self.ask_again(fix)
-            body_text, call, err = parse_reply(reply, tool_names)
+            body_text, call, err = self.parse(reply, tool_names)
             self.note_reply(reply)
             if call is None and privacy_refusal(reply):
                 raise PrivacyRefused(reply.get("text", ""))
@@ -1727,7 +1773,7 @@ class Relay:
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
             self.note_nudge("loop")
             reply = self.ask_again(LOOP_NUDGE.format(name=call["name"], count=count))
-            body_text, call, err = parse_reply(reply, tool_names)
+            body_text, call, err = self.parse(reply, tool_names)
             self.note_reply(reply)
             if call is None and privacy_refusal(reply):
                 raise PrivacyRefused(reply.get("text", ""))
@@ -1736,7 +1782,7 @@ class Relay:
                 body_text, call = LOOP_STOP.format(name=call["name"]), None
         if call:
             calls = [call]
-            found = reply_calls(reply, tool_names)
+            found = [dict(c, arguments=self.redactor.restore(c["arguments"])) for c in reply_calls(reply, tool_names)]
             if found and found[0] == call:
                 if self.multi_read() and look_call(call):
                     k = 1
@@ -1799,7 +1845,7 @@ class Relay:
             convo_text += "\n\n" + note
         body = (head + "\n대화 내용\n" + convo_text +
                 "\n\n(마지막 요청에 대해 다음 작업 블록 하나를 주시거나, 이미 끝났다면 최종 답을 주세요.)")
-        return build_parts(body, self.args.max_chars, marker)
+        return build_parts(self.out(body), self.args.max_chars, marker)
 
     def reset(self):
         with self.lock:
