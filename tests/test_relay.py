@@ -1585,6 +1585,20 @@ except relay.RelayError as e:
     _er = e
 check("파일로 보낸 글이 막히면 찾은 곳은 파일 내용에서 (전화번호)", _er is not None and "전화번호" in str(_er) and _rr2.blocked == {"010-1234-5678"},
       (str(_er), _rr2.blocked))
+_lc = _FileLink(["답", "다음 답"])
+_lc.cfg = {"attach_long_text": True, "service_name": "사내AI"}
+_rc = relay.Relay(_AA(), _lc)
+_m1 = [_sysl, {"role": "user", "content": "정리해줘"}]
+_quiet(lambda: _rc.handle({"messages": _m1, "tools": tools}))
+_quiet(lambda: _rc.handle({"messages": _m1 + [{"role": "assistant", "content": "답"},
+                                              {"role": "user", "content": "결과 줄입니다.\n" * 1500 + "이 결과로 표를 만들어줘"}], "tools": tools}))
+_s2 = _lc.sent_log[-1]
+_f2 = _b64.b64decode(_s2["files"][0]["data"]).decode("utf-8") if _s2.get("files") else ""
+check("이어지는 대화의 긴 메시지: 질문 1번, 본문은 '이번 메시지' (진행 방식·지금까지의 대화가 파일에 있다고 하지 않음), 파일에는 이번 메시지 전체",
+      len(_lc.sent_log) == 2 and not _s2["new_thread"] and len(_s2["parts"]) == 1 and len(_s2["parts"][0]) <= 10000
+      and "이번 메시지" in _s2["parts"][0] and "지금까지의 대화" not in _s2["parts"][0] and "이 결과로 표를 만들어줘" in _f2 and "긴 규칙 줄" not in _f2,
+      ([(x["new_thread"], len(x["parts"])) for x in _lc.sent_log], _s2["parts"][0][:200], len(_f2)))
+check("새 대화의 첫 메시지는 그대로 ('진행 방식·지금까지의 대화' 가 파일에)", "지금까지의 대화" in _lc.sent_log[0]["parts"][0], _lc.sent_log[0]["parts"][0][:200])
 check("bridge 기본은 꺼짐, 사내AI 설정도 꺼짐 (시험 뒤에 켬)", relay.bridge.DEFAULT_CONFIG.get("attach_long_text") is False
       and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("attach_long_text") is False)
 

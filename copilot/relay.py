@@ -1646,9 +1646,10 @@ class Relay:
     def attach_long(self):
         return bool((getattr(self.link, "cfg", None) or {}).get("attach_long_text"))
 
-    def pack(self, text, marker, tool_names=()):
+    def pack(self, text, marker, tool_names=(), whole=True):
         """보낼 글 -> (조각들, 붙일 글 파일들). attach_long_text 이고 한 번에 다 들어가지 않으면(입력 한도 max_chars):
         글 전체는 파일로 붙이고, 본문에는 파일을 읽으라는 말과 진행 방식 요약, 글의 끝부분(최근 요청·결과)을 넣어 질문 1번에 보낸다.
+        whole: 새 대화에 보내는 글 전체(진행 방식·규칙·도구·대화). 아니면 이어지는 대화의 이번 메시지(긴 작업 결과 등).
         아니면 지금처럼 나눠 보낸다 (조각마다 질문 1번)"""
         limit = self.args.max_chars
         if not self.attach_long() or len(text) + len(marker) + 2 <= limit:
@@ -1656,9 +1657,14 @@ class Relay:
         name = "pi-context-{}.txt".format(uuid.uuid4().hex[:4])
         rule = PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)) or "-",
                                         multi_read=(MULTI_WRITE_HINT if self.multi_write() else MULTI_READ_HINT) if self.multi_read() else "")
-        head = ("[{}]\n긴 내용(진행 방식, 작업 규칙, 사용할 수 있는 도구, 지금까지의 대화)은 첨부한 파일 {} 에 넣었습니다. "
-                "파일을 처음부터 끝까지 읽고 그 안의 진행 방식을 따라 주세요.\n{}\n\n(아래는 그 파일의 끝부분입니다)\n").format(PROTOCOL_TAG, name, rule)
-        foot = "\n\n(파일의 마지막 요청에 대해 다음 작업 블록 하나를 주시거나, 이미 끝났다면 최종 답을 주세요.)\n\n" + marker
+        if whole:
+            head = ("[{}]\n긴 내용(진행 방식, 작업 규칙, 사용할 수 있는 도구, 지금까지의 대화)은 첨부한 파일 {} 에 넣었습니다. "
+                    "파일을 처음부터 끝까지 읽고 그 안의 진행 방식을 따라 주세요.\n{}\n\n(아래는 그 파일의 끝부분입니다)\n").format(PROTOCOL_TAG, name, rule)
+            foot = "\n\n(파일의 마지막 요청에 대해 다음 작업 블록 하나를 주시거나, 이미 끝났다면 최종 답을 주세요.)\n\n" + marker
+        else:  # 이어지는 대화: 진행 방식은 이미 이 대화에 있음. 파일에는 이번 메시지(작업 결과 등)만
+            head = ("[{}]\n이번 메시지가 길어 전체(새 작업 결과 등)를 첨부한 파일 {} 에 넣었습니다. "
+                    "파일을 처음부터 끝까지 읽고 지금까지처럼 진행해 주세요.\n{}\n\n(아래는 그 파일의 끝부분입니다)\n").format(PROTOCOL_TAG, name, rule)
+            foot = "\n\n(첨부한 파일까지 읽은 뒤 다음 작업 블록 하나를 주시거나, 요청이 끝났으면 최종 답을 주세요.)\n\n" + marker
         room = max(0, limit - len(head) - len(foot) - 10)
         tail = text[-room:] if room else ""
         cut = tail.find("\n")
@@ -1879,7 +1885,7 @@ class Relay:
             text_out = self.out(self.full_body(messages, tools, names, img_note))
             new_thread = not redo  # 개인정보 확인으로 멈춘 뒤에는 같은 대화에 처음부터 다시
             self.unrun_note = ""
-        parts, files = self.pack(text_out, marker, tool_names)
+        parts, files = self.pack(text_out, marker, tool_names, whole=not delta)
         held = self.held(text_out)
         if held:
             raise held
