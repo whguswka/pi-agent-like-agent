@@ -595,8 +595,10 @@ check("multi_read·multi_write 기본값 켜짐", _bridge.DEFAULT_CONFIG.get("mu
 with open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8") as _f:
     _ih = json.load(_f)
 check("사내AI: 살펴보기·쓰기 한 번에도 기본값(켜짐), 하루 한도 200, 한도 문구", "multi_read" not in _ih and "multi_write" not in _ih
-      and _ih.get("daily_question_limit") == 200 and relay.re.search(_ih["throttle_pattern"], "사내AI는 일일 200회 질문이 가능합니다.")
-      and not relay.re.search(_ih["throttle_pattern"], "파일을 정리했습니다. 오늘 날짜로 저장했습니다."), _ih)
+      and _ih.get("daily_question_limit") == 200, _ih)
+_yes = [t for t in ['사내AI는 일일 200회 질문이 가능합니다.', '질문은 하루 200회까지 가능합니다.', '1일 최대 200회까지 질문할 수 있습니다.', '일일 질문 한도(200회)를 초과했습니다.', '오늘 질문 가능 횟수를 모두 사용했습니다.', 'Too many requests. Try again later.'] if not relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
+_no = [t for t in ['파일을 정리했습니다. 오늘 날짜로 저장했습니다.', '오늘 요청하신 1번 작업을 마쳤습니다.', '오늘 요청하신 내용은 바로 적용 가능합니다.', '하루 24회 실행되도록 설정했습니다.', '오늘 3번 고쳤습니다.', '10월 11일 200건을 처리했습니다.', '완료했습니다. 2번 항목도 고쳤습니다.'] if relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
+check("사내AI 한도 문구: 하루 한도 말은 잡고, 평범한 짧은 답('오늘 요청하신 1번 작업…', '하루 24회 실행')은 잡지 않음", not _yes and not _no, [_yes, _no])
 
 # GET /status: 요청을 처리하는 중(잠금이 잡혀 있어도) 바로 지금 하는 일을 돌려줌
 _r17 = relay.Relay(A(), FakeLink([]))
@@ -1374,7 +1376,7 @@ class _ImgCop(_RegCop):
         _RegCop.__init__(self, "c-img", "ours")
         self.sends = []
 
-    def send(self, text, images=None):
+    def send(self, text, images=None, files=None):
         self.sends.append(images)
 
 
@@ -1491,17 +1493,30 @@ try:
     check("하루 한도에 닿으면: 막힌 질문을 뺀 수(2)를 새 추정치로, 그때를 기록 (파일에 남음)", relay.USAGE.limit == 2
           and relay.USAGE.hits[-1]["n"] == 2 and relay.Usage(_up, 200).limit == 2 and relay.Usage(_up, 200).hits[-1]["n"] == 2,
           (relay.USAGE.limit, relay.USAGE.hits))
+    check("막힌 상태는 파일에도 남음 (중계 서버를 다시 켜도)", relay.USAGE.blocked is True and relay.Usage(_up, 200).blocked is True)
+    try:
+        _quiet(lambda: _lu.request(["질문\n\n[pi-bbbbbc]"], False))
+        _et2 = None
+    except relay.RelayError as e:
+        _et2 = e
+    check("막힌 뒤 다시 해 봄: 추정치(2)와 기록은 그대로 (다시 해 본 질문으로 1씩 올라가지 않음)", _et2 is not None and _et2.status == 429
+          and "오늘 이 PC 에서 보낸 질문 2개" in str(_et2) and relay.USAGE.limit == 2 and len(relay.USAGE.hits) == 1 and relay.USAGE.today() == 4,
+          (str(_et2), relay.USAGE.limit, relay.USAGE.hits, relay.USAGE.today()))
     relay.USAGE.add()
-    relay.USAGE.add()
-    check("추정치를 넘겨도 막히지 않으면 그 수로 올림 (한도는 적어도 이만큼)", relay.USAGE.limit == relay.USAGE.today() == 5,
-          (relay.USAGE.limit, relay.USAGE.today()))
+    check("보내기만 해서는 올리지 않음 (답이 와야)", relay.USAGE.limit == 2, relay.USAGE.limit)
+    relay.USAGE.passed()
+    check("추정치를 넘겨도 답이 오면(막히지 않으면) 그 수로 올리고 막힘도 풂", relay.USAGE.limit == relay.USAGE.today() == 5
+          and relay.USAGE.blocked is False and relay.Usage(_up, 200).blocked is False, (relay.USAGE.limit, relay.USAGE.today()))
+    _lu.cop = _CopParts(["답"])
+    _quiet(lambda: _lu.request(["질문\n\n[pi-bbbbbd]"], False))
+    check("요청에서 답이 오면 passed: 오늘 수 6, 추정치 6", relay.USAGE.today() == 6 and relay.USAGE.limit == 6, (relay.USAGE.today(), relay.USAGE.limit))
     _r18 = relay.Relay(A(), FakeLink([]))
     _srv4 = _Srv(("127.0.0.1", 0), relay.make_handler(_r18, None, {"cdp_port": 1, "service_name": "사내AI"}))
     _th.Thread(target=_srv4.serve_forever, daemon=True).start()
     import urllib.request as _ureq  # noqa: E402
     _mem = json.loads(_ureq.urlopen("http://127.0.0.1:{}/memory".format(_srv4.server_address[1]), timeout=10).read())
     check("/memory: 오늘 보낸 질문 수와 추정 한도 (pi 상태 줄용)", _mem.get("questions_today") == relay.USAGE.today()
-          and _mem.get("question_limit") == relay.USAGE.limit == 5 and _mem.get("service") == "사내AI", _mem)
+          and _mem.get("question_limit") == relay.USAGE.limit == 6 and _mem.get("service") == "사내AI", _mem)
     _srv4.shutdown()
     with open(_up, "w", encoding="utf-8") as _f:
         json.dump({"day": "2000-01-01", "n": 150, "limit": 180, "hits": [{"day": "2000-01-01", "time": "14:03", "n": 180}]}, _f)
@@ -1511,6 +1526,67 @@ try:
     check("처음(기록 없음)은 설정값", relay.Usage(os.path.join(_tmp, "none-usage.json"), 200).limit == 200)
 finally:
     relay.USAGE = _old_usage
+
+# 긴 글 파일로 붙이기 (attach_long_text): 입력 한도를 넘으면 글 전체는 파일로, 본문에는 읽으라는 말·진행 방식 요약·끝부분 (질문 1번)
+import base64 as _b64  # noqa: E402
+
+
+class _FileLink(FakeLink):
+    def __init__(self, replies, fail_files=False):
+        FakeLink.__init__(self, replies)
+        self.fail_files = fail_files
+
+    def request(self, parts, new_thread, model="", images=None, files=None):
+        if files and self.fail_files:
+            raise relay.AttachUnavailable("붙지 않음: paste, drop, file (대상 없음)")
+        r = FakeLink.request(self, parts, new_thread, model)
+        self.sent_log[-1]["files"] = files
+        return r
+
+
+class _AA:
+    max_chars = 10000
+    tool_result_chars = 6000
+
+
+_lf = _FileLink(["답"])
+_lf.cfg = {"attach_long_text": True, "service_name": "사내AI"}
+_rf = relay.Relay(_AA(), _lf)
+_big = "가" * 12000 + "\n마지막 요청: 표를 정리해줘"
+_pp, _ff = _rf.pack(_big, "[pi-cccccc]", {"read", "bash"})
+_ftext = _b64.b64decode(_ff[0]["data"]).decode("utf-8") if _ff else ""
+check("긴 글: 본문 하나(입력 한도 안) + 글 파일 하나, 파일에는 글 전체", len(_pp) == 1 and len(_pp[0]) <= 10000 and len(_ff) == 1
+      and _ff[0]["name"].startswith("pi-context-") and _ff[0]["name"].endswith(".txt") and _ftext == _big, (len(_pp), len(_pp[0]) if _pp else 0, _ff and _ff[0]["name"]))
+check("본문: 파일 이름·읽으라는 말·진행 방식 요약·끝부분(마지막 요청)·marker 는 맨 끝", _ff and _ff[0]["name"] in _pp[0] and "처음부터 끝까지 읽고" in _pp[0]
+      and "진행 방식" in _pp[0] and "마지막 요청: 표를 정리해줘" in _pp[0] and _pp[0].endswith("[pi-cccccc]"), _pp[0][:300] + " … " + _pp[0][-200:])
+check("짧은 글은 그대로 한 조각 (파일 없음)", _rf.pack("짧은 요청", "[pi-dddddd]") == (["짧은 요청\n\n[pi-dddddd]"], []))
+_lf.cfg["attach_long_text"] = False
+check("꺼 두면 지금처럼 나눠 보냄", len(_rf.pack(_big, "[pi-eeeeee]")[0]) == 2 and _rf.pack(_big, "[pi-eeeeee]")[1] == [])
+_lf.cfg["attach_long_text"] = True
+_sysl = {"role": "system", "content": "규칙\n" + "- 긴 규칙 줄입니다.\n" * 800}
+_quiet(lambda: _rf.handle({"messages": [_sysl, {"role": "user", "content": "정리해줘"}], "tools": tools}))
+check("새 대화의 긴 첫 메시지: 질문 1번 (본문 하나 + 파일)", len(_lf.sent_log[0]["parts"]) == 1 and len(_lf.sent_log[0]["files"] or []) == 1
+      and relay.PROTOCOL_TAG in _b64.b64decode(_lf.sent_log[0]["files"][0]["data"]).decode("utf-8"), (len(_lf.sent_log[0]["parts"]), _lf.sent_log[0]["files"]))
+_lx2 = _FileLink(["답"], fail_files=True)
+_lx2.cfg = {"attach_long_text": True, "service_name": "사내AI"}
+_o2 = _io.StringIO()
+with _cl.redirect_stdout(_o2):
+    _ax = relay.Relay(_AA(), _lx2).handle({"messages": [_sysl, {"role": "user", "content": "정리해줘"}], "tools": tools})
+check("글 파일을 못 붙이면 그 요청은 나눠 보냄 (파일 없이, 조각 여러 개)", _ax.get("content") == "답" and len(_lx2.sent_log) == 1
+      and len(_lx2.sent_log[0]["parts"]) > 1 and not _lx2.sent_log[0].get("files") and "나눠 보냅니다" in _o2.getvalue(), (_lx2.sent_log, _o2.getvalue()[-300:]))
+_lr = _FileLink([_REFUSALS[0]])
+_lr.cfg = {"attach_long_text": True, "service_name": "사내AI"}
+_rr2 = relay.Relay(_AA(), _lr)
+_sysph = {"role": "system", "content": "규칙\n" + "- 긴 규칙 줄입니다.\n" * 800 + "- 연락처 010-1234-5678\n"}
+try:
+    _quiet(lambda: _rr2.handle({"messages": [_sysph, {"role": "user", "content": "정리해줘"}], "tools": tools}))
+    _er = None
+except relay.RelayError as e:
+    _er = e
+check("파일로 보낸 글이 막히면 찾은 곳은 파일 내용에서 (전화번호)", _er is not None and "전화번호" in str(_er) and _rr2.blocked == {"010-1234-5678"},
+      (str(_er), _rr2.blocked))
+check("bridge 기본은 꺼짐, 사내AI 설정도 꺼짐 (시험 뒤에 켬)", relay.bridge.DEFAULT_CONFIG.get("attach_long_text") is False
+      and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("attach_long_text") is False)
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

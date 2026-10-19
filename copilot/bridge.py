@@ -71,6 +71,9 @@ DEFAULT_CONFIG = {
     # 그림: pi 가 보낸 그림(그래프 등)을 Copilot 입력창에 붙여 함께 보냄 (사내AI 는 inhouse.json 에서 끔).
     #  image_attach: auto(붙여넣기 -> 끌어다 놓기 -> 파일 선택 칸 차례로) | paste | drop | file | none
     "send_images": True,
+    # 긴 글 파일로 붙이기: 입력 한도(max_chars)를 넘는 메시지를 나눠 보내지 않고, 글 전체를 글 파일(.txt)로 붙여 질문 1번에 보냄.
+    #  본문에는 파일을 읽으라는 말, 진행 방식 요약, 글의 끝부분. 붙이지 못하면 그때는 나눠 보냄. 시험: diag.py --attach-test
+    "attach_long_text": False,
     # 이메일 감추기: 보내기 전에 이메일 주소를 [이메일N] 으로 바꾸고 답(도구 인자·본문)에서는 원래 주소로 되돌림 (사내AI 는 inhouse.json 에서 켬)
     "redact_emails": False,
     "image_attach": "auto",
@@ -244,6 +247,10 @@ class SessionExpired(BridgeError):
 
 class ThreadReset(BridgeError):
     pass
+
+
+class AttachFailed(BridgeError):
+    """긴 내용을 담은 글 파일을 입력창에 붙이지 못함: 그 파일 없이 글만 보내면 안 되므로 보내기 전에 멈춤 (중계 서버가 나눠 보내기로 바꿈)"""
 
 
 class Throttled(BridgeError):
@@ -1098,14 +1105,15 @@ class Copilot:
             elif time.time() - last_change >= 2.0 or time.time() >= deadline:
                 return got
 
-    def send(self, text, images=None):
-        """글(끝에 marker)을 입력창에 넣고 보낸다. images([{"mime", "data"}]): 글보다 먼저 붙이고, 못 붙이면 marker 앞에 그렇다고 적음"""
+    def send(self, text, images=None, files=None):
+        """글(끝에 marker)을 입력창에 넣고 보낸다. images([{"mime", "data"}]): 글보다 먼저 붙이고, 못 붙이면 marker 앞에 그렇다고 적음.
+        files([{"name", "mime", "data"}]): 긴 내용을 담은 글 파일. 못 붙이면 AttachFailed (글을 넣기 전에)"""
         try:
-            self._send(text, images)
+            self._send(text, images, files)
         finally:
             self.drop_temp()
 
-    def _send(self, text, images):
+    def _send(self, text, images, files=None):
         self.wait_input(30)
         if self.tab.events is not None:
             self.tab.events = []  # 이전 프레임 버림
@@ -1115,11 +1123,16 @@ class Copilot:
         if not self.js(focus):
             raise BridgeError("Copilot 입력창을 찾지 못했습니다")
         attached = None
-        if images:
+        if images or files:
             self.clear_input(sel)
-            attached, info = self.attach_images(images)
+            items = self.image_items(images or []) + [{"name": f["name"], "type": f.get("mime") or "text/plain", "b64": f.get("data") or ""}
+                                                       for f in files or []]
+            attached, info = self.attach_items(items)
             self.last_attach = (attached, info)
-            log("  그림 {}개: {}".format(len(images), "붙임 ({}, {})".format(attached, info) if attached else info))
+            what = " + ".join(x for x in ("그림 {}개".format(len(images)) if images else "", "파일 {}개".format(len(files)) if files else "") if x)
+            log("  {}: {}".format(what, "붙임 ({}, {})".format(attached, info) if attached else info))
+            if not attached and files:
+                raise AttachFailed(info)
             if not attached:
                 note = "(그림 {}개를 함께 보내려 했지만 붙이지 못했습니다. 그림 없이 답해 주세요.)".format(len(images))
                 m = re.search(r"\[pi[-#][0-9a-f]+\]\s*$", text)
@@ -1212,8 +1225,19 @@ class Copilot:
     def img_state(self, sel, names):
         return self.js("window.__piImg.state(%s, %s)" % (sel, self.q(names))) or {}
 
+    @staticmethod
+    def image_items(images):
+        """그림 -> 붙일 파일 (보낼 때마다 다른 이름: 앞 메시지에 같은 이름이 보여도 새로 붙은 것을 알아보게)"""
+        tag = os.urandom(2).hex()
+        return [{"name": "pi-image-{}-{}.{}".format(tag, i + 1, IMAGE_EXT.get(im.get("mime"), "png")), "type": im.get("mime") or "image/png",
+                 "b64": im.get("data") or ""} for i, im in enumerate(images)]
+
     def attach_images(self, images):
-        """images: [{"mime", "data"(base64)}] -> (붙인 방법 또는 None, 설명). 붙인 뒤 올리기가 끝날 때까지 기다린다"""
+        """images: [{"mime", "data"(base64)}] -> (붙인 방법 또는 None, 설명)"""
+        return self.attach_items(self.image_items(images))
+
+    def attach_items(self, files):
+        """files: [{"name", "type", "b64"}] (그림·글 파일) -> (붙인 방법 또는 None, 설명). 붙인 뒤 올리기가 끝날 때까지 기다린다"""
         want = str(self.cfg.get("image_attach") or "auto").lower()
         if want == "none":
             return None, "image_attach 가 none"
@@ -1222,9 +1246,6 @@ class Copilot:
         methods = self.ATTACH_METHODS if want == "auto" else (want,)
         if want == "auto" and self.attach_ok in methods:
             methods = (self.attach_ok,) + tuple(m for m in methods if m != self.attach_ok)
-        tag = os.urandom(2).hex()  # 보낼 때마다 다른 이름: 앞 메시지에 같은 이름이 보여도 새로 붙은 것을 알아보게
-        files = [{"name": "pi-image-{}-{}.{}".format(tag, i + 1, IMAGE_EXT.get(im.get("mime"), "png")), "type": im.get("mime") or "image/png",
-                  "b64": im.get("data") or ""} for i, im in enumerate(images)]
         names = [f["name"] for f in files]
         sel = self.q(self.cfg["input_selector"])
         self.js(IMG_LIB)
@@ -1244,7 +1265,7 @@ class Copilot:
                 if st:
                     self.attach_ok = how
                     self.upload_wait(sel, names, float(self.cfg.get("image_upload_wait_seconds") or 60))
-                    return how, "그림 {}개".format(len(files))
+                    return how, "{}개".format(len(files))
                 tried.append(how)
         finally:
             self.tab.eval("window.__piImages = null; true")

@@ -89,13 +89,16 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `max_questions_per_minute` | 0 이면 끔. 숫자를 넣으면 분당 그 수를 넘지 않게 기다렸다 보냄 (Copilot 사용량 제한 예방, 아래 참고) |
 | `tab_reload_mb` | 기본 300. 새 대화를 열 때와 pi 세션이 끝날 때(`/new`, 종료) Copilot 탭의 웹 앱이 이만큼(MB, 살아 있는 JS·화면 객체) 넘게 쓰거나 전용 창 전체(모든 프로세스)가 `memory_warn_mb` 를 넘으면 '새 채팅' 단추 대신 페이지를 새로 읽음 (웹 앱 크기에는 화면·이미지 메모리가 빠지므로 둘 다 봄). 웹 앱은 페이지를 새로 읽기 전에는 메모리를 거의 돌려주지 않아, 하루 쓰면 탭 하나가 2GB 를 넘기도 함 (2026-10-16 회사 PC). 0 이면 끔 |
 | `memory_warn_mb` | 기본 2500. pi + 중계 서버 + 전용 창(모든 프로세스의 커밋)을 합친 메모리가 이만큼(MB) 넘으면 pi 상태 줄의 '메모리' 에 `/new 로 정리` 를 붙이고 한 번 알림. 0 이면 끔 (메모리 표시는 그대로) |
-| `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 10000). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |
-| `tool_result_chars` | 도구 결과 하나를 보낼 최대 글자 수 (기본 6000, 가운데 생략) |
+| `max_chars` | Copilot 메시지 하나의 최대 글자 수 (기본 60000, 사내AI 10000. 입력창은 Copilot 128,000자, 사내AI 1만 자까지 받음: 2026-10-19 실측). 이보다 길면 나눠 보내고, 앞 조각에는 "OK 만 답하라" 고 적습니다 (조각마다 왕복 한 번). `diag.py --input-limit` 가 입력창 한도와 권장값을 알려 줌 |
+| `tool_result_chars` | 도구 결과 하나를 보낼 최대 글자 수 (기본 12000, 사내AI 6000, 가운데 생략) |
 | `max_tabs` | 기본 1. 2 이상이면 요청 머리글 `X-Pi-Session`(pi 확장 copilot-session.ts 가 pi 프로세스마다 붙임)별로 Copilot 창을 따로 씀. 창 1 은 처음부터 열려 있던 Copilot 탭, 나머지는 필요할 때 새 창(뒤에서 열림). 대화 기록에는 창 번호(owner)를 남겨 각 창은 자기 대화만 '끝난 대화' 로 돌림. 창이 모두 쓰이는 중이면 가장 오래 쉰 창을 넘겨받음. 분당 질문 수 제한은 모든 창을 합쳐서 셈. jupyter 모드의 노트북 명령도 창마다 터미널을 따로 씀 (창 1: pibridge, 창 2: pibridge2 …. jupyter.ts 도 같은 X-Pi-Session 을 보냄) |
 | `redact_emails` | 기본 false (사내AI `inhouse.json` 은 true). 보낼 글(지침, 대화 기록, 도구 결과, 요청)의 이메일 주소를 보내기 직전에 `[이메일N]` 으로 바꾸고(같은 주소는 같은 번호, 중계 서버 메모리의 짝은 로그·파일에 남기지 않음), 답의 도구 인자(write 내용, edit 의 찾을 글·바꿀 글, bash 명령)와 본문에서는 원래 주소로 되돌림. 일부만 가리는 방식은 쓰지 않음. 서비스의 개인정보 확인은 그대로 돌고, 막히면 지금처럼 멈춤 |
 | `send_images` | 기본 true (사내AI `inhouse.json` 은 false). pi 가 보낸 그림(사용자 메시지·도구 결과의 `image_url` data: 주소)을 이번에 새로 온 메시지의 것만 4개까지, 마지막 조각을 보내기 전에 입력창에 붙임. 글에는 그 자리에 `[그림]`, pi 가 도구 결과의 그림을 담아 보내는 사용자 메시지는 `(앞 도구 결과의 그림 n개)` 로. 끄면 그림 대신 "보내지 않았습니다" 를 적음. 5MB 가 넘는 그림은 붙이지 않고 알림. pi 쪽: Copilot 모델의 models.json `input` 에 `image`, settings.json `images.autoResize` false 와 jupyter.ts 의 read 도구 `autoResizeImages: false` (키트의 pi 에는 그림을 줄이는 도구가 없어 켜 두면 그림이 모두 빠짐) |
 | `image_attach` / `image_upload_wait_seconds` | 그림을 붙이는 방법 `auto`(기본: 붙여넣기 `ClipboardEvent` -> 끌어다 놓기 `DragEvent` -> 가장 가까운 `input[type=file]` 에 임시 파일 `DOM.setFileInputFiles`, 된 방법을 다음에 먼저) / `paste` / `drop` / `file` / `none`. 붙었는지는 입력창 둘레에 파일 이름(`pi-image-xxxx-n.png`)이나 그림이 새로 생겼는지로 보고, 올리는 중 표시가 사라질 때까지 최대 `image_upload_wait_seconds`(60)초 기다림. 모두 안 되면 marker 앞에 "붙이지 못했습니다" 를 적고 그 대화에서는 다시 해 보지 않음 (새 대화에서 다시). 확인: `diag.py --image` |
-| `multi_read` | 기본 true (사내AI `inhouse.json` 은 false). 진행 규칙에 "살펴보기만 하는 작업은 블록 여러 개(5개까지)를 한 번에 써도 된다" 를 넣고, 답의 맨 앞부터 이어지는 살펴보기 블록(read·grep·find·ls·wiki_search·wiki_read 도구, `relay.read_only_command` 가 읽기만 한다고 본 bash 명령)을 5개까지 tool_calls 로 돌려줌 (pi 는 한 답의 도구들을 동시에 실행하므로 순서가 중요한 쓰기·명령 실행은 하나씩). 실행하지 않은 블록이 있으면 다음 메시지에 "블록 n개 중 앞의 k개만 실행했습니다" 를 한 번 붙임 (false 여도) |
+| `multi_write` | 기본 true. multi_read 와 함께, 서로 다른 파일 쓰기·고치기(write·edit)도 한 번에 묶음 (`relay.batch_calls`). 같은 파일을 두 번 쓰거나 쓰는 파일을 함께 읽기, 쓰기와 명령·폴더 살펴보기를 섞으면 거기서 멈춤 (pi 는 확인은 차례로, 실행은 동시에) |
+| `daily_question_limit` | 기본 0 (사내AI 200). 하루 질문 한도의 처음 추정치. 중계 서버는 보낸 메시지(조각·다시 부탁 포함)를 하루마다 세어 `~/.pi/agent/relay-usage.json`(사내AI `inhouse-usage.json`)에 두고, 하루 한도 문구(`throttle_pattern` 의 '일일 …회' 등)가 오면 막힌 질문을 뺀 수로 추정치를 고치고 그때를 기록(최근 20개), 넘겨도 막히지 않으면 올림. `/memory` 의 `questions_today`·`question_limit` -> pi 상태 줄 `사내AI 오늘 n/~한도` |
+| `attach_long_text` | 기본 false. true 면 `max_chars` 를 넘는 메시지를 나눠 보내지 않고 글 전체를 글 파일(`pi-context-xxxx.txt`)로 붙이고, 본문에는 파일을 읽으라는 말·진행 방식 요약·글의 끝부분을 넣어 질문 1번에 (`Relay.pack`). 붙이지 못하면(`AttachFailed`) 그 요청은 나눠 보냄. 확인: `diag.py [--inhouse] --attach-test` |
+| `multi_read` | 기본 true (사내AI 도). 진행 규칙에 "살펴보기만 하는 작업은 블록 여러 개(5개까지)를 한 번에 써도 된다" 를 넣고, 답의 맨 앞부터 이어지는 살펴보기 블록(read·grep·find·ls·wiki_search·wiki_read 도구, `relay.read_only_command` 가 읽기만 한다고 본 bash 명령)을 5개까지 tool_calls 로 돌려줌 (pi 는 한 답의 도구들을 동시에 실행하므로 순서가 중요한 쓰기·명령 실행은 하나씩). 실행하지 않은 블록이 있으면 다음 메시지에 "블록 n개 중 앞의 k개만 실행했습니다" 를 한 번 붙임 (false 여도) |
 | `resend_recent_chars` / `resend_summary_chars` | 새 대화를 열 때 다시 넣는 기록: 최근 것은 이 글자 수만큼 그대로, 그 앞은 이 글자 수만큼 한 줄 요약 (기본 20000 / 40000). `max_chars` 를 늘려도 이 양은 그대로 |
 
 중계 서버 옵션 (`python relay.py --help`): `--max-chars`, `--tool-result-chars` 를 주면 위 설정보다 먼저 씁니다.
@@ -110,6 +113,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `JupyterLab 로그인이 만료되었습니다` | 전용 창의 JupyterLab 탭을 새로고침해 다시 로그인 (중계 서버는 자동으로 다시 붙음) |
 | `Copilot 입력창을 찾지 못했습니다` | `diag.py` 결과의 선택자를 `input_selector` 에 지정 |
 | pi 에 `429 Copilot 사용량 제한에 걸렸습니다` | Copilot 이 "현재 요청이 너무 많아 일시적으로 응답할 수 없습니다" 라고 답한 상태입니다 (계정 단위 제한, Throttled). 새 대화를 열어도 같으므로 중계 서버는 새 대화를 열지 않습니다. 기다렸다가 같은 요청을 다시 하면 같은 대화에 이어서 보냅니다. 시험에서는 30분 동안 질문 약 145개를 보냈을 때 걸렸습니다 |
+| pi 에 `429 사내AI 하루 질문 한도에 닿았습니다` | 짧은 답이 하루 한도 문구(`throttle_pattern`)에 맞은 상태. 사내AI 의 실제 문구는 아직 모르고 `inhouse.json` 의 문구는 알려 준 말('일일 200회 질문이 가능')에 맞춘 것이라, 평범한 답에 걸리지 않게 좁게 둠 (`tests/test_relay.py` 의 보기). 막힌 질문을 뺀 그날 수가 다음 추정 한도 (`inhouse-usage.json` 의 `limit`, `hits`). 한도 말이 pi 에 답으로 오면 그 문구를 `throttle_pattern` 에 맞출 것 |
 | Copilot 이 "실행할 수 없다" 며 거절 | 중계 서버가 한 번 설명하고 다시 부탁합니다. 계속되면 요청을 더 구체적으로 적어 보세요 |
 | pi 에 `같은 작업(...)이 계속 반복되어 여기서 멈췄습니다` | Copilot 이 같은 작업을 되풀이해서 중계 서버가 끊은 것입니다. 요청을 나누거나 바꿔서 다시 하세요 |
 | 오래 쓰다 보면 Copilot 이 중간에 멈추거나 형식을 틀림 | 대화가 아주 길어진 탓입니다. pi 에서 새 세션(`/new`)을 시작하면 Copilot 도 새 채팅으로 시작합니다 |

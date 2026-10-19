@@ -43,7 +43,7 @@ MSG_KINDS = {"throttle", "privacy", "privacy_held", "login", "config", "browser"
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-19.1"
+RELAY_VERSION = "2026-10-19.2"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -1131,18 +1131,20 @@ def batch_calls(found, writes=False, limit=BATCH_MAX):
 
 # 오늘 보낸 질문 수: 중계 서버가 서비스에 보낸 메시지(나눠 보낸 조각·다시 부탁 포함) 수를 하루마다 센다 (이 PC 의 파일에, 내용 없이).
 #  하루 한도는 운영 쪽에서 알림 없이 바뀌므로 기록에서 추정한다: 처음은 설정값(daily_question_limit, 사내AI 200),
-#  한도에 닿았다는 답이 오면 그때까지 보낸 수(막힌 질문 빼고)로 고치고, 추정치를 넘겨도 막히지 않으면 그 수로 올린다.
+#  한도에 닿았다는 답이 오면 그때까지 보낸 수(막힌 질문 빼고)로 고치고, 추정치를 넘겨도 답이 오면(막히지 않으면) 그 수로 올린다.
+#  막힌 뒤 다시 해 본 질문은 한도를 바꾸지 않는다 (처음 막힌 때 그대로. 답이 오면 풀린 것)
 #  닿은 때의 기록(날짜·시각·질문 수)은 최근 20개를 남긴다 (diag.py --limits). 전용 창에 직접 친 질문은 세지 못하고,
 #  날짜는 이 PC 의 날짜로 바뀐다 (서비스의 기준과 다를 수 있음)
 class Usage:
     def __init__(self, path="", limit=0):
         self.path, self.limit, self.lock = path, int(limit or 0), threading.Lock()
-        self.day, self.n, self.hits = time.strftime("%Y-%m-%d"), 0, []
+        self.day, self.n, self.hits, self.blocked = time.strftime("%Y-%m-%d"), 0, [], False
         try:
             with open(path, encoding="utf-8") as f:
                 d = json.load(f)
             if d.get("day") == self.day:
                 self.n = int(d.get("n") or 0)
+                self.blocked = bool(d.get("blocked"))
             if int(d.get("limit") or 0) > 0:  # 기록에서 고친 추정치 (설정값보다 먼저)
                 self.limit = int(d["limit"])
             self.hits = [h for h in d.get("hits") or [] if isinstance(h, dict)][-20:]
@@ -1155,7 +1157,7 @@ class Usage:
         try:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"day": self.day, "n": self.n, "limit": self.limit, "hits": self.hits}, f, ensure_ascii=False)
+                json.dump({"day": self.day, "n": self.n, "limit": self.limit, "hits": self.hits, "blocked": self.blocked}, f, ensure_ascii=False)
             os.replace(tmp, self.path)
         except OSError:
             pass
@@ -1163,20 +1165,32 @@ class Usage:
     def _roll(self):
         today = time.strftime("%Y-%m-%d")
         if today != self.day:
-            self.day, self.n = today, 0
+            self.day, self.n, self.blocked = today, 0, False
 
     def add(self, k=1):
+        """서비스에 메시지 하나를 보냄"""
         with self.lock:
             self._roll()
             self.n += k
-            if self.limit and self.n > self.limit:  # 추정치를 넘겼는데 막히지 않음 -> 한도는 적어도 이만큼
-                self.limit = self.n
             self._save()
 
-    def hit(self):
-        """한도에 닿았다는 답: 막힌 질문을 뺀 수를 새 추정치로, 그 때를 기록"""
+    def passed(self):
+        """답이 옴 (막히지 않음): 추정치를 넘겼으면 한도는 적어도 이만큼. 막혀 있었다면 풀린 것"""
         with self.lock:
             self._roll()
+            if self.blocked or (self.limit and self.n > self.limit):
+                self.blocked = False
+                if self.limit and self.n > self.limit:
+                    self.limit = self.n
+                self._save()
+
+    def hit(self):
+        """한도에 닿았다는 답: 막힌 질문을 뺀 수를 새 추정치로, 그 때를 기록. 막힌 뒤 다시 해 본 것이면 처음 막힌 때 그대로"""
+        with self.lock:
+            self._roll()
+            if self.blocked and self.hits and self.hits[-1].get("day") == self.day:
+                return int(self.hits[-1].get("n") or 0)
+            self.blocked = True
             allowed = max(0, self.n - 1)
             self.hits = (self.hits + [{"day": self.day, "time": time.strftime("%H:%M"), "n": allowed}])[-20:]
             if allowed:
@@ -1203,6 +1217,10 @@ class RelayError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
+
+
+class AttachUnavailable(Exception):
+    """긴 내용을 담은 글 파일을 붙이지 못함 -> 그 요청은 나눠 보내기로"""
 
 
 class ThreadReset(Exception):
@@ -1422,7 +1440,7 @@ class CopilotLink:
             if not ok:
                 EVENTS.write({"ev": "warn", "kind": "delete"})  # 안내 문구에는 대화 제목(첫 질문에서 만들어짐)이 들어갈 수 있어 남기지 않음
 
-    def request(self, parts, new_thread, model="", images=None):
+    def request(self, parts, new_thread, model="", images=None, files=None):
         """조각들을 차례로 Copilot 에 보내고 마지막 답을 돌려준다. model 은 Copilot 화면의 모델 이름 ("" 이면 그대로).
         images: 마지막 조각(질문)과 함께 붙일 그림 [{"mime", "data"}]"""
         reconnected = self.cop is None
@@ -1463,15 +1481,16 @@ class CopilotLink:
                 self.pace()
                 bridge.log("  -> Copilot 에 보냄 ({}/{}, {}자)".format(i, len(parts), len(part)))
                 set_phase("보내는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
-                if images and i == len(parts):
-                    set_phase("그림 붙이는 중")
-                    self.cop.send(part, images=images)
+                if (images or files) and i == len(parts):
+                    set_phase("파일 붙이는 중" if files else "그림 붙이는 중")
+                    self.cop.send(part, images=images, files=files)
                 else:
                     self.cop.send(part)
                 USAGE.add()
                 self.asked += 1
                 set_phase("답 기다리는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
                 reply = self.cop.wait_reply(m.group(0).strip())
+                USAGE.passed()
                 bridge.log("  <- 답 받음 ({}자, 코드 블록 {}개)".format(len(reply.get("text", "")), len(reply.get("code_blocks") or [])))
                 waits.append(reply.get("_wait") or {})
                 if new_thread and i == 1 and self.registry:  # 첫 답에서 대화 주소가 생김 -> 삭제 대상 목록에 기록
@@ -1505,6 +1524,8 @@ class CopilotLink:
                                   "(같은 Copilot 대화에 이어서 보냅니다).".format(e))
         except bridge.ThreadReset as e:
             raise ThreadReset(str(e))
+        except bridge.AttachFailed as e:
+            raise AttachUnavailable(str(e))
         except bridge.SessionExpired as e:
             raise RelayError(401, str(e))
         except (ConnectionError, OSError, TimeoutError) as e:
@@ -1542,7 +1563,7 @@ class Relay:
     def log(self, *a):
         bridge.log(*a)
 
-    def ask(self, parts, new_thread, images=None):
+    def ask(self, parts, new_thread, images=None, files=None):
         self.log("요청 (새 대화={}, 조각 {}개, {}자{})".format(new_thread, len(parts), sum(len(p) for p in parts),
                                                        ", 모델 " + self.model_label if self.model_label else ""))
         st = self.stat
@@ -1554,7 +1575,8 @@ class Relay:
             st["split"] = st.get("split") or len(parts) > 1
         if images:
             self.log("  그림 {}개를 마지막 조각과 함께 보냄".format(len(images)))
-        reply = self.link.request(parts, new_thread, model=self.model_label, **({"images": images} if images else {}))
+        extra = dict(({"images": images} if images else {}), **({"files": files} if files else {}))
+        reply = self.link.request(parts, new_thread, model=self.model_label, **extra)
         if st is not None and isinstance(reply, dict):  # 끊김·제한 기록: 조각마다 답이 어떻게 끝났는지
             st.setdefault("waits", []).extend(w for w in reply.get("_waits") or [] if w)
             st["mid_not_ok"] = st.get("mid_not_ok", 0) + (reply.get("_mid_not_ok") or 0)
@@ -1620,6 +1642,29 @@ class Relay:
     def out(self, text):
         """보낼 글. redact_emails 면 이메일 주소를 [이메일N] 으로"""
         return self.redactor.redact(text) if (getattr(self.link, "cfg", None) or {}).get("redact_emails") else text
+
+    def attach_long(self):
+        return bool((getattr(self.link, "cfg", None) or {}).get("attach_long_text"))
+
+    def pack(self, text, marker, tool_names=()):
+        """보낼 글 -> (조각들, 붙일 글 파일들). attach_long_text 이고 한 번에 다 들어가지 않으면(입력 한도 max_chars):
+        글 전체는 파일로 붙이고, 본문에는 파일을 읽으라는 말과 진행 방식 요약, 글의 끝부분(최근 요청·결과)을 넣어 질문 1번에 보낸다.
+        아니면 지금처럼 나눠 보낸다 (조각마다 질문 1번)"""
+        limit = self.args.max_chars
+        if not self.attach_long() or len(text) + len(marker) + 2 <= limit:
+            return build_parts(text, limit, marker), []
+        name = "pi-context-{}.txt".format(uuid.uuid4().hex[:4])
+        rule = PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)) or "-",
+                                        multi_read=(MULTI_WRITE_HINT if self.multi_write() else MULTI_READ_HINT) if self.multi_read() else "")
+        head = ("[{}]\n긴 내용(진행 방식, 작업 규칙, 사용할 수 있는 도구, 지금까지의 대화)은 첨부한 파일 {} 에 넣었습니다. "
+                "파일을 처음부터 끝까지 읽고 그 안의 진행 방식을 따라 주세요.\n{}\n\n(아래는 그 파일의 끝부분입니다)\n").format(PROTOCOL_TAG, name, rule)
+        foot = "\n\n(파일의 마지막 요청에 대해 다음 작업 블록 하나를 주시거나, 이미 끝났다면 최종 답을 주세요.)\n\n" + marker
+        room = max(0, limit - len(head) - len(foot) - 10)
+        tail = text[-room:] if room else ""
+        cut = tail.find("\n")
+        if len(tail) < len(text) and 0 <= cut < 300:  # 줄 가운데서 시작하지 않게
+            tail = tail[cut + 1:]
+        return [head + tail + foot], [{"name": name, "mime": "text/plain", "data": base64.b64encode(text.encode("utf-8")).decode()}]
 
     def parse(self, reply, tool_names):
         """답 해석 + [이메일N] 을 원래 주소로 (도구 인자와 본문: 파일에는 원래 주소로 쓰이고, pi 화면에도 원래 주소로 보임)"""
@@ -1828,18 +1873,24 @@ class Relay:
                 text += "\n\n" + PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)),
                                                          multi_read=(MULTI_WRITE_HINT if self.multi_write() else MULTI_READ_HINT) if self.multi_read() else "")
                 self.reminded_at = asked
-            parts = build_parts(self.out(text), self.args.max_chars, marker)
+            text_out = self.out(text)
             new_thread = False
         else:
-            parts = self.full_parts(messages, tools, names, marker, img_note)
+            text_out = self.out(self.full_body(messages, tools, names, img_note))
             new_thread = not redo  # 개인정보 확인으로 멈춘 뒤에는 같은 대화에 처음부터 다시
             self.unrun_note = ""
-        held = self.held("\n\n".join(parts))
+        parts, files = self.pack(text_out, marker, tool_names)
+        held = self.held(text_out)
         if held:
             raise held
         was_fresh, self.fresh = self.fresh, True  # 도중에 실패하면 다음 요청은 새 대화로 (성공하면 아래에서 False)
         try:
-            reply = self.ask(parts, new_thread, images)
+            try:
+                reply = self.ask(parts, new_thread, images, files)
+            except AttachUnavailable as e:  # 글 파일을 붙이지 못함 -> 이번에는 나눠 보냄
+                self.log("긴 내용을 파일로 붙이지 못해 나눠 보냅니다:", e)
+                parts, files = build_parts(text_out, self.args.max_chars, marker), []
+                reply = self.ask(parts, new_thread, images)
         except RelayError as e:
             if e.status == 429:  # 사용량 제한은 대화를 바꾸지 않음: 풀린 뒤 같은 대화에 이어서
                 self.fresh = was_fresh
@@ -1847,7 +1898,7 @@ class Relay:
         body_text, call, err = self.parse(reply, tool_names)
         self.note_reply(reply)
         if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
-            raise PrivacyRefused(reply.get("text", ""), sent=parts[-1])
+            raise PrivacyRefused(reply.get("text", ""), sent=text_out if files else parts[-1])
         retries, nudged, code_nudged, cont_nudged = 0, False, False, False
         no_tools = bool(NO_TOOLS_RE.search(last_user_text(messages)))
         while call is None and retries < 2:
@@ -1918,6 +1969,10 @@ class Relay:
         return assistant
 
     def full_parts(self, messages, tools, names, marker, note=""):
+        """새 대화에 보낼 글을 조각으로 (시험용. 보낼 때는 full_body + pack)"""
+        return build_parts(self.out(self.full_body(messages, tools, names, note)), self.args.max_chars, marker)
+
+    def full_body(self, messages, tools, names, note=""):
         system = "\n\n".join(content_text(m.get("content")) for m in messages if m.get("role") in ("system", "developer"))
         rules = (getattr(self.link, "cfg", None) or {}).get("extra_rules") or []  # 서비스별로 덧붙일 진행 규칙
         rules = [rules] if isinstance(rules, str) else rules
@@ -1954,9 +2009,8 @@ class Relay:
         convo_text += "\n\n".join(kept)
         if note:
             convo_text += "\n\n" + note
-        body = (head + "\n대화 내용\n" + convo_text +
+        return (head + "\n대화 내용\n" + convo_text +
                 "\n\n(마지막 요청에 대해 다음 작업 블록 하나를 주시거나, 이미 끝났다면 최종 답을 주세요.)")
-        return build_parts(self.out(body), self.args.max_chars, marker)
 
     def reset(self):
         with self.lock:

@@ -12,6 +12,7 @@
          python diag.py --report    (한 화면 상태 요약: 버전·중계 서버·전용 창·설정·최근 로그. 아무것도 바꾸지 않음)
          python diag.py --input-limit   (+ 입력창이 한 번에 받는 글자 수 확인. 붙여 넣어 보기만 하고 보내지 않음)
          python diag.py --image     (+ 시험 그림(빨간 동그라미 3개)을 새 대화에 붙여 보내고 답 읽기: 그림 보내기 확인)
+         python diag.py --inhouse --attach-test   (+ 긴 시험 글 파일을 새 대화에 붙여 처음·가운데·끝의 단어를 맞히는지: 긴 글 파일로 붙이기 확인)
          python diag.py --inhouse --send   (위 확인을 사내AI 탭으로: 사내AI 중계 서버와 같은 설정 copilot/inhouse.json)
 """
 import argparse
@@ -28,6 +29,22 @@ sys.path.insert(0, HERE)
 import bridge  # noqa: E402
 
 TEST_BLOCK = '{"tool": "bash", "arguments": {"command": "echo diag-ok \\"quoted\\""}}'
+
+
+ATTACH_WORDS = ["사과", "바다", "구름", "연필", "기차", "우산", "호수", "나무", "별빛", "모래", "단풍", "거울", "등대", "풍선", "시계"]
+
+
+def attach_text(size, words):
+    """시험 글 파일: 채움 줄 사이 처음·가운데·끝에 '처음 단어: ○○' 같은 줄 (개인정보 없음)"""
+    line = "이 줄은 긴 글 파일 붙이기를 확인하는 채움 글입니다. 번호 {:05d}\n"
+    rows, n = [], 0
+    while sum(len(r) for r in rows) < size:
+        rows.append(line.format(n))
+        n += 1
+    rows.insert(2, "처음 단어: {}\n".format(words[0]))
+    rows.insert(len(rows) // 2, "가운데 단어: {}\n".format(words[1]))
+    rows.insert(len(rows) - 2, "끝 단어: {}\n".format(words[2]))
+    return "".join(rows)
 
 
 def diag_png(w=240, h=120):
@@ -310,6 +327,7 @@ def main():
     ap.add_argument("--report", action="store_true", help="한 화면 상태 요약 (읽기만 함)")
     ap.add_argument("--input-limit", action="store_true", help="입력창이 한 번에 받는 글자 수 확인 (보내지 않음)")
     ap.add_argument("--image", action="store_true", help="시험 그림을 새 대화에 붙여 보내고 답 읽기 (그림 보내기 확인)")
+    ap.add_argument("--attach-test", action="store_true", help="긴 시험 글 파일을 붙여 끝까지 읽는지 확인 (긴 글 파일로 붙이기, 크기마다 질문 1번)")
     ap.add_argument("--inhouse", action="store_true", help="사내AI 탭을 확인 (copilot/inhouse.json + 내 설정 ~/.pi/agent/inhouse.json)")
     ap.add_argument("--limits", action="store_true", help="끊김·제한 기록 요약 (내용 없이 횟수·시간만, 사진 한 장용. 읽기만 함)")
     ap.add_argument("--days", type=int, default=7, help="--limits 로 볼 기간 (일, 기본 7)")
@@ -513,6 +531,42 @@ def main():
             show("설정", "그림 보내기가 됩니다 (방법 {}). pi 에서 그림 파일을 읽거나 붙이면 Copilot 이 함께 봅니다".format(how))
         else:
             show("설정", "그림이 Copilot 에 닿지 않았습니다. 이 화면을 찍어 보내 주세요 (그동안 pi 는 그림 대신 '붙이지 못했습니다' 를 적어 보냄)")
+
+    if args.attach_test:
+        import random
+        print("\n[11] 긴 글 파일로 붙이기 (시험 글 파일을 새 대화에 붙여 보내고 답 읽기. 크기마다 질문 1번. pi 가 일하지 않을 때 실행하세요)")
+        info = copilot.attach_info()
+        show("입력창 둘레", "파일 선택 칸 {}개{} / 단추: {}".format(
+            info.get("file_inputs", 0), " (accept {})".format(", ".join(info["accepts"])) if info.get("accepts") else "",
+            ", ".join(info.get("buttons") or []) or "(없음)"))
+        passed = []
+        for i, size in enumerate((20000, 60000)):
+            words = random.sample(ATTACH_WORDS, 3)
+            name = "pi-context-test{}.txt".format(i + 1)
+            data = base64.b64encode(attach_text(size, words).encode("utf-8")).decode()
+            marker = "[pi-a77a0{}]".format(i + 1)
+            copilot.new_chat()
+            t0 = time.time()
+            try:
+                copilot.send("진단 테스트입니다. 첨부한 파일 {} 의 처음·가운데·끝에 '○○ 단어: ...' 줄이 하나씩 있습니다. "
+                             "그 세 단어를 처음·가운데·끝 차례로 쉼표로만 이어 답해 주세요 (예: 사과, 바다, 구름).\n\n{}".format(name, marker),
+                             files=[{"name": name, "mime": "text/plain", "data": data}])
+            except bridge.AttachFailed as e:
+                show("{:,}자 파일".format(size), "X 붙이지 못함: {}".format(e))
+                break
+            how = copilot.last_attach[0]
+            said = re.sub(r"\s+", " ", copilot.wait_reply(marker).get("text", "")).strip()
+            good = all(w in said for w in words)
+            show("{:,}자 파일".format(size), "{} 붙임 {} ({:.0f}초) / 정답 {} / 답 {}".format(
+                "OK" if good else "X", how, time.time() - t0, ", ".join(words), said[:120]))
+            if good:
+                passed.append(size)
+        ok = ok and bool(passed)
+        if passed:
+            show("설정", "{:,}자까지 됩니다. 나눠 보내던 긴 메시지를 글 파일로 붙이려면 내 설정 파일({})에 \"attach_long_text\": true".format(
+                max(passed), "~/.pi/agent/inhouse.json" if args.inhouse else "~/.pi/agent/bridge.json"))
+        else:
+            show("설정", "글 파일 붙이기가 되지 않았습니다. 이 화면을 찍어 보내 주세요 (켜지 않으면 지금처럼 나눠 보냄)")
 
     print("\n결과:", "정상" if ok else "확인 필요 (위의 X 항목)")
     if not ok:
