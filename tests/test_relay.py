@@ -596,9 +596,9 @@ with open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhous
     _ih = json.load(_f)
 check("사내AI: 살펴보기·쓰기 한 번에도 기본값(켜짐), 하루 한도 200, 한도 문구", "multi_read" not in _ih and "multi_write" not in _ih
       and _ih.get("daily_question_limit") == 200, _ih)
-_yes = [t for t in ['사내AI는 일일 200회 질문이 가능합니다.', '질문은 하루 200회까지 가능합니다.', '1일 최대 200회까지 질문할 수 있습니다.', '일일 질문 한도(200회)를 초과했습니다.', '오늘 질문 가능 횟수를 모두 사용했습니다.', 'Too many requests. Try again later.'] if not relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
-_no = [t for t in ['파일을 정리했습니다. 오늘 날짜로 저장했습니다.', '오늘 요청하신 1번 작업을 마쳤습니다.', '오늘 요청하신 내용은 바로 적용 가능합니다.', '하루 24회 실행되도록 설정했습니다.', '오늘 3번 고쳤습니다.', '10월 11일 200건을 처리했습니다.', '완료했습니다. 2번 항목도 고쳤습니다.'] if relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
-check("사내AI 한도 문구: 하루 한도 말은 잡고, 평범한 짧은 답('오늘 요청하신 1번 작업…', '하루 24회 실행')은 잡지 않음", not _yes and not _no, [_yes, _no])
+_yes = [t for t in ['사내AI는 일일 200회 질문이 가능합니다.', '질문은 하루 200회까지 가능합니다.', '1일 최대 200회까지 질문할 수 있습니다.', '하루 200회까지 질문 가능하며 내일 다시 이용해 주세요.', '일일 질문 한도(200회)를 초과했습니다.', '일일 질문 가능 횟수(200회)를 초과하였습니다.', '오늘 질문 가능 횟수를 모두 사용했습니다.', 'Too many requests. Try again later.'] if not relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
+_no = [t for t in ['파일을 정리했습니다. 오늘 날짜로 저장했습니다.', '오늘 요청하신 1번 작업을 마쳤습니다.', '오늘 요청하신 내용은 바로 적용 가능합니다.', '하루 24회 실행되도록 설정했습니다.', '오늘 3번 고쳤습니다.', '10월 11일 200건을 처리했습니다.', '완료했습니다. 2번 항목도 고쳤습니다.', '하루 평균 120건 요청이 처리됩니다.', '하루 평균 120건 질문이 들어오며 대부분 처리 가능합니다.', '고객 질문이 하루 300건 넘게 들어옵니다.', '하루 100건 초과 거래 계좌를 추렸습니다.', '오늘 사용 횟수가 모두 기록되도록 했습니다.', '고객의 하루 질문 횟수가 모두 집계되었습니다.', '일일 이용 한도 초과 건을 집계했습니다.'] if relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
+check("사내AI 한도 문구: 하루 한도 말은 잡고, 평범한 짧은 답('오늘 요청하신 1번 작업…', '하루 평균 120건 요청…', '하루 100건 초과 거래…')은 잡지 않음", not _yes and not _no, [_yes, _no])
 
 # GET /status: 요청을 처리하는 중(잠금이 잡혀 있어도) 바로 지금 하는 일을 돌려줌
 _r17 = relay.Relay(A(), FakeLink([]))

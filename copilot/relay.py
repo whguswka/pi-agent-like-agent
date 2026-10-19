@@ -1205,7 +1205,7 @@ class Usage:
 
 USAGE = Usage()
 # 하루 한도 문구 (사용량 제한 중에서 '내일 다시' 로 알릴 것)
-DAILY_LIMIT_RE = re.compile(r"하루|일일|오늘|내일|daily|per day", re.I)
+DAILY_LIMIT_RE = re.compile(r"하루|일일|(?<!\d)1 ?일|오늘|내일|daily|per day", re.I)
 
 
 # ---------------------------------------------------------------------------
