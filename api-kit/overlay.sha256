@@ -1,6 +1,6 @@
-# overlay/ 가 대신하는 원래 파일의 sha256 (커밋 5e44750eb128887f2ded4a8af030613d27bf1266). 원래 키트에 없는 새 파일은 적지 않음
-c049447dd8fdacffa00f7a02f1475922a75ab5a4760f7088fbd95835147457fc  CHANGELOG.md
-5061404e0b96356e22180f6e8cd4a3c7ccad40a112050dafc6d0991365b82b5e  VERSION
+# overlay/ 가 대신하는 원래 파일의 sha256 (커밋 53653d50edda361a39efd9843c4473722310a3a2). 원래 키트에 없는 새 파일은 적지 않음
+04d0f49462792f8eb022a600b0cde82a475c4d5ea47531ac85ac66d54fe92c87  CHANGELOG.md
+cf6a519861ce436149a605ba1d7b1714b6fd6d737b54dca953a5871f95f10318  VERSION
 0cde89266bb4760fa896d781c47fb02dea3cfff0c528b4b52ba864919cd74801  bin/kit-config.sh
 69a4ebe54b6c8eba636646dad4fc2180fef10214d0d2607f0aec7bea6975c9f2  bin/pi
 d3894225d7bbeee6252620b6ed46bb8ed332b72aaad25e7dc2320d9fdba38d91  check-node.sh
