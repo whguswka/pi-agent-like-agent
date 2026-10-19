@@ -1104,8 +1104,10 @@ _lx.cfg = {"extra_rules": ["당신의 도구로 직접 실행하지 마세요."]
 _quiet(lambda: relay.Relay(A(), _lx).handle({"messages": _msgs, "tools": tools}))
 check("extra_rules: 첫 메시지의 진행 방식에 덧붙임", "표시는 무시하세요.\n- 당신의 도구로 직접 실행하지 마세요.\n" in _lx.sent_log[0]["parts"][0],
       _lx.sent_log[0]["parts"][0][:1200])
-check("inhouse.json: 답 끝 기다림 8초, 진행 중 줄은 비워 둠(내 설정 파일에), 자기 도구로 실행하지 말라는 규칙",
-      _kc["stable_seconds"] == 8.0 and _kc["reply_busy_lines"] == [] and any("도구" in r for r in _kc["extra_rules"]), _kc)
+check("inhouse.json: 답 끝 기다림 8초, 진행 중 줄은 비워 둠(내 설정 파일에), 자기 도구로 실행하지 말라는 규칙, git log 는 이메일 없이",
+      _kc["stable_seconds"] == 8.0 and _kc["reply_busy_lines"] == [] and any("도구" in r for r in _kc["extra_rules"])
+      and any("git log --format='%h %ad %s'" in r for r in _kc["extra_rules"])
+      and not relay.personal_values(" ".join(_kc["extra_rules"])), _kc)
 
 # 화면에서 읽은 답: 진행 중 줄, 코드 블록 다시 감싸기, 코드 안의 줄은 화면 문구로 지우지 않음
 _B = relay.bridge

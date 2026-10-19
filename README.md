@@ -377,8 +377,9 @@ pi --model gpt-5.6-sol-think         # 시작할 때 지정
     `계속` 을 쳐도 새 대화만 열리고 또 막히던 일이 없어집니다. 그 정보를 빼면 다시 보냅니다.
   - **pi 는 내 지침(`~/.pi/agent/AGENTS.md`)과 작업 폴더의 AGENTS.md 를 새 대화마다 첫 메시지에 넣습니다.** 여기에 이메일 주소나 전화번호를 적어 두면 사내AI 의 모든 새 대화가 막힙니다.
     Git 작성자 같은 값은 지침 대신 커밋하는 곳(PC 의 Git Bash 또는 노트북 터미널)의 `git config --global user.name` / `user.email` 에 두세요.
-  - `git log` 처럼 작성자 이메일이 찍히는 명령 결과도 막힙니다 (그때는 `/new`). 이메일이 필요 없으면 지침에 "`git log` 는 `git log --format='%h %ad %s' --date=short` 처럼 이메일 없이 본다" 를 적어 두세요.
-- 새 대화의 첫 메시지에는 '자기 도구(코드 실행, 파일 검색 등)로 직접 처리하지 말라' 는 규칙이 붙습니다 (`copilot/inhouse.json` 의 `extra_rules`). 자기 도구를 가진 채팅 서비스가 요청을 직접 처리하려다 '경로가 없다' 고 답하면, 중계 서버가 한 번 설명하고 작업 블록을 다시 부탁합니다.
+  - `git log` 처럼 작성자 이메일이 찍히는 명령 결과도 막힙니다 (그때는 `/new`). 2026-10-19.1 부터는 사내AI 의 기본 규칙(아래 `extra_rules`)에 'git log 는 이메일 없이 보라' 가 들어 있습니다.
+- 새 대화의 첫 메시지에는 '자기 도구(코드 실행, 파일 검색 등)로 직접 처리하지 말라' 는 규칙이 붙습니다 (`copilot/inhouse.json` 의 `extra_rules`).
+  2026-10-19.1 부터는 'git log·git show 는 작성자 이메일 주소가 나오지 않는 형식(`--format='%h %ad %s'`)으로 보라' 는 규칙도 붙습니다. 자기 도구를 가진 채팅 서비스가 요청을 직접 처리하려다 '경로가 없다' 고 답하면, 중계 서버가 한 번 설명하고 작업 블록을 다시 부탁합니다.
 - 확인: pi 가 일하지 않을 때 `python ~/tools/pi/copilot/diag.py --inhouse --send` (사내AI 에 새 대화로 시험 질문 하나를 보내 답과 명령 읽기를 확인).
 - 사내AI 설정을 바꿀 때는 `~/.pi/agent/inhouse.json` 에 적습니다 (Copilot 의 내 설정 파일과 따로). 항목은 `copilot/inhouse.json` 과 같습니다.
 
