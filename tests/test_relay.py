@@ -588,12 +588,15 @@ _off = FakeLink([_rb])
 _off.cfg = {}
 with _cl.redirect_stdout(_io.StringIO()):
     _ao = relay.Relay(A(), _off).handle({"messages": [_u], "tools": tools})
-check("multi_read 끔(사내AI 기본): 첫 블록 하나만, 안내 없음",
+check("multi_read 끔: 첫 블록 하나만, 안내 없음",
       len(_ao["tool_calls"]) == 1 and relay.MULTI_READ_RULE.format(n=5).strip() not in _off.sent_log[0]["parts"][0], _ao)
 import bridge as _bridge  # noqa: E402
-check("multi_read 기본값: Copilot 켜짐", _bridge.DEFAULT_CONFIG.get("multi_read") is True)
+check("multi_read·multi_write 기본값 켜짐", _bridge.DEFAULT_CONFIG.get("multi_read") is True and _bridge.DEFAULT_CONFIG.get("multi_write") is True)
 with open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8") as _f:
-    check("multi_read: 사내AI 설정은 꺼짐", json.load(_f).get("multi_read") is False)
+    _ih = json.load(_f)
+check("사내AI: 살펴보기·쓰기 한 번에도 기본값(켜짐), 하루 한도 200, 한도 문구", "multi_read" not in _ih and "multi_write" not in _ih
+      and _ih.get("daily_question_limit") == 200 and relay.re.search(_ih["throttle_pattern"], "사내AI는 일일 200회 질문이 가능합니다.")
+      and not relay.re.search(_ih["throttle_pattern"], "파일을 정리했습니다. 오늘 날짜로 저장했습니다."), _ih)
 
 # GET /status: 요청을 처리하는 중(잠금이 잡혀 있어도) 바로 지금 하는 일을 돌려줌
 _r17 = relay.Relay(A(), FakeLink([]))
@@ -1441,6 +1444,73 @@ check("감춰도 다른 것(전화번호)으로 막히면: 그 찾은 곳만 알
       and "이메일 주소" not in str(_eq).split("찾은 곳:")[-1] and _rq2.blocked == {"010-1234-5678"}, (str(_eq), _rq2.blocked))
 check("bridge 기본은 꺼짐, 사내AI 설정은 켜짐", relay.bridge.DEFAULT_CONFIG.get("redact_emails") is False
       and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("redact_emails") is True)
+
+# 서로 다른 파일 쓰기·고치기도 한 번에 (multi_write): 같은 파일, 쓰는 파일을 함께 읽기, 쓰기와 명령은 섞지 않음
+_c = lambda name, **a: {"name": name, "arguments": a}  # noqa: E731
+_bn = lambda calls, w=True: [c["name"] + ":" + str(c["arguments"].get("path") or c["arguments"].get("command")) for c in relay.batch_calls(calls, writes=w)]  # noqa: E731
+check("묶기: 읽기 + 서로 다른 파일 쓰기·고치기", _bn([_c("read", path="a.md"), _c("read", path="b.md"), _c("write", path="c.md", content="x"),
+                                          _c("edit", path="d.md", edits=[])]) == ["read:a.md", "read:b.md", "write:c.md", "edit:d.md"])
+check("묶기: 같은 파일을 두 번 쓰면 거기서 멈춤", _bn([_c("write", path="a.md", content="1"), _c("edit", path="./a.md", edits=[])]) == ["write:a.md"])
+check("묶기: 쓰는 파일을 함께 읽으면 멈춤 (동시에 실행되므로)", _bn([_c("read", path="a.md"), _c("write", path="a.md", content="1")]) == ["read:a.md"]
+      and _bn([_c("write", path="a.md", content="1"), _c("read", path="a.md")]) == ["write:a.md"])
+check("묶기: 쓰기와 명령은 섞지 않음 (읽기만 하는 명령도)", _bn([_c("write", path="a.md", content="1"), _c("bash", command="ls")]) == ["write:a.md"]
+      and _bn([_c("bash", command="ls"), _c("write", path="a.md", content="1")]) == ["bash:ls"])
+check("묶기: 5개까지, writes 가 꺼져 있으면 쓰기는 묶지 않음", len(relay.batch_calls([_c("write", path="f{}.md".format(i), content="x") for i in range(7)], writes=True)) == 5
+      and _bn([_c("read", path="a.md"), _c("write", path="b.md", content="1")], False) == ["read:a.md"])
+_wb = "".join('```json\n' + json.dumps({"tool": "write", "arguments": {"path": "docs/n{}.md".format(i), "content": "# {}".format(i)}}) + '\n```\n' for i in range(3))
+_lw = FakeLink([_wb, "정리했습니다"])
+_lw.cfg = {"multi_read": True, "multi_write": True}
+_aw3 = _quiet(lambda: relay.Relay(A(), _lw).handle({"messages": [_u], "tools": tools}))
+check("multi_write 켬: 서로 다른 파일 쓰기 3개를 한 번에, 진행 방식에 쓰기도 묶어도 된다는 안내",
+      [json.loads(t["function"]["arguments"])["path"] for t in _aw3.get("tool_calls", [])] == ["docs/n0.md", "docs/n1.md", "docs/n2.md"]
+      and relay.MULTI_WRITE_RULE.format(n=5).strip() in _lw.sent_log[0]["parts"][0], (_aw3, _lw.sent_log[0]["parts"][0][-800:]))
+# 오늘 보낸 질문 수: 서비스에 보낸 조각마다 하나 (파일에 남아 중계 서버를 다시 켜도 이어 셈, 날짜가 바뀌면 0부터)
+_up = os.path.join(_tmp, "inhouse-usage.json")
+_old_usage, relay.USAGE = relay.USAGE, relay.Usage(_up, 200)
+try:
+    _lu = relay.CopilotLink({"cdp_port": 1, "copilot_url_contains": "x"}, None)
+    _lu.cop, _lu.pace = _CopParts(["OK", "답"]), (lambda: None)
+    _quiet(lambda: _lu.request(relay.build_parts("가" * 15000, 10000, "[pi-aaaaaa]"), True))
+    check("오늘 질문 수: 나눠 보낸 조각마다 하나", relay.USAGE.today() == 2 and relay.Usage(_up, 200).today() == 2, relay.USAGE.today())
+    with open(_up, "w", encoding="utf-8") as _f:
+        json.dump({"day": "2000-01-01", "n": 150}, _f)
+    check("오늘 질문 수: 날짜가 바뀌면 0부터", relay.Usage(_up, 200).today() == 0)
+
+    class _ThrCop(_CopParts):
+        def wait_reply(self, marker):
+            raise relay.bridge.Throttled("사내AI는 일일 200회 질문이 가능합니다.")
+
+    _lu.cop = _ThrCop([])
+    try:
+        _quiet(lambda: _lu.request(["질문\n\n[pi-bbbbbb]"], False))
+        _et = None
+    except relay.RelayError as e:
+        _et = e
+    check("하루 한도 문구: 429 + '하루 질문 한도에 닿았습니다' + 오늘 보낸 수 (같은 대화에 이어서)", _et is not None and _et.status == 429
+          and "하루 질문 한도에 닿았습니다" in str(_et) and "오늘 이 PC 에서 보낸 질문 2개" in str(_et) and "몇 분~수십 분" not in str(_et), str(_et))
+    check("하루 한도에 닿으면: 막힌 질문을 뺀 수(2)를 새 추정치로, 그때를 기록 (파일에 남음)", relay.USAGE.limit == 2
+          and relay.USAGE.hits[-1]["n"] == 2 and relay.Usage(_up, 200).limit == 2 and relay.Usage(_up, 200).hits[-1]["n"] == 2,
+          (relay.USAGE.limit, relay.USAGE.hits))
+    relay.USAGE.add()
+    relay.USAGE.add()
+    check("추정치를 넘겨도 막히지 않으면 그 수로 올림 (한도는 적어도 이만큼)", relay.USAGE.limit == relay.USAGE.today() == 5,
+          (relay.USAGE.limit, relay.USAGE.today()))
+    _r18 = relay.Relay(A(), FakeLink([]))
+    _srv4 = _Srv(("127.0.0.1", 0), relay.make_handler(_r18, None, {"cdp_port": 1, "service_name": "사내AI"}))
+    _th.Thread(target=_srv4.serve_forever, daemon=True).start()
+    import urllib.request as _ureq  # noqa: E402
+    _mem = json.loads(_ureq.urlopen("http://127.0.0.1:{}/memory".format(_srv4.server_address[1]), timeout=10).read())
+    check("/memory: 오늘 보낸 질문 수와 추정 한도 (pi 상태 줄용)", _mem.get("questions_today") == relay.USAGE.today()
+          and _mem.get("question_limit") == relay.USAGE.limit == 5 and _mem.get("service") == "사내AI", _mem)
+    _srv4.shutdown()
+    with open(_up, "w", encoding="utf-8") as _f:
+        json.dump({"day": "2000-01-01", "n": 150, "limit": 180, "hits": [{"day": "2000-01-01", "time": "14:03", "n": 180}]}, _f)
+    _u2 = relay.Usage(_up, 200)
+    check("날짜가 바뀌어도 추정 한도와 기록은 남음 (오늘 수만 0부터)", _u2.today() == 0 and _u2.limit == 180 and _u2.hits[0]["n"] == 180,
+          (_u2.today(), _u2.limit, _u2.hits))
+    check("처음(기록 없음)은 설정값", relay.Usage(os.path.join(_tmp, "none-usage.json"), 200).limit == 200)
+finally:
+    relay.USAGE = _old_usage
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

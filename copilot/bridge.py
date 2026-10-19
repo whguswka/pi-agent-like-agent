@@ -56,13 +56,18 @@ DEFAULT_CONFIG = {
     "max_questions_per_minute": 0,  # 0 이면 끔. Copilot 사용량 제한을 피하려면 분당 질문 수 상한을 넣음
     # 메시지 크기: Copilot 메시지 하나의 최대 글자 수(넘으면 나눠 보내고, 조각마다 왕복 한 번), 도구 결과 하나의 최대 글자 수,
     #  새 대화를 열 때 다시 넣는 기록 (최근 것은 그대로 resend_recent_chars, 그 앞은 한 줄 요약 resend_summary_chars)
-    "max_chars": 10000,
-    "tool_result_chars": 6000,
+    "max_chars": 60000,  # Copilot 입력창은 128,000자까지 받음 (2026-10-19 실측). 서버 처리·붙여넣기 시간을 생각해 그 절반쯤
+    "tool_result_chars": 12000,
     "resend_recent_chars": 20000,
     "resend_summary_chars": 40000,
     # 살펴보기만 하는 작업(read, 읽기만 하는 bash 명령 등) 블록을 한 답에 여러 개(5개까지) 받아 한 번에 실행 (왕복 횟수 줄이기).
     #  고치기·명령 실행은 그대로 하나씩. 사내AI(inhouse.json)는 꺼 둠
     "multi_read": True,
+    # 서로 다른 파일 쓰기·고치기(write·edit)도 한 답에 여러 개(5개까지) 받아 한 번에 실행 (multi_read 와 함께). 명령·같은 파일은 하나씩
+    "multi_write": True,
+    # 서비스의 하루 질문 한도 처음 추정치 (0 이면 모름). 한도에 닿을 때의 질문 수로 고쳐 가며 pi 상태 줄에 '오늘 n/~한도',
+    #  90% 를 넘으면 알림 (사내AI 200: inhouse.json)
+    "daily_question_limit": 0,
     # 그림: pi 가 보낸 그림(그래프 등)을 Copilot 입력창에 붙여 함께 보냄 (사내AI 는 inhouse.json 에서 끔).
     #  image_attach: auto(붙여넣기 -> 끌어다 놓기 -> 파일 선택 칸 차례로) | paste | drop | file | none
     "send_images": True,

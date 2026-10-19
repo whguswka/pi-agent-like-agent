@@ -197,11 +197,16 @@ REMIND_EVERY = 10
 PROTOCOL_REMINDER = ("(참고 - 진행 방식: 요청이 끝났으면 코드 블록 없이 최종 답을 주세요. 더 할 작업이 있으면 다음 작업 하나만 "
                      "```json {{\"tool\": \"<도구>\", \"arguments\": {{...}}}}``` 블록으로 주세요 (파일 전체 쓰기는 "
                      "```text @tool write path=<경로> ...```).{multi_read} 이미 한 작업을 똑같이 반복하지 마세요. 도구: {tools}.)")
-# multi_read (bridge.json, 기본 켜짐. 사내AI 는 꺼짐): 살펴보기만 하는 작업(read, 읽기만 하는 bash 명령 등)은 블록 여러 개를
-#  한 번에 받는다 (왕복 횟수 줄이기). pi 는 한 답의 도구들을 동시에 실행하므로, 순서가 중요한 쓰기·명령 실행은 지금처럼 하나씩
+# multi_read (기본 켜짐): 살펴보기만 하는 작업(read, 읽기만 하는 bash 명령 등)은 블록 여러 개를 한 번에 받는다 (왕복 횟수 줄이기).
+# multi_write (기본 켜짐, multi_read 와 함께): 서로 다른 파일 쓰기·고치기(write·edit)도 한 번에.
+#  pi 는 한 답의 도구들을 확인(위험 명령·작업 모드)은 차례로, 실행은 동시에 하므로 명령 실행·같은 파일 고치기는 지금처럼 하나씩
 MULTI_READ_RULE = (" 단, 살펴보기만 하는 작업(read, 그리고 ls·cat·grep·git status·kubectl get·pip list 처럼 읽기만 하는 bash 명령)은 "
                    "블록 여러 개({n}개까지)를 한 번에 써도 됩니다 (결과를 한꺼번에 드립니다). 파일을 바꾸거나 앞 결과를 보고 정할 작업은 하나씩 써 주세요.")
+MULTI_WRITE_RULE = (" 단, 살펴보기만 하는 작업(read, 그리고 ls·cat·grep·git status·kubectl get·pip list 처럼 읽기만 하는 bash 명령)과 "
+                    "서로 다른 파일을 쓰거나 고치는 작업(write·edit)은 블록 여러 개({n}개까지)를 한 번에 써도 됩니다 (결과를 한꺼번에 드립니다). "
+                    "명령 실행, 같은 파일을 여러 번 고치는 작업, 앞 결과를 보고 정할 작업은 하나씩 써 주세요.")
 MULTI_READ_HINT = " 살펴보기만 하는 작업(read, 읽기만 하는 명령)은 블록 여러 개를 한 번에 써도 됩니다."
+MULTI_WRITE_HINT = " 살펴보기만 하는 작업과 서로 다른 파일 쓰기·고치기는 블록 여러 개를 한 번에 써도 됩니다."
 
 # 같은 도구 호출(도구·인자 같음)이 연달아 반복되면 끊는다 (시험: 같은 write 를 8초마다 60번 넘게 반복한 일이 있었음)
 LOOP_LIMIT = 2  # 직전에 이미 연속 2번 같은 호출이 있었으면 3번째는 반복으로 본다
@@ -1092,6 +1097,103 @@ def look_call(call):
     return call["name"] in LOOK_TOOLS or (call["name"] == "bash" and read_only_command(args.get("command")))
 
 
+WRITE_TOOLS = {"write", "edit"}
+
+
+def batch_calls(found, writes=False, limit=BATCH_MAX):
+    """맨 앞부터 한 번에 돌려도 되는 도구 호출들: 살펴보기(look_call)는 늘, writes 면 서로 다른 파일 쓰기·고치기(write·edit)도.
+    pi 는 실행을 동시에 하므로, 같은 파일을 두 번 쓰거나 쓰는 파일을 함께 읽는 것, 쓰기와 명령·폴더 살펴보기(같은 파일을 볼 수 있음)를
+    섞는 것은 거기서 멈춘다 (그 뒤는 다음 차례)"""
+    out, wrote, read, other = [], set(), set(), False
+    for c in found:
+        if len(out) >= limit:
+            break
+        a = c.get("arguments") or {}
+        p = os.path.normpath(str(a.get("path"))).replace("\\", "/").lower() if isinstance(a.get("path"), str) and a.get("path") else ""
+        if writes and c["name"] in WRITE_TOOLS and p:
+            if other or p in wrote or p in read:
+                break
+            wrote.add(p)
+        elif look_call(c):
+            if c["name"] == "read" and p:
+                if p in wrote:
+                    break
+                read.add(p)
+            else:  # 명령·폴더 살펴보기·위키: 쓰기와 섞지 않음
+                if wrote:
+                    break
+                other = True
+        else:
+            break
+        out.append(c)
+    return out
+
+
+# 오늘 보낸 질문 수: 중계 서버가 서비스에 보낸 메시지(나눠 보낸 조각·다시 부탁 포함) 수를 하루마다 센다 (이 PC 의 파일에, 내용 없이).
+#  하루 한도는 운영 쪽에서 알림 없이 바뀌므로 기록에서 추정한다: 처음은 설정값(daily_question_limit, 사내AI 200),
+#  한도에 닿았다는 답이 오면 그때까지 보낸 수(막힌 질문 빼고)로 고치고, 추정치를 넘겨도 막히지 않으면 그 수로 올린다.
+#  닿은 때의 기록(날짜·시각·질문 수)은 최근 20개를 남긴다 (diag.py --limits). 전용 창에 직접 친 질문은 세지 못하고,
+#  날짜는 이 PC 의 날짜로 바뀐다 (서비스의 기준과 다를 수 있음)
+class Usage:
+    def __init__(self, path="", limit=0):
+        self.path, self.limit, self.lock = path, int(limit or 0), threading.Lock()
+        self.day, self.n, self.hits = time.strftime("%Y-%m-%d"), 0, []
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+            if d.get("day") == self.day:
+                self.n = int(d.get("n") or 0)
+            if int(d.get("limit") or 0) > 0:  # 기록에서 고친 추정치 (설정값보다 먼저)
+                self.limit = int(d["limit"])
+            self.hits = [h for h in d.get("hits") or [] if isinstance(h, dict)][-20:]
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+
+    def _save(self):
+        if not self.path:
+            return
+        try:
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"day": self.day, "n": self.n, "limit": self.limit, "hits": self.hits}, f, ensure_ascii=False)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+    def _roll(self):
+        today = time.strftime("%Y-%m-%d")
+        if today != self.day:
+            self.day, self.n = today, 0
+
+    def add(self, k=1):
+        with self.lock:
+            self._roll()
+            self.n += k
+            if self.limit and self.n > self.limit:  # 추정치를 넘겼는데 막히지 않음 -> 한도는 적어도 이만큼
+                self.limit = self.n
+            self._save()
+
+    def hit(self):
+        """한도에 닿았다는 답: 막힌 질문을 뺀 수를 새 추정치로, 그 때를 기록"""
+        with self.lock:
+            self._roll()
+            allowed = max(0, self.n - 1)
+            self.hits = (self.hits + [{"day": self.day, "time": time.strftime("%H:%M"), "n": allowed}])[-20:]
+            if allowed:
+                self.limit = allowed
+            self._save()
+            return allowed
+
+    def today(self):
+        with self.lock:
+            return self.n if self.day == time.strftime("%Y-%m-%d") else 0
+
+
+USAGE = Usage()
+# 하루 한도 문구 (사용량 제한 중에서 '내일 다시' 로 알릴 것)
+DAILY_LIMIT_RE = re.compile(r"하루|일일|오늘|내일|daily|per day", re.I)
+
+
 # ---------------------------------------------------------------------------
 # Copilot 탭 (같은 프로세스에서 bridge.Copilot 으로 직접 조작)
 # ---------------------------------------------------------------------------
@@ -1366,6 +1468,7 @@ class CopilotLink:
                     self.cop.send(part, images=images)
                 else:
                     self.cop.send(part)
+                USAGE.add()
                 self.asked += 1
                 set_phase("답 기다리는 중{}".format(" ({}/{})".format(i, len(parts)) if len(parts) > 1 else ""))
                 reply = self.cop.wait_reply(m.group(0).strip())
@@ -1394,6 +1497,10 @@ class CopilotLink:
         except bridge.Throttled as e:
             # 계정 단위 사용량 제한: 새 대화를 열어도 같은 답이 오므로 열지 않고, 지금 대화는 나중에 그대로 이어 쓴다
             self.throttled_at = time.time()
+            if DAILY_LIMIT_RE.search(str(e)):
+                n = USAGE.hit()
+                raise RelayError(429, "Copilot 하루 질문 한도에 닿았습니다: {}. 오늘 이 PC 에서 보낸 질문 {}개 (다음부터는 이 수를 한도로 "
+                                      "어림합니다). 한도가 풀린 뒤(보통 다음 날) 다시 하세요 (같은 Copilot 대화에 이어서 보냅니다).".format(e, n))
             raise RelayError(429, "Copilot 사용량 제한에 걸렸습니다: {}. 몇 분~수십 분 뒤 다시 시도하세요 "
                                   "(같은 Copilot 대화에 이어서 보냅니다).".format(e))
         except bridge.ThreadReset as e:
@@ -1506,6 +1613,9 @@ class Relay:
 
     def multi_read(self):
         return bool((getattr(self.link, "cfg", None) or {}).get("multi_read"))
+
+    def multi_write(self):
+        return bool((getattr(self.link, "cfg", None) or {}).get("multi_write"))
 
     def out(self, text):
         """보낼 글. redact_emails 면 이메일 주소를 [이메일N] 으로"""
@@ -1648,7 +1758,8 @@ class Relay:
         else:
             kind = "internal"
         st = self.stat or {}
-        ev = {"ev": "err", "kind": kind, "status": getattr(e, "status", None), "ms": int((time.time() - st.get("t0", time.time())) * 1000),
+        ev = {"ev": "err", "kind": kind, "status": getattr(e, "status", None), "q_today": USAGE.today(),
+              "ms": int((time.time() - st.get("t0", time.time())) * 1000),
               "new": st.get("new", False), "parts": st.get("parts", 0), "asks": st.get("asks", 0), "model": self.model_label,
               "chat_q": getattr(self.link, "asked", None), "turns_left": getattr(self.link, "turns_left", None)}
         # 안내 문구는 서비스·중계 서버가 만든 정해진 문구일 때만 (이 PC 안에서만 보며 요약에는 안 나옴).
@@ -1715,7 +1826,7 @@ class Relay:
                 self.reminded_at = 0
             if tool_names and asked >= REMIND_AFTER and asked - self.reminded_at >= REMIND_EVERY:
                 text += "\n\n" + PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)),
-                                                         multi_read=MULTI_READ_HINT if self.multi_read() else "")
+                                                         multi_read=(MULTI_WRITE_HINT if self.multi_write() else MULTI_READ_HINT) if self.multi_read() else "")
                 self.reminded_at = asked
             parts = build_parts(self.out(text), self.args.max_chars, marker)
             new_thread = False
@@ -1784,19 +1895,18 @@ class Relay:
             calls = [call]
             found = [dict(c, arguments=self.redactor.restore(c["arguments"])) for c in reply_calls(reply, tool_names)]
             if found and found[0] == call:
-                if self.multi_read() and look_call(call):
-                    k = 1
-                    while k < len(found) and k < BATCH_MAX and look_call(found[k]):
-                        k += 1
-                    calls = found[:k]
-                    if k > 1:
-                        self.log("  (살펴보기 {}개를 한 번에: {})".format(k, ", ".join(c["name"] for c in calls)))
+                batch = batch_calls(found, writes=self.multi_write()) if self.multi_read() else []
+                if len(batch) > 1:
+                    calls = batch
+                    self.log("  (도구 {}개를 한 번에: {})".format(len(calls), ", ".join(c["name"] for c in calls)))
                 left = len(found) - len(calls)
                 if left:  # 실행하지 않은 블록은 다음 메시지에 알림 (Copilot 이 실행된 줄로 알고 넘어가지 않게)
                     self.log("  (도구 블록 {}개 중 {}개만 실행)".format(len(found), len(calls)))
-                    self.unrun_note = ("(앞 답의 도구 블록 {}개 중 {}만 실행했습니다. 파일을 바꾸거나 앞 결과를 보고 정할 작업은 하나씩 "
+                    one_by_one = ("명령 실행, 같은 파일을 여러 번 고치는 작업, 앞 결과를 보고 정할 작업은" if self.multi_write()
+                                  else "파일을 바꾸거나 앞 결과를 보고 정할 작업은")
+                    self.unrun_note = ("(앞 답의 도구 블록 {}개 중 {}만 실행했습니다. {} 하나씩 "
                                        "주세요. 나머지가 아직 필요하면 다시 주세요.)").format(
-                        len(found), "첫 번째" if len(calls) == 1 else "앞의 {}개".format(len(calls)))
+                        len(found), "첫 번째" if len(calls) == 1 else "앞의 {}개".format(len(calls)), one_by_one)
             assistant = {"role": "assistant", "content": body_text or None, "tool_calls": [{
                 "id": "call_" + uuid.uuid4().hex[:12], "type": "function",
                 "function": {"name": c["name"], "arguments": json.dumps(c["arguments"], ensure_ascii=False)}} for c in calls]}
@@ -1812,7 +1922,8 @@ class Relay:
         rules = (getattr(self.link, "cfg", None) or {}).get("extra_rules") or []  # 서비스별로 덧붙일 진행 규칙
         rules = [rules] if isinstance(rules, str) else rules
         head = PREAMBLE.format(tag=PROTOCOL_TAG, tools=render_tools(tools), system=system_for_copilot(system),
-                               multi_read=MULTI_READ_RULE.format(n=BATCH_MAX) if self.multi_read() and "read" in names_of(tools) else "",
+                               multi_read=(MULTI_WRITE_RULE if self.multi_write() else MULTI_READ_RULE).format(n=BATCH_MAX)
+                               if self.multi_read() and "read" in names_of(tools) else "",
                                extra="".join("\n- " + r.strip() for r in rules if r and r.strip()))
         convo = [m for m in messages if m.get("role") not in ("system", "developer")]
         # 새 대화에 다시 넣는 기록: 최근 것은 그대로(full_budget), 그 앞은 한 줄 요약(brief_budget), 더 오래된 것은 생략
@@ -2019,7 +2130,8 @@ def make_handler(relay, jup, cfg, lanes=None):
             b = MEMORY["browser"] or {}
             return {"browser_mb": b.get("mb"), "browser_top_mb": b.get("top_mb"), "browser_procs": b.get("procs"),
                     "relay_mb": round(MEMORY["relay"] / 1048576) if MEMORY["relay"] else None,
-                    "warn_mb": int(cfg.get("memory_warn_mb") or 0), "service": cfg.get("service_name") or "Copilot"}
+                    "warn_mb": int(cfg.get("memory_warn_mb") or 0), "service": cfg.get("service_name") or "Copilot",
+                    "questions_today": USAGE.today(), "question_limit": USAGE.limit}
 
         def do_GET(self):
             u = urllib.parse.urlsplit(self.path)
@@ -2204,7 +2316,9 @@ def main():
         args.host, args.port, RELAY_VERSION, cfg["cdp_port"], args.max_chars, args.config if os.path.exists(args.config) else "기본값",
         " + 내 설정 {}개 ({}: {})".format(len(user["keys"]), user["path"], ", ".join(user["keys"])) if user["keys"] else ""))
     # 끊김·제한 기록 (내용 없이, 이 PC 의 파일에만). 끄려면 내 설정 파일에 "collect_events": false
-    global EVENTS
+    global EVENTS, USAGE
+    ev_path = args.events or os.path.join(bridge.agent_dir(), "relay-events.jsonl")
+    USAGE = Usage(re.sub(r"(-events)?\.jsonl$", "", ev_path) + "-usage.json", cfg.get("daily_question_limit"))
     EVENTS = events.EventLog(args.events or os.path.join(bridge.agent_dir(), "relay-events.jsonl"),
                              svc=cfg.get("service_name") or "Copilot", enabled=cfg.get("collect_events", True))
     EVENTS.write({"ev": "start", "ver": RELAY_VERSION, "port": args.port, "stream": bool(cfg.get("use_stream")),

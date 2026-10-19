@@ -283,6 +283,17 @@ def limits(days=7):
     import events
     for line in events.summarize(load_events(days), days):
         print(line)
+    # 오늘 보낸 질문 수와 하루 한도 추정 (중계 서버가 센 것. 한도에 닿을 때의 질문 수로 고쳐 감)
+    for name, svc in (("relay-usage.json", "Copilot"), ("inhouse-usage.json", "사내AI")):
+        try:
+            with open(os.path.join(bridge.agent_dir(), name), encoding="utf-8") as f:
+                u = json.load(f)
+        except (OSError, ValueError):
+            continue
+        today = int(u.get("n") or 0) if u.get("day") == time.strftime("%Y-%m-%d") else 0
+        hits = ["{} {} {}개".format(str(h.get("day", ""))[5:], h.get("time", ""), h.get("n")) for h in (u.get("hits") or [])[-5:]]
+        print("== {} 질문: 오늘 {}개 · 추정 한도 {} · 한도에 닿은 때 {}".format(
+            svc, today, "~{}".format(u["limit"]) if u.get("limit") else "모름", ", ".join(hits) or "기록 없음"))
     print("  (기록: {} · 내용 없이 횟수·시간만 · 끄기: 내 설정 파일에 \"collect_events\": false)".format(
         ", ".join("~/.pi/agent/" + n for n in EVENT_FILES)))
     return 0
