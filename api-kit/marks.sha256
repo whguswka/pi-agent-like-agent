@@ -1,4 +1,4 @@
-# 원래 키트 문서에서 API 키트와 짝을 이룬 글의 sha256 앞 12자리 (커밋 673681d7685b0a2046e680412bd6641b21dcf5ce). api-kit/make-api-kit.sh --update-sha 가 적음
+# 원래 키트 문서에서 API 키트와 짝을 이룬 글의 sha256 앞 12자리 (커밋 5e44750eb128887f2ded4a8af030613d27bf1266). api-kit/make-api-kit.sh --update-sha 가 적음
 #  'api:바꾸기' 블록 안 글과 'api=' 줄의 원래 키트 쪽 글. 바뀌면 API 키트 만들기가 멈춤: API 키트 글(조각, api= 뒤)도 고쳐야 하는지 보고 --update-sha
 23a9a8a483a2	docs/반입-검토-요청서.md	바꾸기 제목
 48487625bbdf	docs/반입-검토-요청서.md	api=
@@ -81,7 +81,7 @@ be78cff8bcb6	README.md	api=
 f2ca8164ebfd	README.md	바꾸기 3-3
 29d8856e8309	README.md	api=
 a26ca93ab221	README.md	바꾸기 3-7
-b579b66eef18	README.md	바꾸기 4장
+44254f174074	README.md	바꾸기 4장
 2d2b500f954d	README.md	api=
 0ef93a5ed82e	README.md	api=
 5048cb94f356	README.md	api=
@@ -105,5 +105,5 @@ a1fc24fbe1a1	README.md	바꾸기 8장-파일
 448622156c20	README.md	api=
 a9b01cc571f2	README.md	바꾸기 8장-끝
 e9144b473784	README.md	api=
-51863b714646	README.md	바꾸기 9장-표
+562c19a8a643	README.md	바꾸기 9장-표
 576f402d6f2e	README.md	바꾸기 10장
