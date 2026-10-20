@@ -14,7 +14,8 @@
  *   auto: 위키가 켜져 있을 때 모델이 알아서 위키를 쓰는 정도 (write: 찾고 남김, ask: 찾고 남길지 물음, search: 찾기만, off: 부탁할 때만)
  */
 
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
@@ -25,10 +26,13 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // ---------------------------------------------------------------------------
 
 export type Auto = "write" | "ask" | "search" | "off";
+/** 작업 방식 배우기: auto(내 지침에 자동으로) | propose(제안만 모음) | off. 설정에 없으면 auto 를 따름 (lessonMode) */
+export type LessonMode = "auto" | "propose" | "off";
 export interface Config {
 	wikis: Record<string, string>;
 	active: string;
 	auto: Auto;
+	lessons?: LessonMode;
 }
 const agentDir = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 export const configFile = () => join(agentDir(), "wiki.json");
@@ -56,7 +60,8 @@ export function readConfig(file = configFile()): Config {
 		const v = JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, ""));
 		const auto: Auto = ["write", "ask", "search", "off"].includes(v.auto) ? v.auto : "write";
 		const wikis = v.wikis && typeof v.wikis === "object" && !Array.isArray(v.wikis) ? v.wikis : {};
-		return { wikis, active: typeof v.active === "string" ? v.active : "", auto };
+		const lessons: LessonMode | undefined = ["auto", "propose", "off"].includes(v.lessons) ? v.lessons : undefined;
+		return { wikis, active: typeof v.active === "string" ? v.active : "", auto, ...(lessons ? { lessons } : {}) };
 	} catch {
 		return { wikis: {}, active: "", auto: "write" };
 	}
@@ -801,13 +806,249 @@ export function initWiki(root: string, name: string, date = today()): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// 작업 방식 배우기 (harness2 처럼 에이전트의 지침을 다듬되, 다시 실행해 비교하지 않는 가벼운 방식)
+//  - 위키를 쓸 때 같은 wiki_write 의 '=== 작업 방식' 부분에 일하는 방식의 고칠 점(사용자가 바로잡은 것, 되풀이한 실수,
+//    오래 헤맨 까닭)을 한 줄씩 받는다. 사실·지식은 위키 페이지. 도구를 따로 부르면 Copilot·사내AI 질문이 한 번 더 들어서 같은 호출로
+//  - 자동으로 고치는 곳은 내 지침(~/.pi/agent/AGENTS.md)의 '작업 방식' 부분뿐 (jupyter 모드에서도 PC 파일). 줄 수·글자 수 한도,
+//    같은 줄은 횟수만 올림, 넘치면 덜 쓰이고 오래된 줄부터 lessons/archive.md 로. 날짜 표시가 없는 줄(사람이 쓰거나 표시를 지운 줄)은 그대로
+//  - 스킬·프로젝트 지침·이미 있는 규칙을 바꿔야 하면 '=== 제안' -> lessons/proposals.md 에 모으고 알림 (사람이 보고 적용)
+//  - 고치기 전 지침은 lessons/ 에 남기고 /wiki lessons undo 로 되돌림. 원본 반영(ingest) 중에는 남기지 않음
+//  - 이메일·전화번호·비밀로 보이는 줄은 남기지 않음 (중계 서버가 [이메일N] 을 원래 주소로 되돌려 넘기므로)
+//  - wiki.json 의 lessons: "auto" | "propose" | "off" (없으면 auto 가 write 면 auto, ask 면 propose, 그 밖은 off)
+// ---------------------------------------------------------------------------
+
+export const LESSON_MAX_LINES = 10;
+export const LESSON_MAX_CHARS = 1200;
+export const LESSON_PER_WRITE = 3;
+const LESSON_LINE_CHARS = 200;
+const LESSON_BACKUPS = 10;
+const LESSON_START = "<!-- kit lessons -->";
+const LESSON_END = "<!-- /kit lessons -->";
+const LESSON_HEAD = "## 작업 방식 (위키를 쓸 때 pi 가 배운 것. 고치거나 지워도 되고, 끝의 날짜 표시를 지운 줄은 pi 가 건드리지 않음)";
+const LESSON_SECTION = /^작업\s*방식$/;
+const PROPOSAL_SECTION = /^제안$/;
+const SECRETISH =
+	/[\w.+-]+@[\w-]+(\.[\w-]+)+|\[이메일\d+\]|(?<!\d)0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}(?!\d)|(password|passwd|비밀번호|암호|토큰|token|secret|api[_ -]?key)\s*[:=]/i;
+
+export function lessonMode(cfg: { auto: Auto; lessons?: LessonMode }): LessonMode {
+	if (cfg.lessons === "auto" || cfg.lessons === "propose" || cfg.lessons === "off") return cfg.lessons;
+	return cfg.auto === "write" ? "auto" : cfg.auto === "ask" ? "propose" : "off";
+}
+export const lessonsDir = () => join(agentDir(), "lessons");
+export const agentsFile = () => join(agentDir(), "AGENTS.md");
+/** 이메일·전화번호·비밀로 보이는 글 */
+export const secretish = (s: string) => SECRETISH.test(s);
+
+/** wiki_write 의 글에서 '=== 작업 방식'(한 줄씩)·'=== 제안'(부분마다 하나) 을 떼어 냄. 나머지(페이지들)는 그대로 */
+export function splitLessons(text: string): { pages: string; lessons: string[]; proposals: string[] } {
+	const lessons: string[] = [];
+	const proposals: string[] = [];
+	const keep: string[] = [];
+	let mode = "";
+	let prop: string[] = [];
+	const flush = () => {
+		const t = prop.join("\n").trim();
+		if (t) proposals.push(t);
+		prop = [];
+	};
+	for (const line of text.replace(/\r\n/g, "\n").split("\n")) {
+		const m = /^===\s+(\S.*?)\s*$/.exec(line);
+		if (m) {
+			if (mode === "proposal") flush();
+			mode = LESSON_SECTION.test(m[1]) ? "lesson" : PROPOSAL_SECTION.test(m[1]) ? "proposal" : "page";
+			if (mode === "page") keep.push(line);
+		} else if (mode === "lesson") {
+			const t = line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, "").trim();
+			if (t) lessons.push(t);
+		} else if (mode === "proposal") prop.push(line);
+		else keep.push(line);
+	}
+	if (mode === "proposal") flush();
+	return { pages: keep.join("\n"), lessons, proposals };
+}
+
+type Lesson = { text: string; date: string; n: number; pinned: boolean; raw?: string };
+const LESSON_LINE = /^- (.*?)(?: \((\d{4}-\d{2}-\d{2})(?:, (\d+)번)?\))?\s*$/;
+const lessonKey = (s: string) => s.toLowerCase().replace(/[\s.,!?·'"`()[\]~:;/-]+/g, "");
+const fmtLesson = (l: Lesson) => l.raw ?? (l.pinned ? `- ${l.text}` : `- ${l.text} (${l.date}${l.n > 1 ? `, ${l.n}번` : ""})`);
+
+export interface LessonResult {
+	text: string;
+	added: string[];
+	bumped: string[]; // 이미 있던 줄 (횟수 올림, 사람이 쓴 줄이면 그대로)
+	dropped: string[]; // 한도를 넘어 뺀 줄
+	rejected: string[]; // 개인정보·비밀로 보여 남기지 않은 줄
+	skipped: string[]; // 한 번에 받는 수를 넘음
+	full: boolean; // 한도 때문에 뺀 줄이 있음
+	changed: boolean;
+}
+
+/** 지침 글의 '작업 방식' 부분에 줄 더하기 (없으면 끝에 만듦). 같은 줄은 횟수·날짜만, 한도를 넘으면 날짜 표시가 있는 줄 가운데 덜 쓰이고 오래된 것부터 뺌 */
+export function putLessons(agents: string, items: string[], date: string, maxLines = LESSON_MAX_LINES, maxChars = LESSON_MAX_CHARS): LessonResult {
+	const eol = agents.includes("\r\n") ? "\r\n" : "\n";
+	const res: LessonResult = { text: agents, added: [], bumped: [], dropped: [], rejected: [], skipped: items.slice(LESSON_PER_WRITE), full: false, changed: false };
+	const a = agents.indexOf(LESSON_START);
+	const b = a < 0 ? -1 : agents.indexOf(LESSON_END, a);
+	const inner = a >= 0 && b > a ? agents.slice(a + LESSON_START.length, b).split(/\r?\n/) : [];
+	let list: Lesson[] = inner
+		.filter((l) => l.trim() && !/^#{1,6}\s/.test(l.trim()))
+		.map((l) => {
+			const m = LESSON_LINE.exec(l.trim());
+			if (!m) return { text: l.trim(), date: "", n: 0, pinned: true, raw: l.trim() };
+			return { text: m[1].trim(), date: m[2] || "", n: Number(m[3]) || 1, pinned: !m[2] };
+		});
+	for (const item of items.slice(0, LESSON_PER_WRITE)) {
+		let t = item.replace(/\s+/g, " ").trim();
+		if (!t) continue;
+		if (secretish(t)) {
+			res.rejected.push(t);
+			continue;
+		}
+		if (t.length > LESSON_LINE_CHARS) t = `${t.slice(0, LESSON_LINE_CHARS - 1)}…`;
+		const k = lessonKey(t);
+		const same = list.find((l) => {
+			if (l.raw) return false;
+			const lk = lessonKey(l.text);
+			return lk === k || (k.length >= 12 && lk.includes(k)) || (lk.length >= 12 && k.includes(lk));
+		});
+		if (same) {
+			if (!same.pinned) {
+				same.n++;
+				same.date = date;
+			}
+			res.bumped.push(same.text);
+			continue;
+		}
+		list.push({ text: t, date, n: 1, pinned: false });
+		res.added.push(t);
+	}
+	const size = () => list.reduce((s, l) => s + fmtLesson(l).length + 1, 0);
+	while (list.length > maxLines || size() > maxChars) {
+		const cand = list
+			.filter((l) => !l.pinned)
+			.sort((x, y) => x.n - y.n || x.date.localeCompare(y.date) || Number(res.added.includes(x.text)) - Number(res.added.includes(y.text)))[0];
+		if (!cand) break;
+		list = list.filter((l) => l !== cand);
+		res.dropped.push(cand.text);
+		res.added = res.added.filter((t) => t !== cand.text);
+	}
+	res.full = res.dropped.length > 0;
+	if (!res.added.length && !res.bumped.length && !res.dropped.length) return res;
+	const block = [LESSON_START, LESSON_HEAD, ...list.map(fmtLesson), LESSON_END].join(eol);
+	if (a >= 0 && b > a) res.text = agents.slice(0, a) + block + agents.slice(b + LESSON_END.length);
+	else {
+		const body = agents.replace(/(\r?\n)*$/, "");
+		res.text = (body ? body + eol + eol : "") + block + eol;
+	}
+	res.changed = res.text !== agents;
+	return res;
+}
+
+/** 지침 글의 '작업 방식' 줄들 (상태·/wiki lessons 용) */
+export function lessonLines(agents: string): string[] {
+	const a = agents.indexOf(LESSON_START);
+	const b = a < 0 ? -1 : agents.indexOf(LESSON_END, a);
+	if (a < 0 || b < a) return [];
+	return agents
+		.slice(a + LESSON_START.length, b)
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.filter((l) => l && !/^#{1,6}\s/.test(l));
+}
+
+const stampOf = (d = new Date()) =>
+	`${today(d).replace(/-/g, "")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
+const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
+
+/** 내 지침 파일에 작업 방식 적기: UTF-8 이 아니면 고치지 않음 (메모장의 ANSI·UTF-16 저장 등을 다시 쓰면 한글이 깨짐).
+ *  고치기 전 내용은 lessons/AGENTS.md.<때> 로 (최근 LESSON_BACKUPS 개), 되돌리기용 기록은 lessons/last.json, 뺀 줄은 lessons/archive.md */
+export function saveLessons(items: string[], date = today(), file = agentsFile(), dir = lessonsDir(), now = new Date()): LessonResult & { error?: string } {
+	let old: Buffer | null = null;
+	try {
+		old = readFileSync(file);
+	} catch {}
+	const text = old ? old.toString("utf8") : "";
+	if (old && (old.includes(0) || !Buffer.from(text, "utf8").equals(old)))
+		return { ...putLessons("", [], date), error: "내 지침 파일(AGENTS.md)이 UTF-8 이 아니라 고치지 않았습니다. 편집기에서 UTF-8 로 저장해 주세요" };
+	const r = putLessons(text, items, date);
+	if (!r.changed) return r;
+	mkdirSync(dir, { recursive: true });
+	const stamp = stampOf(now);
+	const backup = old ? `AGENTS.md.${stamp}` : "";
+	if (old) writeFileSync(join(dir, backup), old);
+	writeFileSync(file, r.text);
+	writeFileSync(join(dir, "last.json"), `${JSON.stringify({ backup, wrote: sha(r.text), when: stamp }, null, 2)}\n`);
+	const backups = readdirSync(dir).filter((f) => /^AGENTS\.md\.\d{8}-\d{6}$/.test(f)).sort();
+	for (const f of backups.slice(0, Math.max(0, backups.length - LESSON_BACKUPS))) {
+		try {
+			unlinkSync(join(dir, f));
+		} catch {}
+	}
+	if (r.dropped.length) appendFileSync(join(dir, "archive.md"), `## ${date} 지침의 작업 방식에서 뺀 줄 (한도 ${LESSON_MAX_LINES}줄·${LESSON_MAX_CHARS}자)\n${r.dropped.map((t) => `- ${t}`).join("\n")}\n\n`);
+	return r;
+}
+
+/** 마지막 자동 고침 되돌리기: 그 뒤에 지침이 다시 바뀌었으면 덮어쓰지 않음 */
+export function undoLessons(file = agentsFile(), dir = lessonsDir()): { ok: boolean; message: string } {
+	let last: any;
+	try {
+		last = JSON.parse(readFileSync(join(dir, "last.json"), "utf8"));
+	} catch {
+		return { ok: false, message: "되돌릴 자동 고침이 없습니다" };
+	}
+	let cur: Buffer | null = null;
+	try {
+		cur = readFileSync(file);
+	} catch {}
+	if (!cur || sha(cur) !== last.wrote)
+		return { ok: false, message: `그 뒤에 지침(AGENTS.md)이 바뀌어 되돌리지 않았습니다${last.backup ? `. 고치기 전 내용: ${slash(join(dir, last.backup))}` : ""}` };
+	if (last.backup) {
+		try {
+			writeFileSync(file, readFileSync(join(dir, last.backup)));
+		} catch (e) {
+			return { ok: false, message: `되돌리지 못했습니다: ${(e as Error).message}` };
+		}
+	} else unlinkSync(file); // 자동 고침이 처음 만든 파일
+	unlinkSync(join(dir, "last.json"));
+	return { ok: true, message: `지침(AGENTS.md)을 마지막 자동 고침 전으로 되돌렸습니다${last.backup ? ` (${last.backup})` : " (자동 고침이 만든 파일이라 지움)"}. 다음 세션부터 반영` };
+}
+
+/** 제안 모으기 (lessons/proposals.md). 개인정보·비밀로 보이는 것은 뺌 */
+export function saveProposals(items: string[], wiki: string, now = new Date(), dir = lessonsDir()): { saved: number; rejected: number } {
+	const ok = items.filter((t) => !secretish(t));
+	if (ok.length) {
+		mkdirSync(dir, { recursive: true });
+		const when = `${today(now)} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+		appendFileSync(join(dir, "proposals.md"), ok.map((t) => `## ${when} · 위키 '${wiki}' 를 쓸 때\n${t}\n\n`).join(""));
+	}
+	return { saved: ok.length, rejected: items.length - ok.length };
+}
+
+/** 내 지침 파일의 '작업 방식' 줄들 (파일이 없거나 못 읽으면 []) */
+export function readLessons(file = agentsFile()): string[] {
+	try {
+		return lessonLines(readFileSync(file, "utf8"));
+	} catch {
+		return [];
+	}
+}
+
+export function proposalCount(dir = lessonsDir()): number {
+	try {
+		return (readFileSync(join(dir, "proposals.md"), "utf8").match(/^## /gm) || []).length;
+	} catch {
+		return 0;
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 확장
 // ---------------------------------------------------------------------------
 
 export const WIKI_TOOLS = ["wiki_search", "wiki_read", "wiki_write"];
 
 /** 위키가 켜져 있을 때 지침에 더할 규칙 (세션 안에서는 매번 같은 글: Copilot·사내AI 대화를 새로 열지 않게) */
-export function guideLines(name: string, root: string, auto: Auto, topic: string): string[] {
+export function guideLines(name: string, root: string, auto: Auto, topic: string, lessons: LessonMode = "off"): string[] {
 	if (auto === "off") return [];
 	const g = [
 		`'${name}' 위키(${slash(root)})가 켜져 있다. 위키 도구: wiki_search(찾기), wiki_read(여러 쪽 읽기), wiki_write(여러 쪽 쓰기, 목록·기록은 자동). 순서와 형식은 llm-wiki 스킬`,
@@ -816,6 +1057,12 @@ export function guideLines(name: string, root: string, auto: Auto, topic: string
 	if (auto === "write")
 		g.push("작업 중 새로 확인한 사실·결정·절차·장애 원인과 해결이 위키에 없거나 다르면, 끝내기 전에 wiki_write 로 한 번에 남기고 답 끝에 '위키에 남김: [[제목]]' 을 적는다. 추측·비밀번호·개인정보는 남기지 않는다");
 	if (auto === "ask") g.push("작업 중 새로 확인한 것 가운데 위키에 남길 만한 것이 있으면 답 끝에 한두 줄로 제안하고, 사용자가 원하면 wiki_write 로 남긴다");
+	if (lessons !== "off")
+		g.push(
+			`위키를 쓸 때 이번 작업에서 드러난 일하는 방식의 고칠 점(사용자가 바로잡은 것, 되풀이한 실수, 오래 헤맨 까닭)이 있으면 같은 wiki_write 의 '=== 작업 방식' 부분에 '- 다음부터 …한다' 꼴로 ${LESSON_PER_WRITE}줄까지 적는다` +
+				(lessons === "auto" ? " (내 지침에 자동으로 더해짐)" : " (제안으로 모임)") +
+				". 여러 작업에 통하는 것만 적고 사실·지식은 위키 페이지에. 스킬이나 이미 있는 규칙을 바꿔야 하면 '=== 제안' 부분에. 위키에 남길 페이지가 없어도 이 부분만 쓸 수 있다",
+		);
 	return g;
 }
 
@@ -884,6 +1131,53 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 	const result = (text: string) => ({ content: [{ type: "text" as const, text }], details: undefined });
+	const brief = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s);
+
+	/** 위키를 쓸 때 함께 받은 작업 방식·제안: auto 면 내 지침의 '작업 방식' 에, propose 면 제안 모음에 (알림 글도 만듦) */
+	const learn = (cfg: Config, wiki: string, op: string, lessons: string[], proposals: string[]) => {
+		const out = { lines: [] as string[], notice: "", level: "info", handled: false };
+		if (!lessons.length && !proposals.length) return out;
+		out.handled = true;
+		const mode = lessonMode(cfg);
+		if (mode === "off") {
+			out.lines.push("작업 방식: 꺼져 있어 남기지 않음 (wiki.json 의 lessons)");
+			return out;
+		}
+		if (op === "ingest" || batch) {
+			out.lines.push("작업 방식: 원본 반영(ingest) 중에는 남기지 않음");
+			return out;
+		}
+		const notes: string[] = [];
+		const props = [...(mode === "propose" && lessons.length ? [`지침의 작업 방식에 더하기:\n${lessons.map((t) => `- ${t}`).join("\n")}`] : []), ...proposals];
+		if (mode === "auto" && lessons.length) {
+			const r = saveLessons(lessons);
+			if (r.error) {
+				out.lines.push(`작업 방식: ${r.error}`);
+				notes.push(r.error);
+				out.level = "warning";
+			}
+			if (r.added.length) out.lines.push(`작업 방식: 내 지침에 ${r.added.length}줄 더함 (${r.added.join(" / ")})`);
+			if (r.bumped.length) out.lines.push(`작업 방식: 이미 있는 줄 ${r.bumped.length}개 (횟수만 올림)`);
+			if (r.full) out.lines.push(`작업 방식: 한도(${LESSON_MAX_LINES}줄·${LESSON_MAX_CHARS}자)를 넘어 덜 쓰인 ${r.dropped.length}줄을 뺌. 다음에는 비슷한 줄을 합쳐 짧게`);
+			if (r.rejected.length) out.lines.push(`작업 방식: 이메일·전화번호·비밀로 보이는 ${r.rejected.length}줄은 남기지 않음`);
+			if (r.skipped.length) out.lines.push(`작업 방식: 한 번에 ${LESSON_PER_WRITE}줄까지라 ${r.skipped.length}줄은 남기지 않음`);
+			if (r.added.length || r.dropped.length)
+				notes.push(
+					`내 지침의 '작업 방식' 에 ${r.added.length}줄 더함${r.added.length ? `: ${r.added.map((t) => brief(t)).join(" / ")}` : ""}${r.dropped.length ? ` (한도로 ${r.dropped.length}줄 뺌)` : ""}. ` +
+						"다음 세션부터 반영 · 보기 /wiki lessons · 되돌리기 /wiki lessons undo",
+				);
+		}
+		if (props.length) {
+			const s = saveProposals(props, wiki);
+			if (s.saved) {
+				out.lines.push(`제안: ${s.saved}건을 모음 (사용자가 보고 적용)`);
+				notes.push(`작업 방식 제안 ${s.saved}건을 모았습니다: ${slash(join(lessonsDir(), "proposals.md"))} (보기 /wiki lessons)`);
+			}
+			if (s.rejected) out.lines.push(`제안: 이메일·전화번호·비밀로 보이는 ${s.rejected}건은 남기지 않음`);
+		}
+		out.notice = notes.join("\n");
+		return out;
+	};
 
 	// 폴더째 반영
 	const few = (list: string[], n = 2) => `${list.slice(0, n).map((r) => r.split("/").pop()).join(", ")}${list.length > n ? " 등" : ""}`;
@@ -996,27 +1290,42 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"위키 페이지 쓰기 (pages/ 아래만, 여러 페이지를 한 번에). text 에 페이지마다 '=== pages/<분류>/<제목>.md' 줄, 이어서 머리말(--- title / summary / type / sources ---)과 본문. " +
 			"링크는 [[페이지 제목]]. 목록(index.md)과 기록(log.md)은 자동. op(ingest·query·lint·note)와 title 은 기록에 남는다." +
+			(lessonMode(readConfig()) !== "off"
+				? " '=== 작업 방식' 부분(한 줄씩)은 내 지침의 작업 방식에, '=== 제안' 부분은 제안 모음에 들어간다 (페이지 없이 이것만 써도 됨)."
+				: "") +
 			(isBridge() ? " 이스케이프 없이 ```text 블록에 '@tool wiki_write op=ingest title=\"제목\"' 줄 다음에 text 를 이어 써도 된다" : ""),
 		parameters: Type.Object({
 			text: Type.String({ description: "'=== pages/<분류>/<제목>.md' 줄로 나눈 페이지들 (머리말 포함)" }),
 			op: Type.Optional(Type.String({ description: "ingest | query | lint | note" })),
 			title: Type.Optional(Type.String({ description: "기록에 남길 제목" })),
 		}),
-		async execute(_id: string, params: any) {
-			const { root, name } = need();
-			const r = await locked(() => applyWrite(root, name, String(params.text || ""), String(params.op || "note"), String(params.title || "")));
+		async execute(_id: string, params: any, _signal?: unknown, _onUpdate?: unknown, ctx?: any) {
+			const { root, name, cfg } = need();
+			const op = String(params.op || "note");
+			const sp = splitLessons(String(params.text || ""));
+			const extra = sp.lessons.length + sp.proposals.length > 0;
+			const pagesGiven = /^===\s+\S/m.test(sp.pages);
+			const r: WriteResult =
+				pagesGiven || !extra ? await locked(() => applyWrite(root, name, sp.pages, op, String(params.title || ""))) : { written: [], names: [], errors: [], warnings: [] };
+			const learned = await locked(() => learn(cfg, name, op, sp.lessons, sp.proposals));
 			const lines = [
-				r.written.length ? `썼습니다 ${r.written.length}쪽: ${r.names.map((n) => `[[${n}]]`).join(", ")} (목록·기록 고침)` : "쓴 페이지 없음",
+				r.written.length ? `썼습니다 ${r.written.length}쪽: ${r.names.map((n) => `[[${n}]]`).join(", ")} (목록·기록 고침)` : pagesGiven || !extra ? "쓴 페이지 없음" : "",
 				...r.errors.map((e) => `오류: ${e}`),
 				...r.warnings.map((w) => `참고: ${w}`),
-			];
-			if (!r.written.length) throw new Error(lines.join("\n"));
+				...learned.lines,
+			].filter(Boolean);
+			if (learned.notice && ctx?.hasUI) {
+				try {
+					ctx.ui.notify(learned.notice, learned.level);
+				} catch {}
+			}
+			if (!r.written.length && (pagesGiven || !learned.handled)) throw new Error(lines.join("\n"));
 			return result(lines.join("\n"));
 		},
 	});
 
 	pi.registerCommand("wiki", {
-		description: "LLM 위키: /wiki (상태), init [이름] [폴더], use <이름>, off, ingest <raw/ 파일·폴더>, ask <질문>, save [제목], lint, reindex",
+		description: "LLM 위키: /wiki (상태), init [이름] [폴더], use <이름>, off, ingest <raw/ 파일·폴더>, ask <질문>, save [제목], lint, reindex, lessons [undo] (배운 작업 방식)",
 		handler: async (args: string, ctx: any) => {
 			const [sub = "", ...rest] = (args || "").trim().split(/\s+/);
 			const arg = rest.join(" ").trim();
@@ -1047,6 +1356,27 @@ export default function (pi: ExtensionAPI) {
 				applyTools(false);
 				status(ctx);
 				return notify("위키를 껐습니다 (위키 도구도 모델에게 보이지 않음). 다시 켜기: /wiki use <이름>");
+			}
+			if (sub === "lessons") {
+				// 배운 작업 방식: 보기 / 마지막 자동 고침 되돌리기
+				if (arg === "undo") {
+					if (!ctx.hasUI) return notify(undoLessons().message);
+					if (!(await ctx.ui.confirm("작업 방식 되돌리기", "내 지침(AGENTS.md)을 마지막 자동 고침 전으로 되돌릴까요?"))) return;
+					const u = undoLessons();
+					return notify(u.message, u.ok ? "info" : "warning");
+				}
+				const lines = readLessons();
+				const n = proposalCount();
+				return show(
+					ctx,
+					[
+						`── 배운 작업 방식 (${lessonMode(cfg)}: wiki.json 의 lessons 로 바꿈 auto·propose·off · 닫기: /wiki) ──`,
+						` 지침  ${slash(agentsFile())} 의 '작업 방식' ${lines.length}줄`,
+						...(lines.length ? lines.map((l) => `   ${l}`) : ["   (아직 없음: 위키를 쓸 때 pi 가 남깁니다)"]),
+						` 제안  ${n}건${n ? ` · ${slash(join(lessonsDir(), "proposals.md"))} (적용은 pi 에게 부탁)` : ""}`,
+						` 되돌리기 /wiki lessons undo (마지막 자동 고침) · 뺀 줄 ${slash(join(lessonsDir(), "archive.md"))}`,
+					].join("\n"),
+				);
 			}
 			const c = current();
 			if (!c.root) return notify(`켜진 위키가 없습니다. /wiki init [이름] [폴더] 로 만들거나 /wiki use <이름> (있는 위키: ${Object.keys(cfg.wikis).join(", ") || "없음"})`, "warning");
@@ -1116,6 +1446,7 @@ export default function (pi: ExtensionAPI) {
 					`── 위키 '${c.name}' (닫기: /wiki 다시 입력) ──`,
 					` 폴더  ${slash(c.root)}   (Obsidian 보관소로 열기)`,
 					` 페이지 ${pages.length}쪽 · 반영 안 된 원본 ${r.rawUnused.length}개 · 깨진 링크 ${r.broken.length}개 · 모델이 알아서 쓰기: ${c.cfg.auto}`,
+					` 작업 방식 ${lessonMode(c.cfg)} · 지침에 ${readLessons().length}줄 · 제안 ${proposalCount()}건 (/wiki lessons)`,
 					` 최근  ${recent.length ? recent.map((l) => l.slice(3)).join("\n       ") : "(기록 없음)"}`,
 					" 명령  /wiki ingest <raw/ 파일·폴더> · ask <질문> · save [제목] · lint · reindex · use <이름> · off",
 				].join("\n"),
@@ -1157,7 +1488,7 @@ export default function (pi: ExtensionAPI) {
 		if (!root) return;
 		const g = event.systemPromptOptions?.promptGuidelines;
 		if (!Array.isArray(g)) return;
-		for (const line of guideLines(name, root, cfg.auto, readTopic(wikiMd(root), name))) if (!g.includes(line)) g.push(line);
+		for (const line of guideLines(name, root, cfg.auto, readTopic(wikiMd(root), name), lessonMode(cfg))) if (!g.includes(line)) g.push(line);
 	});
 
 	pi.on("message_end", async (event: any) => {

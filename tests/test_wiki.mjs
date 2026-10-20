@@ -195,6 +195,111 @@ check("반영 부탁: 원본 경로, 요약 페이지 제목과 sources, 폴더,
 	ip.includes("raw/회의록/2026/1월.md 을 llm-wiki 스킬의 ingest") && ip.includes("제목을 '2026 1월'") && ip.includes("sources 에 raw/회의록/2026/1월.md") && ip.includes("폴더: 회의록/2026")
 	&& ip.includes("2/5 번째") && !w.ingestPrompt("a", "raw/x.md", "x").includes("번째") && !w.ingestPrompt("a", "raw/x.md", "x").includes("폴더:"), ip);
 
+// 작업 방식 배우기: 위키를 쓸 때 함께 받은 '=== 작업 방식' 을 내 지침의 정해진 부분에, '=== 제안' 은 제안 모음에
+const sl = w.splitLessons("=== pages/model/A.md\n---\ntitle: A\n---\n본문\n=== 작업 방식\n- 다음부터 노트북 명령 전에 conda 환경을 확인한다\n2) 긴 출력은 tail 로 끝부분만 본다\n\n=== 제안\n- kubeflow-notebook 스킬에 GPU 확인 절차를 더한다\n=== 제안\n두 번째 제안\n");
+check("떼어 내기: 페이지는 그대로, 작업 방식은 한 줄씩(목록 표시 뺌), 제안은 부분마다 하나",
+	sl.pages.includes("=== pages/model/A.md") && sl.pages.includes("본문") && !sl.pages.includes("작업 방식") && !sl.pages.includes("제안")
+	&& JSON.stringify(sl.lessons) === JSON.stringify(["다음부터 노트북 명령 전에 conda 환경을 확인한다", "긴 출력은 tail 로 끝부분만 본다"])
+	&& sl.proposals.length === 2 && sl.proposals[0].startsWith("- kubeflow") && sl.proposals[1] === "두 번째 제안", sl);
+check("떼어 내기: 작업 방식 부분이 없으면 글 그대로", w.splitLessons("=== pages/a/B.md\nx\n").pages === "=== pages/a/B.md\nx\n" && !w.splitLessons("x").lessons.length);
+check("모드: write -> auto, ask -> propose, search·off -> off, 설정의 lessons 가 먼저",
+	w.lessonMode({ auto: "write" }) === "auto" && w.lessonMode({ auto: "ask" }) === "propose" && w.lessonMode({ auto: "search" }) === "off"
+	&& w.lessonMode({ auto: "off" }) === "off" && w.lessonMode({ auto: "write", lessons: "propose" }) === "propose" && w.lessonMode({ auto: "write", lessons: "off" }) === "off");
+const gl = w.guideLines("모델운영", root, "write", "모델 운영", "auto");
+check("지침: 작업 방식 줄 (auto 면 '자동으로', propose 면 '제안으로', off 면 없음), 매번 같은 글",
+	gl.length === 4 && gl[3].includes("'=== 작업 방식'") && gl[3].includes("자동으로") && gl[3].includes("'=== 제안'")
+	&& w.guideLines("a", root, "ask", "t", "propose")[3].includes("제안으로 모임") && w.guideLines("a", root, "write", "t", "off").length === 3
+	&& JSON.stringify(gl) === JSON.stringify(w.guideLines("모델운영", root, "write", "모델 운영", "auto")), gl);
+let lr0 = w.putLessons("# 내 지침\n- 한국어로 답한다\n", ["다음부터 노트북 명령 전에 conda 환경을 확인한다"], "2026-10-20");
+check("작업 방식: 없으면 지침 끝에 표시 부분을 만들고, 날짜 표시를 붙임 (원래 글은 그대로)",
+	lr0.changed && lr0.text.startsWith("# 내 지침\n- 한국어로 답한다\n\n<!-- kit lessons -->\n## 작업 방식") && lr0.text.includes("- 다음부터 노트북 명령 전에 conda 환경을 확인한다 (2026-10-20)\n<!-- /kit lessons -->")
+	&& JSON.stringify(lr0.added) === JSON.stringify(["다음부터 노트북 명령 전에 conda 환경을 확인한다"]), lr0.text);
+let lr1 = w.putLessons(lr0.text.replace("conda 환경을 확인한다 (2026-10-20)", "conda 환경을 확인한다 (2026-10-20)\n- 사람이 직접 쓴 줄"), ["다음부터 노트북 명령 전에 conda 환경을 확인한다.", "사람이 직접 쓴 줄", "새 줄: 큰 파일은 head 로 먼저 본다"], "2026-10-21");
+check("같은 줄은 횟수·날짜만 올림, 날짜 표시가 없는 줄(사람이 쓴 줄)은 그대로, 새 줄은 더함",
+	lr1.text.includes("conda 환경을 확인한다 (2026-10-21, 2번)") && lr1.text.includes("\n- 사람이 직접 쓴 줄\n") && lr1.text.includes("- 새 줄: 큰 파일은 head 로 먼저 본다 (2026-10-21)")
+	&& lr1.bumped.length === 2 && lr1.added.length === 1 && w.lessonLines(lr1.text).length === 3, lr1);
+check("작업 방식: 이메일·전화번호·비밀·[이메일N] 이 든 줄은 남기지 않음, 한 번에 3줄까지",
+	JSON.stringify(w.putLessons("", ["작성자는 hong.gd@example.com 로 적는다", "연락은 010-1234-5678", "token: abc", "[이메일1] 을 쓴다", "a 한다", "b 한다", "c 한다", "d 한다"], "2026-10-20").rejected) === JSON.stringify(["작성자는 hong.gd@example.com 로 적는다", "연락은 010-1234-5678", "token: abc"])
+	&& w.putLessons("", ["a 한다", "b 한다", "c 한다", "d 한다"], "2026-10-20").skipped.length === 1 && w.secretish("[이메일2]") && !w.secretish("2026-10-20 에 배포"));
+let full = "";
+for (let i = 0; i < 12; i++) full = w.putLessons(full, [`규칙 ${i} 번: 이런 경우에는 이렇게 한다`], `2026-10-${String(i + 1).padStart(2, "0")}`).text;
+full = w.putLessons(full, ["규칙 5 번: 이런 경우에는 이렇게 한다"], "2026-10-20").text;
+const lrFull = w.putLessons(full, ["새 규칙: 마지막에 더한 줄"], "2026-10-21");
+check(`한도(${w.LESSON_MAX_LINES}줄): 덜 쓰이고 오래된 줄부터 빼고(2번 쓰인 줄은 남음), 방금 더한 줄은 남김`,
+	w.lessonLines(lrFull.text).length === w.LESSON_MAX_LINES && lrFull.full && lrFull.text.includes("새 규칙: 마지막에 더한 줄") && lrFull.text.includes("규칙 5 번")
+	&& !lrFull.text.includes("규칙 0 번") && !lrFull.text.includes("규칙 2 번") && lrFull.text.includes("규칙 3 번")
+	&& JSON.stringify(lrFull.dropped) === JSON.stringify(["규칙 2 번: 이런 경우에는 이렇게 한다"]), [w.lessonLines(lrFull.text), lrFull.dropped]);
+check(`한도(${w.LESSON_MAX_CHARS}자): 긴 줄은 ${200}자로 줄이고 글자 수가 넘으면 뺌`,
+	w.putLessons("", ["가".repeat(300)], "2026-10-20").added[0].length === 200
+	&& w.lessonLines(w.putLessons(w.putLessons(w.putLessons("", ["가".repeat(300)], "2026-10-01").text, ["나".repeat(300)], "2026-10-02").text, ["다".repeat(300)], "2026-10-03").text).join("\n").length <= w.LESSON_MAX_CHARS + 10);
+
+// 지침 파일에 적기·되돌리기 (임시 폴더)
+const ad = join(tmp, "agent");
+mkdirSync(ad, { recursive: true });
+const af = join(ad, "AGENTS.md");
+const ld = join(ad, "lessons");
+writeFileSync(af, "# 내 지침\n- 한국어로 답한다\n");
+let sv = w.saveLessons(["다음부터 노트북 명령 전에 conda 환경을 확인한다"], "2026-10-20", af, ld, new Date(2026, 9, 20, 14, 3, 5));
+check("지침에 적기: 고치기 전 내용은 lessons/AGENTS.md.<때>, 되돌리기 기록 last.json",
+	sv.changed && read(af).includes("<!-- kit lessons -->") && read(join(ld, "AGENTS.md.20261020-140305")) === "# 내 지침\n- 한국어로 답한다\n" && existsSync(join(ld, "last.json")), sv);
+let un = w.undoLessons(af, ld);
+check("되돌리기: 마지막 자동 고침 전으로", un.ok && read(af) === "# 내 지침\n- 한국어로 답한다\n" && !existsSync(join(ld, "last.json")), un);
+w.saveLessons(["다음부터 노트북 명령 전에 conda 환경을 확인한다"], "2026-10-20", af, ld, new Date(2026, 9, 20, 14, 4, 0));
+writeFileSync(af, read(af) + "- 그 뒤에 사람이 더한 줄\n");
+un = w.undoLessons(af, ld);
+check("되돌리기: 그 뒤에 지침이 바뀌었으면 덮어쓰지 않고 백업 위치를 알림", !un.ok && un.message.includes("바뀌어") && read(af).includes("그 뒤에 사람이 더한 줄"), un);
+writeFileSync(af, Buffer.from([0x23, 0x20, 0xb3, 0xbb, 0x20, 0xc1, 0xf6, 0xc4, 0xa7, 0x0a])); // ANSI(EUC-KR) 로 저장한 지침
+sv = w.saveLessons(["새 줄을 더한다"], "2026-10-20", af, ld);
+check("지침 파일이 UTF-8 이 아니면 고치지 않음 (한글이 깨지지 않게)", !!sv.error && !sv.changed && read(af) !== "" && readFileSync(af).equals(Buffer.from([0x23, 0x20, 0xb3, 0xbb, 0x20, 0xc1, 0xf6, 0xc4, 0xa7, 0x0a])), sv);
+rmSync(af);
+sv = w.saveLessons(["지침 파일이 없으면 새로 만든다"], "2026-10-20", af, ld, new Date(2026, 9, 20, 15, 0, 0));
+check("지침 파일이 없으면 만들고, 되돌리면 지움", sv.changed && read(af).startsWith("<!-- kit lessons -->") && w.undoLessons(af, ld).ok && !existsSync(af));
+const sp1 = w.saveProposals(["- kubeflow-notebook 스킬에 GPU 확인 절차를 더한다", "담당자 메일 kim@corp.example.org 로 보낸다"], "모델운영", new Date(2026, 9, 20, 15, 1), ld);
+check("제안 모으기: lessons/proposals.md, 개인정보로 보이는 것은 뺌", sp1.saved === 1 && sp1.rejected === 1 && w.proposalCount(ld) === 1
+	&& read(join(ld, "proposals.md")).includes("## 2026-10-20 15:01 · 위키 '모델운영'") && !read(join(ld, "proposals.md")).includes("kim@"), read(join(ld, "proposals.md")));
+
+// 확장: wiki_write 한 번에 페이지 + 작업 방식 (도구를 따로 부르지 않음: Copilot·사내AI 질문 1번)
+const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+const ead = join(tmp, "ext-agent");
+mkdirSync(ead, { recursive: true });
+process.env.PI_CODING_AGENT_DIR = ead;
+const lw = join(tmp, "배움위키");
+w.initWiki(lw, "배움위키", "2026-10-20");
+const setCfg = (extra = {}) => w.writeConfig({ wikis: { 배움위키: lw }, active: "배움위키", auto: "write", ...extra });
+setCfg();
+const tools = {};
+const notes = [];
+w.default({ registerTool: (t) => (tools[t.name] = t), registerCommand: () => {}, on: () => {}, getActiveTools: () => [], setActiveTools: () => {}, sendUserMessage: () => {} });
+const uiCtx = { hasUI: true, ui: { notify: (m, l) => notes.push([m, l]) } };
+const call = (text, op = "note") => tools.wiki_write.execute("t1", { text, op }, undefined, undefined, uiCtx);
+check("wiki_write 설명: 작업 방식·제안 부분 안내 (작업 방식이 켜져 있을 때)", tools.wiki_write.description.includes("'=== 작업 방식'"));
+let res = await call(`=== pages/concept/학습 재시작.md\n${page("학습 재시작", "concept", "체크포인트에서 다시 시작")}=== 작업 방식\n- 다음부터 학습을 다시 시작하기 전에 체크포인트 경로를 먼저 확인한다\n`);
+let txt = res.content[0].text;
+check("페이지 + 작업 방식: 페이지를 쓰고 내 지침에 한 줄, 알림", txt.includes("썼습니다 1쪽") && txt.includes("내 지침에 1줄 더함")
+	&& read(join(ead, "AGENTS.md")).includes("체크포인트 경로를 먼저 확인한다 (") && notes.length === 1 && notes[0][0].includes("/wiki lessons undo"), [txt, notes]);
+res = await call("=== 작업 방식\n- 다음부터 긴 로그는 끝부분만 본다\n");
+txt = res.content[0].text;
+check("작업 방식만 (페이지 없이): 오류가 아니고 지침에 더함, 위키 기록은 그대로", !txt.includes("쓴 페이지 없음") && txt.includes("1줄 더함") && w.readLessons(join(ead, "AGENTS.md")).length === 2
+	&& !read(join(lw, "log.md")).includes("긴 로그"), txt);
+res = await call(`=== pages/source/회의록.md\n${page("회의록", "source", "요약", "sources: [raw/회의록.md]\n")}=== 작업 방식\n- 원본 반영 중의 줄\n`, "ingest");
+check("원본 반영(ingest) 중에는 작업 방식을 남기지 않음", res.content[0].text.includes("원본 반영(ingest) 중에는") && !read(join(ead, "AGENTS.md")).includes("원본 반영 중의 줄"), res.content[0].text);
+let thrown = "";
+try {
+	await call("=== pages/x.md\n제목 없음\n=== 작업 방식\n- 페이지가 틀린 때의 줄\n");
+} catch (e) {
+	thrown = e.message;
+}
+check("페이지가 틀리면 오류 (작업 방식은 남기고 그 결과도 알림)", thrown.includes("오류:") && thrown.includes("1줄 더함"), thrown);
+setCfg({ auto: "ask" });
+res = await call("=== 작업 방식\n- 제안 모드의 줄\n=== 제안\n- data-analysis 스킬에 그림 확인 순서를 더한다\n");
+check("propose(auto=ask): 지침은 그대로, 작업 방식과 제안은 제안 모음에", !read(join(ead, "AGENTS.md")).includes("제안 모드의 줄") && w.proposalCount(join(ead, "lessons")) === 2
+	&& read(join(ead, "lessons/proposals.md")).includes("- 제안 모드의 줄"), res.content[0].text);
+setCfg({ lessons: "off" });
+res = await call("=== pages/concept/끈 설정.md\n" + page("끈 설정", "concept", "x") + "=== 작업 방식\n- 꺼진 때의 줄\n");
+check("lessons: off 면 남기지 않고 알림", res.content[0].text.includes("꺼져 있어") && !read(join(ead, "AGENTS.md")).includes("꺼진 때의 줄"), res.content[0].text);
+if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+
 // 규모: 500쪽
 const big = join(tmp, "큰위키");
 w.initWiki(big, "큰위키", "2026-10-14");

@@ -23,10 +23,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
 const INHOUSE_SERVER = (process.env.PI_INHOUSE_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
-// 지금 모델의 중계 서버 (models.json 의 baseUrl 이 이 PC 의 중계 서버면 그 주소, 아니면 Copilot 중계 서버)와 화면 이름
+// 지금 모델의 중계 서버 (models.json 의 baseUrl 이 이 PC 의 중계 서버(Copilot·사내AI)면 그 주소, 아니면 Copilot 중계 서버)와 화면 이름.
+// 이 PC 의 다른 서버(로컬 모델 등)에는 /memory 를 묻지 않는다 (요청이 끝날 때마다 물으므로)
+const local = (s: string) => s.replace("//localhost:", "//127.0.0.1:");
 const serverOf = (ctx: any): string => {
 	const m = String(ctx?.model?.baseUrl || "").match(/^(https?:\/\/(?:127\.0\.0\.1|localhost):\d+)\/v1\/?$/);
-	return m ? m[1] : SERVER;
+	return m && [SERVER, INHOUSE_SERVER].map(local).includes(local(m[1])) ? m[1] : SERVER;
 };
 const nameOf = (ctx: any): string => (ctx?.model?.provider === "inhouse" ? "사내AI" : "Copilot");
 // 이 pi 의 세션 값 (jupyter.ts 와 같은 값을 쓰도록 globalThis 에 한 번만 만듦)
