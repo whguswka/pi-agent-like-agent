@@ -9,6 +9,12 @@
 - 2026-10-14.2 뒤의 버전부터 항목 앞에 `[공통]` 또는 `[Copilot]` 을 붙입니다. `[공통]` 은 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))에도 들어가는 것,
   `[Copilot]` 은 이 키트(업무 PC·Copilot)에만 있는 것입니다.
 
+## 2026-10-20.2
+- [공통] **작업 방식 배우기를 pi 안에서 켜고 끄기:** `/wiki lessons on`(내 지침에 자동으로), `/wiki lessons propose`(제안만 모음), `/wiki lessons off`(끔).
+  `~/.pi/agent/wiki.json` 의 `"lessons"` 에 적히고 다음 요청부터 반영됩니다. 위키가 켜져 있으면 지침이 바뀌어 Copilot·사내AI 는 다음 요청이 새 대화로 시작합니다.
+  지금 상태는 `/wiki lessons` 와 `/wiki` 에 나옵니다 ([README 'LLM 위키'](README.md#llm-위키-wiki)).
+- 할 일: 없음 (2026-10-20.1 을 건너뛰고 바꿔도 됩니다. 그 버전의 할 일도 함께 보세요).
+
 ## 2026-10-20.1 (중계 서버 2026-10-20.1)
 - [공통] **작업 방식 배우기 (LLM 위키)** ([README 5장 'LLM 위키'](README.md#llm-위키-wiki)):
   - 위키에는 사실·지식을, 내 지침에는 일하는 방식을 남깁니다. 모델이 위키를 쓰는 같은 도구 호출에 '작업 방식'(사용자가 바로잡은 것, 되풀이한 실수, 오래 헤맨 까닭)을 붙이면,
