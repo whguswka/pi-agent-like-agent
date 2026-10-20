@@ -562,11 +562,15 @@ def main():
             if good:
                 passed.append(size)
         ok = ok and bool(passed)
-        if passed:
-            show("설정", "{:,}자까지 됩니다. 나눠 보내던 긴 메시지를 글 파일로 붙이려면 내 설정 파일({})에 \"attach_long_text\": true".format(
-                max(passed), "~/.pi/agent/inhouse.json" if args.inhouse else "~/.pi/agent/bridge.json"))
+        where = "~/.pi/agent/inhouse.json" if args.inhouse else "~/.pi/agent/bridge.json"
+        on = bool(cfg.get("attach_long_text"))
+        if passed and on:
+            show("설정", "{:,}자까지 됩니다. 긴 글 파일로 붙이기가 켜져 있습니다 (끄려면 내 설정 파일({})에 \"attach_long_text\": false)".format(max(passed), where))
+        elif passed:
+            show("설정", "{:,}자까지 됩니다. 나눠 보내던 긴 메시지를 글 파일로 붙이려면 내 설정 파일({})에 \"attach_long_text\": true".format(max(passed), where))
         else:
-            show("설정", "글 파일 붙이기가 되지 않았습니다. 이 화면을 찍어 보내 주세요 (켜지 않으면 지금처럼 나눠 보냄)")
+            show("설정", "글 파일 붙이기가 되지 않았습니다. 이 화면을 찍어 보내 주세요 ({})".format(
+                "켜져 있어도 붙이지 못한 요청은 나눠 보냄" if on else "켜지 않으면 지금처럼 나눠 보냄"))
 
     print("\n결과:", "정상" if ok else "확인 필요 (위의 X 항목)")
     if not ok:
