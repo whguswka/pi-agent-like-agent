@@ -834,6 +834,10 @@ export function lessonMode(cfg: { auto: Auto; lessons?: LessonMode }): LessonMod
 	if (cfg.lessons === "auto" || cfg.lessons === "propose" || cfg.lessons === "off") return cfg.lessons;
 	return cfg.auto === "write" ? "auto" : cfg.auto === "ask" ? "propose" : "off";
 }
+/** /wiki lessons <말> -> 모드 (on 은 auto) */
+export const LESSON_WORDS: Record<string, LessonMode> = { on: "auto", auto: "auto", 켜기: "auto", propose: "propose", 제안: "propose", off: "off", 끄기: "off" };
+export const lessonLabel = (m: LessonMode, short = false) =>
+	short ? { auto: "켜짐", propose: "제안만", off: "꺼짐" }[m] : { auto: "켜짐 (위키를 쓸 때 내 지침에 자동으로)", propose: "제안만 (lessons/proposals.md 에 모음)", off: "꺼짐" }[m];
 export const lessonsDir = () => join(agentDir(), "lessons");
 export const agentsFile = () => join(agentDir(), "AGENTS.md");
 /** 이메일·전화번호·비밀로 보이는 글 */
@@ -1325,7 +1329,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("wiki", {
-		description: "LLM 위키: /wiki (상태), init [이름] [폴더], use <이름>, off, ingest <raw/ 파일·폴더>, ask <질문>, save [제목], lint, reindex, lessons [undo] (배운 작업 방식)",
+		description: "LLM 위키: /wiki (상태), init [이름] [폴더], use <이름>, off, ingest <raw/ 파일·폴더>, ask <질문>, save [제목], lint, reindex, lessons [on|propose|off|undo] (배운 작업 방식)",
 		handler: async (args: string, ctx: any) => {
 			const [sub = "", ...rest] = (args || "").trim().split(/\s+/);
 			const arg = rest.join(" ").trim();
@@ -1358,19 +1362,30 @@ export default function (pi: ExtensionAPI) {
 				return notify("위키를 껐습니다 (위키 도구도 모델에게 보이지 않음). 다시 켜기: /wiki use <이름>");
 			}
 			if (sub === "lessons") {
-				// 배운 작업 방식: 보기 / 마지막 자동 고침 되돌리기
+				// 배운 작업 방식: 보기 / 켜기·제안만·끄기 (wiki.json 의 lessons) / 마지막 자동 고침 되돌리기
+				const want = LESSON_WORDS[arg.toLowerCase()];
+				if (want) {
+					const before = lessonMode(cfg);
+					cfg.lessons = want;
+					writeConfig(cfg);
+					if (before === want) return notify(`작업 방식 배우기: 이미 ${lessonLabel(want)}`);
+					// 위키가 켜져 있으면 지침 줄이 바뀌므로 Copilot·사내AI 는 다음 요청이 새 대화로 감
+					const fresh = current().root && isBridge() ? " (지침이 바뀌어 Copilot·사내AI 는 새 대화로 시작)" : "";
+					return notify(`작업 방식 배우기: ${lessonLabel(want)}. 다음 요청부터 반영합니다${fresh}`);
+				}
 				if (arg === "undo") {
 					if (!ctx.hasUI) return notify(undoLessons().message);
 					if (!(await ctx.ui.confirm("작업 방식 되돌리기", "내 지침(AGENTS.md)을 마지막 자동 고침 전으로 되돌릴까요?"))) return;
 					const u = undoLessons();
 					return notify(u.message, u.ok ? "info" : "warning");
 				}
+				if (arg) return notify("사용법: /wiki lessons (보기) · on (켜기) · propose (제안만) · off (끄기) · undo (마지막 자동 고침 되돌리기)", "warning");
 				const lines = readLessons();
 				const n = proposalCount();
 				return show(
 					ctx,
 					[
-						`── 배운 작업 방식 (${lessonMode(cfg)}: wiki.json 의 lessons 로 바꿈 auto·propose·off · 닫기: /wiki) ──`,
+						`── 배운 작업 방식: ${lessonLabel(lessonMode(cfg))} (바꾸기 /wiki lessons on·propose·off · 닫기: /wiki) ──`,
 						` 지침  ${slash(agentsFile())} 의 '작업 방식' ${lines.length}줄`,
 						...(lines.length ? lines.map((l) => `   ${l}`) : ["   (아직 없음: 위키를 쓸 때 pi 가 남깁니다)"]),
 						` 제안  ${n}건${n ? ` · ${slash(join(lessonsDir(), "proposals.md"))} (적용은 pi 에게 부탁)` : ""}`,
@@ -1446,7 +1461,7 @@ export default function (pi: ExtensionAPI) {
 					`── 위키 '${c.name}' (닫기: /wiki 다시 입력) ──`,
 					` 폴더  ${slash(c.root)}   (Obsidian 보관소로 열기)`,
 					` 페이지 ${pages.length}쪽 · 반영 안 된 원본 ${r.rawUnused.length}개 · 깨진 링크 ${r.broken.length}개 · 모델이 알아서 쓰기: ${c.cfg.auto}`,
-					` 작업 방식 ${lessonMode(c.cfg)} · 지침에 ${readLessons().length}줄 · 제안 ${proposalCount()}건 (/wiki lessons)`,
+					` 작업 방식 ${lessonLabel(lessonMode(c.cfg), true)} · 지침에 ${readLessons().length}줄 · 제안 ${proposalCount()}건 (/wiki lessons, 바꾸기 on·propose·off)`,
 					` 최근  ${recent.length ? recent.map((l) => l.slice(3)).join("\n       ") : "(기록 없음)"}`,
 					" 명령  /wiki ingest <raw/ 파일·폴더> · ask <질문> · save [제목] · lint · reindex · use <이름> · off",
 				].join("\n"),

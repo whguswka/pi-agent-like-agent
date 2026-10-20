@@ -86,6 +86,7 @@ hook: `session_start` (켜진 위키면 도구를 켬, 상태 줄. 폴더째 반
   - `/wiki lessons undo` 로 되돌린다.
   - 그 뒤에 사람이 지침을 고쳤으면 덮어쓰지 않는다 (`lessons/last.json` 에 적은 내용의 해시와 비교).
 - 모드는 `wiki.json` 의 `lessons`: `auto` | `propose` | `off`. 없으면 위키의 `auto` 를 따른다 (write → auto, ask → propose).
+  pi 안에서 `/wiki lessons on|propose|off` 로 바꾼다 (on = auto, 2026-10-20 사용자 제안). 위키가 켜져 있으면 지침 줄이 바뀌므로 Copilot·사내AI 는 다음 요청이 새 대화로 간다 (알림에 적음).
 - pi 는 AGENTS.md 를 세션을 시작할 때와 `/reload` 때만 읽는다. 그래서 세션 도중에 고쳐도 지침 글이 바뀌지 않고, Copilot·사내AI 새 대화도 열리지 않는다. 반영은 다음 세션부터다.
 - 시험(tests/test_wiki.mjs)에서 확인한 것:
   - 떼어 내기, 모드, 지침 줄;

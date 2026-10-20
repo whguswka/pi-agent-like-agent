@@ -269,7 +269,8 @@ const setCfg = (extra = {}) => w.writeConfig({ wikis: { 배움위키: lw }, acti
 setCfg();
 const tools = {};
 const notes = [];
-w.default({ registerTool: (t) => (tools[t.name] = t), registerCommand: () => {}, on: () => {}, getActiveTools: () => [], setActiveTools: () => {}, sendUserMessage: () => {} });
+const cmds = {};
+w.default({ registerTool: (t) => (tools[t.name] = t), registerCommand: (n, c) => (cmds[n] = c), on: () => {}, getActiveTools: () => [], setActiveTools: () => {}, sendUserMessage: () => {} });
 const uiCtx = { hasUI: true, ui: { notify: (m, l) => notes.push([m, l]) } };
 const call = (text, op = "note") => tools.wiki_write.execute("t1", { text, op }, undefined, undefined, uiCtx);
 check("wiki_write 설명: 작업 방식·제안 부분 안내 (작업 방식이 켜져 있을 때)", tools.wiki_write.description.includes("'=== 작업 방식'"));
@@ -297,6 +298,25 @@ check("propose(auto=ask): 지침은 그대로, 작업 방식과 제안은 제안
 setCfg({ lessons: "off" });
 res = await call("=== pages/concept/끈 설정.md\n" + page("끈 설정", "concept", "x") + "=== 작업 방식\n- 꺼진 때의 줄\n");
 check("lessons: off 면 남기지 않고 알림", res.content[0].text.includes("꺼져 있어") && !read(join(ead, "AGENTS.md")).includes("꺼진 때의 줄"), res.content[0].text);
+// /wiki lessons on·propose·off: pi 안에서 바꾸기 (wiki.json 의 lessons)
+const cmdNotes = [];
+const cmdCtx = { hasUI: true, ui: { notify: (m, l) => cmdNotes.push([m, l]), setWidget: () => {}, setStatus: () => {}, confirm: async () => true, theme: { fg: (_c, s) => s } } };
+const lessonsCmd = async (a) => {
+	cmdNotes.length = 0;
+	await cmds.wiki.handler(`lessons ${a}`, cmdCtx);
+	return cmdNotes.map((n) => n[0]).join("\n");
+};
+let said = await lessonsCmd("on");
+check("/wiki lessons on: 켜짐(auto)으로 저장하고 알림", w.readConfig().lessons === "auto" && said.includes("켜짐") && said.includes("다음 요청부터"), [w.readConfig(), said]);
+said = await lessonsCmd("propose");
+check("/wiki lessons propose: 제안만", w.readConfig().lessons === "propose" && said.includes("제안만"), [w.readConfig(), said]);
+said = await lessonsCmd("off");
+check("/wiki lessons off: 꺼짐, 다른 설정(위키·auto)은 그대로", w.readConfig().lessons === "off" && said.includes("꺼짐") && w.readConfig().active === "배움위키" && w.readConfig().wikis.배움위키 === lw, [w.readConfig(), said]);
+said = await lessonsCmd("off");
+check("/wiki lessons off 를 다시: 이미 꺼짐", said.includes("이미 꺼짐"), said);
+said = await lessonsCmd("아무거나");
+check("/wiki lessons 모르는 말: 사용법, 설정은 그대로", said.includes("사용법") && w.readConfig().lessons === "off", said);
+check("말: on·auto·켜기 -> auto, propose·제안, off·끄기", w.LESSON_WORDS.on === "auto" && w.LESSON_WORDS["켜기"] === "auto" && w.LESSON_WORDS["제안"] === "propose" && w.LESSON_WORDS["끄기"] === "off");
 if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
 

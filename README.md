@@ -608,7 +608,7 @@ pi 에는 hook 설정 파일이 따로 없고, `~/.pi/agent/extensions/` 의 Typ
 | 위키로 묻기 | 그냥 물어보면 됨 (위키가 켜져 있으면 모델이 먼저 위키를 찾음). 위키만 근거로: `/wiki ask 질문` |
 | 남기기 | 모델이 작업 중 새로 확인한 것을 알아서 남기고 답 끝에 `위키에 남김: [[…]]` 을 적음. 방금 답을 남기기: `/wiki save [제목]` |
 | 점검 | `/wiki lint` (깨진 링크, 같은 이름, 고아 페이지, 반영 안 된 원본), 목록 다시 만들기 `/wiki reindex` |
-| 작업 방식 배우기 | 모델이 위키를 쓸 때 이번 작업에서 드러난 일하는 방식의 고칠 점을 함께 적으면 내 지침(`~/.pi/agent/AGENTS.md`)의 '작업 방식' 부분에 자동으로 더해짐 (아래). 보기 `/wiki lessons`, 되돌리기 `/wiki lessons undo` |
+| 작업 방식 배우기 | 모델이 위키를 쓸 때 이번 작업에서 드러난 일하는 방식의 고칠 점을 함께 적으면 내 지침(`~/.pi/agent/AGENTS.md`)의 '작업 방식' 부분에 자동으로 더해짐 (아래). 보기 `/wiki lessons`, 켜기·제안만·끄기 `/wiki lessons on` · `propose` · `off`, 되돌리기 `/wiki lessons undo` |
 | 상태 / 끄기·켜기 | `/wiki` / `/wiki off`, `/wiki use 이름` (끄면 위키 도구도 모델에게 보이지 않음) |
 
 <!-- api:넣기 위키-주제 -->
@@ -623,7 +623,8 @@ pi 에는 hook 설정 파일이 따로 없고, `~/.pi/agent/extensions/` 의 Typ
   - 고칠 때마다 알림이 뜨고, 고치기 전 지침은 `~/.pi/agent/lessons/` 에 남습니다 (`/wiki lessons undo` 로 마지막 고침 되돌리기). 지침은 pi 를 시작할 때 읽으므로 다음 세션부터 반영됩니다.
   - 스킬이나 이미 있는 규칙을 바꾸는 것은 자동으로 하지 않고 제안으로 모읍니다 (`~/.pi/agent/lessons/proposals.md`. 적용은 pi 에게 부탁).
   - 원본 반영(ingest) 중에는 남기지 않고, 이메일·전화번호·비밀로 보이는 줄은 남기지 않습니다. 지침 파일이 UTF-8 이 아니면 고치지 않습니다.
-  - `wiki.json` 의 `"lessons"`: `auto`(지침에 자동), `propose`(제안만), `off`. 없으면 `"auto"` 가 `write` 일 때 `auto`, `ask` 일 때 `propose`, 그 밖은 `off`.
+  - 켜고 끄기: `/wiki lessons on`(지침에 자동), `/wiki lessons propose`(제안만), `/wiki lessons off`. `wiki.json` 의 `"lessons"`(`auto`·`propose`·`off`)에 적히고 다음 요청부터 반영됩니다.
+    정하지 않았으면 `"auto"` 가 `write` 일 때 켜짐, `ask` 일 때 제안만, 그 밖은 꺼짐입니다.
 - Copilot 과는 도구 한 번이 대화 한 번이라, 목록·기록 고치기와 점검은 pi 가 코드로 하고 모델은 여러 페이지를 한 번에 읽고 씁니다. 그래도 원본 하나 반영에 Copilot 과 4~12번 오갑니다 (폴더째면 원본 수만큼. 사용량 제한이 있는 계정이면 [8장](#8-설정)의 `max_questions_per_minute`). <!-- api= - 목록·기록 고치기와 점검은 pi 가 코드로 하고, 모델은 여러 페이지를 한 번에 읽고 씁니다 (도구 왕복을 줄이려고). -->
 - 위키 내용은 모델이 찾거나 읽을 때만 Copilot 으로 갑니다. 고치기 전 페이지는 위키 폴더의 `.history/` 에 남습니다 (git 은 쓰지 않음). <!-- api= - 위키 내용은 모델이 찾거나 읽을 때만 LLM 으로 갑니다. 고치기 전 페이지는 위키 폴더의 `.history/` 에 남습니다 (git 은 쓰지 않음). -->
 - jupyter 모드에서도 위키는 PC 폴더입니다. 위키 도구로 쓰는 것은 `pages/` 아래뿐이라 쓸 때 확인 창이 뜨지 않습니다. <!-- api= - 위키 도구로 쓰는 것은 `pages/` 아래뿐이라 쓸 때 확인 창이 뜨지 않습니다. -->
