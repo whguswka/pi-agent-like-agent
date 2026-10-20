@@ -3,6 +3,15 @@
 버전 번호는 `VERSION` 에 있습니다. 새 버전으로 바꾸면(`update.sh`) 끝에 그 버전의 항목을 보여 줍니다.
 버전마다 바탕이 된 [pi-agent-like-agent](https://github.com/whguswka/pi-agent-like-agent) 의 버전을 함께 적습니다.
 
+## 2026-10-20.2
+작업 방식 배우기를 pi 안에서 켜고 끄는 명령. 바탕: pi-agent-like-agent 2026-10-20.2.
+- **`/wiki lessons on`·`propose`·`off`** ([README 5장 'LLM 위키'](README.md#llm-위키-wiki)): `on` 은 내 지침에 자동으로, `propose` 는 제안만 모음, `off` 는 끔.
+  `~/.pi/agent/wiki.json` 의 `"lessons"` 에 적히고 다음 요청부터 반영됩니다. 지금 상태는 `/wiki lessons` 와 `/wiki` 에 나옵니다.
+- 작업 방식 배우기: 계좌번호 모양 번호(숫자 묶음을 `-` 나 `_` 로 이은 것이나 이어 쓴 숫자로 합쳐 10~14자리)가 든 줄도 지침에 남기지 않습니다.
+- Releases 의 가벼운 zip 으로 바꿀 수 있습니다 (pi 본체는 그대로). 2026-10-20.1 을 건너뛰고 바꿔도 됩니다 (그 버전의 할 일도 함께 보세요).
+- 확인한 환경: 개발 PC 에서 위키 시험(단위, 가짜 모델로 돌린 pi, 폴더째 반영)과 설치·업데이트를 돌렸습니다. Kubeflow 노트북에서는 돌려 보지 않았습니다.
+- 할 일: 없음.
+
 ## 2026-10-20.1
 LLM 위키에 '작업 방식 배우기' 를 더했습니다. 바탕: pi-agent-like-agent 2026-10-20.1.
 - **작업 방식 배우기 (LLM 위키)** ([README 5장 'LLM 위키'](README.md#llm-위키-wiki)):
