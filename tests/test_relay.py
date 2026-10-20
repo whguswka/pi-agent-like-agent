@@ -1574,17 +1574,18 @@ with _cl.redirect_stdout(_o2):
     _ax = relay.Relay(_AA(), _lx2).handle({"messages": [_sysl, {"role": "user", "content": "정리해줘"}], "tools": tools})
 check("글 파일을 못 붙이면 그 요청은 나눠 보냄 (파일 없이, 조각 여러 개)", _ax.get("content") == "답" and len(_lx2.sent_log) == 1
       and len(_lx2.sent_log[0]["parts"]) > 1 and not _lx2.sent_log[0].get("files") and "나눠 보냅니다" in _o2.getvalue(), (_lx2.sent_log, _o2.getvalue()[-300:]))
-_lr = _FileLink([_REFUSALS[0]])
+_lr = _FileLink(["답"])
 _lr.cfg = {"attach_long_text": True, "service_name": "사내AI"}
 _rr2 = relay.Relay(_AA(), _lr)
 _sysph = {"role": "system", "content": "규칙\n" + "- 긴 규칙 줄입니다.\n" * 800 + "- 연락처 010-1234-5678\n"}
-try:
-    _quiet(lambda: _rr2.handle({"messages": [_sysph, {"role": "user", "content": "정리해줘"}], "tools": tools}))
-    _er = None
-except relay.RelayError as e:
-    _er = e
-check("파일로 보낸 글이 막히면 찾은 곳은 파일 내용에서 (전화번호)", _er is not None and "전화번호" in str(_er) and _rr2.blocked == {"010-1234-5678"},
-      (str(_er), _rr2.blocked))
+_o3 = _io.StringIO()
+with _cl.redirect_stdout(_o3):
+    _rr2.handle({"messages": [_sysph, {"role": "user", "content": "정리해줘"}], "tools": tools})
+check("개인정보 모양 글(전화번호)이 있으면 파일로 붙이지 않고 나눠 보냄 (서비스의 개인정보 확인을 거치게), 로그에 값은 없음",
+      len(_lr.sent_log) == 1 and len(_lr.sent_log[0]["parts"]) > 1 and not _lr.sent_log[0].get("files")
+      and "개인정보 모양 글이 있어" in _o3.getvalue() and "010-1234" not in _o3.getvalue(), (_lr.sent_log and len(_lr.sent_log[0]["parts"]), _o3.getvalue()[-300:]))
+_pe, _fe = _rf.pack("가" * 12000 + "\n작성자 [이메일1]", "[pi-ffffff]")
+check("감춘 이메일([이메일N])만 있으면 파일로 붙임", len(_pe) == 1 and len(_fe) == 1, (len(_pe), len(_fe)))
 _lc = _FileLink(["답", "다음 답"])
 _lc.cfg = {"attach_long_text": True, "service_name": "사내AI"}
 _rc = relay.Relay(_AA(), _lc)
@@ -1599,8 +1600,8 @@ check("이어지는 대화의 긴 메시지: 질문 1번, 본문은 '이번 메�
       and "이번 메시지" in _s2["parts"][0] and "지금까지의 대화" not in _s2["parts"][0] and "이 결과로 표를 만들어줘" in _f2 and "긴 규칙 줄" not in _f2,
       ([(x["new_thread"], len(x["parts"])) for x in _lc.sent_log], _s2["parts"][0][:200], len(_f2)))
 check("새 대화의 첫 메시지는 그대로 ('진행 방식·지금까지의 대화' 가 파일에)", "지금까지의 대화" in _lc.sent_log[0]["parts"][0], _lc.sent_log[0]["parts"][0][:200])
-check("bridge 기본은 꺼짐, 사내AI 설정도 꺼짐 (시험 뒤에 켬)", relay.bridge.DEFAULT_CONFIG.get("attach_long_text") is False
-      and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("attach_long_text") is False)
+check("bridge(Copilot) 기본은 꺼짐, 사내AI 는 켜짐 (2026-10-20 회사 사내AI 에서 확인)", relay.bridge.DEFAULT_CONFIG.get("attach_long_text") is False
+      and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("attach_long_text") is True)
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

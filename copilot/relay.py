@@ -43,7 +43,7 @@ MSG_KINDS = {"throttle", "privacy", "privacy_held", "login", "config", "browser"
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-19.2"
+RELAY_VERSION = "2026-10-20.1"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -1650,9 +1650,14 @@ class Relay:
         """보낼 글 -> (조각들, 붙일 글 파일들). attach_long_text 이고 한 번에 다 들어가지 않으면(입력 한도 max_chars):
         글 전체는 파일로 붙이고, 본문에는 파일을 읽으라는 말과 진행 방식 요약, 글의 끝부분(최근 요청·결과)을 넣어 질문 1번에 보낸다.
         whole: 새 대화에 보내는 글 전체(진행 방식·규칙·도구·대화). 아니면 이어지는 대화의 이번 메시지(긴 작업 결과 등).
-        아니면 지금처럼 나눠 보낸다 (조각마다 질문 1번)"""
+        아니면 지금처럼 나눠 보낸다 (조각마다 질문 1번).
+        개인정보 모양 글(전화번호 등. 이메일 감추기를 켜면 이메일은 이미 [이메일N])이 있으면 파일로 붙이지 않는다:
+        서비스의 개인정보 확인이 첨부 파일까지 보는지 모르므로, 글로 보내 그 확인을 거치게 한다"""
         limit = self.args.max_chars
         if not self.attach_long() or len(text) + len(marker) + 2 <= limit:
+            return build_parts(text, limit, marker), []
+        if personal_values(text):
+            self.log("  개인정보 모양 글이 있어 긴 글을 파일로 붙이지 않고 나눠 보냅니다 (서비스의 개인정보 확인을 거치게)")
             return build_parts(text, limit, marker), []
         name = "pi-context-{}.txt".format(uuid.uuid4().hex[:4])
         rule = PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)) or "-",
