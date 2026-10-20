@@ -221,6 +221,9 @@ check("같은 줄은 횟수·날짜만 올림, 날짜 표시가 없는 줄(사�
 check("작업 방식: 이메일·전화번호·비밀·[이메일N] 이 든 줄은 남기지 않음, 한 번에 3줄까지",
 	JSON.stringify(w.putLessons("", ["작성자는 hong.gd@example.com 로 적는다", "연락은 010-1234-5678", "token: abc", "[이메일1] 을 쓴다", "a 한다", "b 한다", "c 한다", "d 한다"], "2026-10-20").rejected) === JSON.stringify(["작성자는 hong.gd@example.com 로 적는다", "연락은 010-1234-5678", "token: abc"])
 	&& w.putLessons("", ["a 한다", "b 한다", "c 한다", "d 한다"], "2026-10-20").skipped.length === 1 && w.secretish("[이메일2]") && !w.secretish("2026-10-20 에 배포"));
+check("작업 방식: 계좌번호 모양 번호·[번호N] 이 든 줄도 남기지 않음 (날짜·버전은 괜찮음)",
+	w.secretish("백업은 backup_20260727_075536 에 둔다") && w.secretish("계좌 110-123-456789") && w.secretish("[번호3] 폴더를 쓴다")
+	&& !w.secretish("20260930 에 배포한 2026-10-20.1 버전") && !w.secretish("pi-reorganization-20261002 폴더"));
 let full = "";
 for (let i = 0; i < 12; i++) full = w.putLessons(full, [`규칙 ${i} 번: 이런 경우에는 이렇게 한다`], `2026-10-${String(i + 1).padStart(2, "0")}`).text;
 full = w.putLessons(full, ["규칙 5 번: 이런 경우에는 이렇게 한다"], "2026-10-20").text;

@@ -43,7 +43,7 @@ MSG_KINDS = {"throttle", "privacy", "privacy_held", "login", "config", "browser"
 MODEL_ID = "copilot"
 PROTOCOL_TAG = "PI-COPILOT-PROTOCOL v2"
 # 코드를 바꾸면 올린다. bin/pi 가 실행 중인 중계 서버의 버전(/health)과 다르면 끄고(/shutdown) 새로 켠다
-RELAY_VERSION = "2026-10-20.1"
+RELAY_VERSION = "2026-10-20.2"
 
 # 지금 하는 일: GET /status 가 잠금·브라우저 조작 없이 바로 돌려준다 (pi 확장이 상태 줄에 1초마다 표시)
 STATUS = {"busy": False, "phase": "", "since": 0.0, "started": 0.0}
@@ -267,11 +267,36 @@ def privacy_refusal(reply, mid=False):
     return bool(PRIVACY_TERM_RE.search(text) and PRIVACY_REFUSAL_RE.search(text))
 
 
+class DigitCountRe:
+    """정규식에 숫자 개수 조건을 더함 (finditer·sub 만)"""
+
+    def __init__(self, pattern, lo, hi):
+        self.rx, self.lo, self.hi = re.compile(pattern), lo, hi
+
+    def ok(self, s):
+        return self.lo <= sum(c.isdigit() for c in s) <= self.hi
+
+    def finditer(self, text):
+        return (m for m in self.rx.finditer(text) if self.ok(m.group(0)))
+
+    def sub(self, fn, text):
+        return self.rx.sub(lambda m: fn(m) if self.ok(m.group(0)) else m.group(0), text)
+
+
+# 계좌번호 모양 번호: 숫자 묶음 2~4개를 - 나 _ 로 이은 것, 또는 이어 쓴 숫자로 합쳐 10~14자리.
+#  영문자·점·하이픈에 붙은 것은 아님 (UUID, IP, 버전 번호). 날짜(2026-10-20, 20261020)는 8자리라 아님.
+#  2026-10-20 사내AI 가 계좌번호가 없는 폴더 목록을 '계좌번호와 같은 민감한 정보' 로 막음: '20260727_075536' 같은 날짜·시각이 걸린 것으로 보임 (추측)
+NUMBER_PATTERN = r"(?<![0-9A-Za-z.-])(?:\d{2,8}[-_]){1,3}\d{2,8}(?![0-9A-Za-z.-])|(?<![0-9A-Za-z.-])\d{10,14}(?![0-9A-Za-z.-])"
+ACCOUNT_RE = DigitCountRe(NUMBER_PATTERN, 10, 14)
+# 막혔는데 위의 것을 못 찾았을 때 보여 줄 의심 후보: 8자리 넘는 숫자 (날짜도 들어감. 다시 보내기를 막지는 않음)
+SUSPECT_RES = [("긴 숫자", DigitCountRe(r"(?<![0-9A-Za-z.-])(?:\d{1,14}[-_]){0,3}\d{2,14}(?![0-9A-Za-z.-])", 8, 40))]
+
 # 막힌 조각에서 개인정보 모양 글 찾기: 보내는 글은 바꾸지 않고, 어디에 있는지만 pi 에 알려 사람이 빼도록 한다
 PERSONAL_RES = [
     ("이메일 주소", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")),
     ("전화번호", re.compile(r"(?<!\d)01[016789][- .]?\d{3,4}[- .]?\d{4}(?!\d)")),
     ("주민등록번호 모양 번호", re.compile(r"(?<!\d)\d{6}-[1-4]\d{6}(?!\d)")),
+    ("계좌번호 모양 번호", ACCOUNT_RE),
 ]
 
 
@@ -288,7 +313,7 @@ def spot_advice(spots):
     return ", ".join(todo) or "/new 로 새로 시작"
 
 
-def personal_spots(text, limit=3, only=None):
+def personal_spots(text, limit=3, only=None, patterns=None):
     """보낸 글에서 개인정보 모양 글이 있는 곳 (예: '~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (se…@example.com)').
     pi 지침 파일(<project_instructions path=…>)이면 파일과 줄, 스킬 설명·도구 결과·요청 글이면 그 이름. only: 이 글들만"""
     home = os.path.expanduser("~").replace("\\", "/").rstrip("/")
@@ -301,7 +326,7 @@ def personal_spots(text, limit=3, only=None):
         if kind == "이메일 주소":
             user, _, domain = v.partition("@")
             return " ({}…@{})".format(user[:2], domain)
-        return " ({}…{})".format(v[:3], v[-2:]) if kind == "전화번호" else ""
+        return " ({}…{})".format(v[:3], v[-2:]) if kind in ("전화번호", "계좌번호 모양 번호", "긴 숫자") else ""
 
     def where(s):
         tag = text.rfind("<project_instructions path=", 0, s)
@@ -322,11 +347,14 @@ def personal_spots(text, limit=3, only=None):
             return "도구 결과 ({})".format(name.group(1) if name else "?")
         return heads[label]
 
-    found = []
-    for kind, rx in PERSONAL_RES:
+    found, starts = [], set()
+    for kind, rx in patterns or PERSONAL_RES:
         for m in rx.finditer(text):
             if only is not None and m.group(0) not in only:
                 continue
+            if m.start() in starts:  # 같은 글을 두 종류로 (전화번호이자 계좌번호 모양) 두 번 알리지 않음
+                continue
+            starts.add(m.start())
             spot = "{}의 {}{}".format(where(m.start()), kind, hint(kind, m.group(0)))
             if spot not in found:
                 found.append(spot)
@@ -338,26 +366,38 @@ def personal_spots(text, limit=3, only=None):
 #  이 중계 서버 메모리에만 둔다 (로그·파일에 남기지 않음). 일부만 가리는 방식(ab***@…)은 주소의 일부가 나가므로 쓰지 않는다.
 #  회사의 개인정보 확인은 그대로 돈다 (다른 것이 걸리면 지금처럼 멈추고 알림)
 EMAIL_TOKEN_RE = re.compile(r"\[이메일\d+\]")
+# 번호 감추기 (redact_numbers, 사내AI): 계좌번호 모양 번호(ACCOUNT_RE)를 [번호N] 으로. 되돌리는 방식은 이메일과 같다
+TOKEN_RE = re.compile(r"\[(?:이메일|번호)\d+\]")
 
 
 class Redactor:
     def __init__(self):
-        self.token_of, self.value_of = {}, {}
+        self.token_of, self.value_of, self.count = {}, {}, {}
 
-    def redact(self, text):
+    def _swap(self, kind):
         def swap(m):
             v = m.group(0)
             t = self.token_of.get(v)
             if t is None:
-                t = "[이메일{}]".format(len(self.token_of) + 1)
+                self.count[kind] = self.count.get(kind, 0) + 1
+                t = "[{}{}]".format(kind, self.count[kind])
                 self.token_of[v], self.value_of[t] = t, v
             return t
-        return PERSONAL_RES[0][1].sub(swap, text or "")
+        return swap
+
+    def redact(self, text, emails=True, numbers=False):
+        """이메일 주소 -> [이메일N], numbers 면 계좌번호 모양 번호 -> [번호N] (같은 글은 늘 같은 표시. 이메일 먼저)"""
+        text = text or ""
+        if emails:
+            text = PERSONAL_RES[0][1].sub(self._swap("이메일"), text)
+        if numbers:
+            text = ACCOUNT_RE.sub(self._swap("번호"), text)
+        return text
 
     def restore(self, obj):
-        """[이메일N] -> 원래 주소 (글, 그리고 도구 인자처럼 안에 글이 든 목록·사전). 모르는 번호는 그대로"""
+        """[이메일N]·[번호N] -> 원래 글 (글, 그리고 도구 인자처럼 안에 글이 든 목록·사전). 모르는 번호는 그대로"""
         if isinstance(obj, str):
-            return EMAIL_TOKEN_RE.sub(lambda m: self.value_of.get(m.group(0), m.group(0)), obj) if self.value_of else obj
+            return TOKEN_RE.sub(lambda m: self.value_of.get(m.group(0), m.group(0)), obj) if self.value_of else obj
         if isinstance(obj, list):
             return [self.restore(x) for x in obj]
         if isinstance(obj, dict):
@@ -1558,7 +1598,7 @@ class Relay:
         # 서비스가 개인정보 확인으로 막은 글에 있던 개인정보 모양 글. 다음 요청에 그대로 있으면 보내지 않고 바로 알린다
         #  (같은 글을 다시 보내면 또 막혀, 새 대화만 계속 열림). 이 프로세스 메모리에만 두고 로그·파일에는 남기지 않음
         self.blocked = set()
-        self.redactor = Redactor()  # redact_emails: 이메일 주소 <-> [이메일N] (메모리에만)
+        self.redactor = Redactor()  # redact_emails·redact_numbers: 이메일 주소 <-> [이메일N], 계좌번호 모양 번호 <-> [번호N] (메모리에만)
 
     def log(self, *a):
         bridge.log(*a)
@@ -1597,8 +1637,11 @@ class Relay:
             found = (" 보낸 글에서 찾은 곳: {}. 같은 글로 다시 하면 또 막히므로, 이 정보가 그대로 있으면 다음 요청은 보내지 않고 바로 알립니다. "
                      "꼭 필요한 정보가 아니면 빼고 다시 하세요 ({}).").format(", ".join(spots), spot_advice(spots))
         elif spots is not None:
-            found = (" 같은 글로 다시 하면 또 막힐 수 있습니다. 보낸 글에서 이메일·전화번호 모양 글은 찾지 못했습니다 "
-                     "(경로의 사용자 폴더 이름 등 다른 글이 걸렸을 수 있음).")
+            # 못 찾으면 긴 숫자를 의심 후보로 (날짜일 수도 있으므로 다시 보내기는 막지 않음. 사람이 보고 판단)
+            sus = personal_spots(e.sent, patterns=SUSPECT_RES)
+            found = (" 같은 글로 다시 하면 또 막힐 수 있습니다. 보낸 글에서 이메일·전화번호·계좌번호 모양 글은 찾지 못했습니다" +
+                     (". 걸렸을 수 있는 곳 (긴 숫자, 확인 필요): {}. 꼭 필요하지 않으면 빼고 /new 로 다시 하세요.".format(", ".join(sus)) if sus
+                      else " (경로의 사용자 폴더 이름 등 다른 글이 걸렸을 수 있음)."))
         else:
             found = " 같은 글로 다시 하면 또 막힐 수 있습니다."
         self.log("{}: 개인정보·민감 정보 확인으로 답하지 않음{} -> 멈춤 (다시 보내지 않음){}".format(
@@ -1640,8 +1683,10 @@ class Relay:
         return bool((getattr(self.link, "cfg", None) or {}).get("multi_write"))
 
     def out(self, text):
-        """보낼 글. redact_emails 면 이메일 주소를 [이메일N] 으로"""
-        return self.redactor.redact(text) if (getattr(self.link, "cfg", None) or {}).get("redact_emails") else text
+        """보낼 글. redact_emails 면 이메일 주소를 [이메일N] 으로, redact_numbers 면 계좌번호 모양 번호를 [번호N] 으로"""
+        cfg = getattr(self.link, "cfg", None) or {}
+        emails, numbers = bool(cfg.get("redact_emails")), bool(cfg.get("redact_numbers"))
+        return self.redactor.redact(text, emails, numbers) if emails or numbers else text
 
     def attach_long(self):
         return bool((getattr(self.link, "cfg", None) or {}).get("attach_long_text"))

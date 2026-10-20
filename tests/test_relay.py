@@ -980,7 +980,7 @@ _err = _quiet(lambda: _rq.refused(_pr))
 check("거절 알림: 몇째 조각인지 + 받은 답 + 나머지 조각을 보내지 않았다는 것 + 같은 글은 또 막힌다는 것 + 다음은 새 대화", _err.status == 422
       and str(_err).startswith("사내AI: ") and "(긴 메시지 1/2)" in str(_err) and "나머지 1개 조각은 보내지 않았습니다" in str(_err)
       and "같은 글로 다시 하면 또 막힐 수 있습니다" in str(_err) and _rq.fresh is True and _rq.redo_same_chat is False, str(_err))
-check("거절 알림: 막힌 조각에 개인정보 모양 글이 없으면 그렇다고", "이메일·전화번호 모양 글은 찾지 못했습니다" in str(_err) and _pr.sent == _parts[0],
+check("거절 알림: 막힌 조각에 개인정보 모양 글이 없으면 그렇다고", "이메일·전화번호·계좌번호 모양 글은 찾지 못했습니다" in str(_err) and _pr.sent == _parts[0],
       str(_err))
 _lp.cop = _CopParts(["OK", "끝"])
 check("중간 조각에 OK 면 다음 조각까지 보냄", (_quiet(lambda: _lp.request(_parts, True)) or {}).get("text") == "끝" and len(_lp.cop.sent) == 2)
@@ -1446,6 +1446,61 @@ check("감춰도 다른 것(전화번호)으로 막히면: 그 찾은 곳만 알
       and "이메일 주소" not in str(_eq).split("찾은 곳:")[-1] and _rq2.blocked == {"010-1234-5678"}, (str(_eq), _rq2.blocked))
 check("bridge 기본은 꺼짐, 사내AI 설정은 켜짐", relay.bridge.DEFAULT_CONFIG.get("redact_emails") is False
       and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("redact_emails") is True)
+
+# 번호 감추기 (redact_numbers, 사내AI): 계좌번호 모양 번호(합쳐 10~14자리)를 [번호N] 으로. 날짜·IP·버전·UUID 는 그대로
+#  (2026-10-20 사내AI 가 폴더 목록의 '20260727_075536' 같은 날짜·시각을 '계좌번호와 같은 민감한 정보' 로 막은 일)
+_yes = ["20260727_075536", "20261002_130748", "110-123-456789", "1002-123-456789", "123456-12-123456", "12345678-01", "2026102012345", "backup_20260727_075536"]
+_no = ["2026-10-20", "20260930", "2026-10-20 15:30", "2026-10-20.1", "192.168.100.200", "550e8400-e29b-41d4-a716-446655440000", "1,500,000",
+       "pi-reorganization-20261002", "internal-agent_before_merged_20260921", "411 / 311", "v1.2.3", "20260101-20261231"]
+_miss = [t for t in _yes if not list(relay.ACCOUNT_RE.finditer(t))]
+_wrong = [t for t in _no if list(relay.ACCOUNT_RE.finditer(t))]
+check("계좌번호 모양: 날짜·시각이 붙은 이름과 계좌번호 꼴은 잡고, 날짜·IP·버전·UUID·금액·날짜 범위는 잡지 않음", not _miss and not _wrong, (_miss, _wrong))
+_rd1 = relay.Redactor()
+_tn = _rd1.redact("backup_20260727_075536 작성 hong@example.com 계좌 110-123-456789 다시 20260727_075536 날짜 2026-10-20", True, True)
+check("번호 감추기: [번호N] (같은 번호는 같은 표시, 이메일과 따로 셈), 날짜는 그대로, 되돌리기, 두 번 해도 같음",
+      _tn == "backup_[번호1] 작성 [이메일1] 계좌 [번호2] 다시 [번호1] 날짜 2026-10-20" and _rd1.restore(_tn).startswith("backup_20260727_075536 작성 hong@example.com 계좌 110-123-456789")
+      and _rd1.redact(_tn, True, True) == _tn, _tn)
+check("번호 감추기를 켜지 않으면 이메일만", relay.Redactor().redact("a@example.com 20260727_075536") == "[이메일1] 20260727_075536")
+_urn = {"role": "user", "content": "백업 폴더를 정리해줘"}
+_lkn = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "ls backup"}}\n```',
+                 '```json\n{"tool": "bash", "arguments": {"command": "rm -r backup/document_update_[번호1]"}}\n```', "정리했습니다 ([번호1] 지움)"])
+_lkn.cfg = {"redact_emails": True, "redact_numbers": True, "service_name": "사내AI"}
+_rn = relay.Relay(A(), _lkn)
+_sysn = {"role": "system", "content": "규칙"}
+with _cl.redirect_stdout(_io.StringIO()):
+    _b1 = _rn.handle({"messages": [_sysn, _urn], "tools": tools})
+    _mn = [_sysn, _urn, _b1, {"role": "tool", "tool_call_id": _b1["tool_calls"][0]["id"], "content": "document_update_20260727_075536\npi-reorganization-20261002"}]
+    _b2 = _rn.handle({"messages": _mn, "tools": tools})
+    _mn += [_b2, {"role": "tool", "tool_call_id": _b2["tool_calls"][0]["id"], "content": "(지움)"}]
+    _b3 = _rn.handle({"messages": _mn, "tools": tools})
+_sentn = "\n".join(p for x in _lkn.sent_log for p in x["parts"])
+check("redact_numbers: 도구 결과의 날짜·시각 이름은 [번호N], 8자리 날짜 이름은 그대로",
+      "20260727_075536" not in _sentn and "document_update_[번호1]" in _sentn and "pi-reorganization-20261002" in _sentn, _sentn[-300:])
+check("redact_numbers: 명령과 최종 답은 원래 번호로", _args(_b2)["command"] == "rm -r backup/document_update_20260727_075536"
+      and _b3.get("content") == "정리했습니다 (20260727_075536 지움)", (_args(_b2), _b3))
+# 감추기를 끈 채 계좌번호 모양으로 막히면: 찾은 곳 + 그대로면 다시 보내지 않음. 못 찾으면 긴 숫자를 의심 후보로 (다시 보내기는 막지 않음)
+_lkb = FakeLink([_REFUSALS[0]])
+_lkb.cfg = {"service_name": "사내AI"}
+_rb = relay.Relay(A(), _lkb)
+try:
+    _quiet(lambda: _rb.handle({"messages": [_sysn, {"role": "user", "content": "폴더 document_update_20260727_075536 정리"}], "tools": tools}))
+    _eb = None
+except relay.RelayError as e:
+    _eb = e
+check("감추기를 끈 채 막히면: 찾은 곳에 계좌번호 모양 번호, 그대로면 다음은 보내지 않음",
+      _eb is not None and "요청 글의 계좌번호 모양 번호 (202…36)" in str(_eb) and _rb.blocked == {"20260727_075536"}, (str(_eb), _rb.blocked))
+_lks = FakeLink([_REFUSALS[0]])
+_lks.cfg = {"service_name": "사내AI"}
+_rs = relay.Relay(A(), _lks)
+try:
+    _quiet(lambda: _rs.handle({"messages": [_sysn, {"role": "user", "content": "폴더 2026-07-24_review 와 20260930_phase 정리"}], "tools": tools}))
+    _es = None
+except relay.RelayError as e:
+    _es = e
+check("못 찾으면: 긴 숫자를 의심 후보로 알리고 다시 보내기는 막지 않음", _es is not None and "걸렸을 수 있는 곳 (긴 숫자, 확인 필요)" in str(_es)
+      and "요청 글의 긴 숫자 (202…24)" in str(_es) and not _rs.blocked, (str(_es), _rs.blocked))
+check("bridge(Copilot) 번호 감추기 기본은 꺼짐, 사내AI 는 켜짐", relay.bridge.DEFAULT_CONFIG.get("redact_numbers") is False
+      and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("redact_numbers") is True)
 
 # 서로 다른 파일 쓰기·고치기도 한 번에 (multi_write): 같은 파일, 쓰는 파일을 함께 읽기, 쓰기와 명령은 섞지 않음
 _c = lambda name, **a: {"name": name, "arguments": a}  # noqa: E731

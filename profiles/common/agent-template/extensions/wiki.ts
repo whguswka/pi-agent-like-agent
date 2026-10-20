@@ -813,7 +813,7 @@ export function initWiki(root: string, name: string, date = today()): string[] {
 //    같은 줄은 횟수만 올림, 넘치면 덜 쓰이고 오래된 줄부터 lessons/archive.md 로. 날짜 표시가 없는 줄(사람이 쓰거나 표시를 지운 줄)은 그대로
 //  - 스킬·프로젝트 지침·이미 있는 규칙을 바꿔야 하면 '=== 제안' -> lessons/proposals.md 에 모으고 알림 (사람이 보고 적용)
 //  - 고치기 전 지침은 lessons/ 에 남기고 /wiki lessons undo 로 되돌림. 원본 반영(ingest) 중에는 남기지 않음
-//  - 이메일·전화번호·비밀로 보이는 줄은 남기지 않음 (중계 서버가 [이메일N] 을 원래 주소로 되돌려 넘기므로)
+//  - 이메일·전화번호·계좌번호 모양 번호·비밀로 보이는 줄은 남기지 않음 (중계 서버가 [이메일N]·[번호N] 을 원래 글로 되돌려 넘기므로)
 //  - wiki.json 의 lessons: "auto" | "propose" | "off" (없으면 auto 가 write 면 auto, ask 면 propose, 그 밖은 off)
 // ---------------------------------------------------------------------------
 
@@ -828,7 +828,10 @@ const LESSON_HEAD = "## 작업 방식 (위키를 쓸 때 pi 가 배운 것. 고�
 const LESSON_SECTION = /^작업\s*방식$/;
 const PROPOSAL_SECTION = /^제안$/;
 const SECRETISH =
-	/[\w.+-]+@[\w-]+(\.[\w-]+)+|\[이메일\d+\]|(?<!\d)0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}(?!\d)|(password|passwd|비밀번호|암호|토큰|token|secret|api[_ -]?key)\s*[:=]/i;
+	/[\w.+-]+@[\w-]+(\.[\w-]+)+|\[(이메일|번호)\d+\]|(?<!\d)0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}(?!\d)|(password|passwd|비밀번호|암호|토큰|token|secret|api[_ -]?key)\s*[:=]/i;
+/** 계좌번호 모양 번호 (중계 서버의 ACCOUNT_RE 와 같음): 숫자 묶음을 - _ 로 이은 것이나 이어 쓴 숫자로 합쳐 10~14자리 */
+const NUMBERISH = /(?<![0-9A-Za-z.-])(?:\d{2,8}[-_]){1,3}\d{2,8}(?![0-9A-Za-z.-])|(?<![0-9A-Za-z.-])\d{10,14}(?![0-9A-Za-z.-])/g;
+const numberish = (s: string) => [...s.matchAll(NUMBERISH)].some((m) => (m[0].match(/\d/g) || []).length >= 10 && (m[0].match(/\d/g) || []).length <= 14);
 
 export function lessonMode(cfg: { auto: Auto; lessons?: LessonMode }): LessonMode {
 	if (cfg.lessons === "auto" || cfg.lessons === "propose" || cfg.lessons === "off") return cfg.lessons;
@@ -841,7 +844,7 @@ export const lessonLabel = (m: LessonMode, short = false) =>
 export const lessonsDir = () => join(agentDir(), "lessons");
 export const agentsFile = () => join(agentDir(), "AGENTS.md");
 /** 이메일·전화번호·비밀로 보이는 글 */
-export const secretish = (s: string) => SECRETISH.test(s);
+export const secretish = (s: string) => SECRETISH.test(s) || numberish(s);
 
 /** wiki_write 의 글에서 '=== 작업 방식'(한 줄씩)·'=== 제안'(부분마다 하나) 을 떼어 냄. 나머지(페이지들)는 그대로 */
 export function splitLessons(text: string): { pages: string; lessons: string[]; proposals: string[] } {

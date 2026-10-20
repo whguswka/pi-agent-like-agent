@@ -76,6 +76,9 @@ DEFAULT_CONFIG = {
     "attach_long_text": False,
     # 이메일 감추기: 보내기 전에 이메일 주소를 [이메일N] 으로 바꾸고 답(도구 인자·본문)에서는 원래 주소로 되돌림 (사내AI 는 inhouse.json 에서 켬)
     "redact_emails": False,
+    # 번호 감추기: 계좌번호 모양 번호(숫자 묶음을 - _ 로 이은 것이나 이어 쓴 숫자로 합쳐 10~14자리. 날짜·시각이 붙은 이름도 들어감)를
+    #  [번호N] 으로 바꿔 보내고 답에서는 되돌림 (사내AI 는 inhouse.json 에서 켬)
+    "redact_numbers": False,
     "image_attach": "auto",
     "image_upload_wait_seconds": 60,
     "max_tabs": 1,  # 2 이상이면 pi 를 여러 개 동시에 쓸 때 세션마다 Copilot 창을 따로 씀 (최대 그 수만큼 창을 엶)
