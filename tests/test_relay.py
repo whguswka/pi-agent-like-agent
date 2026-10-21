@@ -1013,11 +1013,18 @@ check("거절 알림: 찾은 곳과 함께 빼고 /new 로 다시 하라고 (보
       "보낸 글에서 찾은 곳: ~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ho…@example.com)" in str(_e2) and "/new" in str(_e2)
       and "나머지 7개 조각은 보내지 않았습니다" in str(_e2), str(_e2))
 check("거절 알림: 지침·스킬 파일은 /reload, 앞 대화(명령 결과)는 /new, 그대로면 다음 요청은 보내지 않는다고",
-      "지침·스킬 파일이면 고친 뒤 /reload, 앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작" in str(_e2)
+      "지침·스킬·pi 설정이면 고친 뒤 /reload, 앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작하거나 /tree 로 그 결과 앞으로 돌아가기" in str(_e2)
       and "다음 요청은 보내지 않고 바로 알립니다" in str(_e2), str(_e2))
-check("할 일 안내: 지침 파일만이면 /reload 만, 앞 대화만이면 /new 만",
-      relay.spot_advice(["~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ho…@example.com)"]) == "지침·스킬 파일이면 고친 뒤 /reload"
-      and relay.spot_advice(["도구 결과 (bash)의 이메일 주소 (ki…@example.org)"]) == "앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작")
+check("할 일 안내: 지침 파일·pi 설정만이면 /reload 만, 앞 대화만이면 /new 나 /tree",
+      relay.spot_advice(["~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (ho…@example.com)"]) == "지침·스킬·pi 설정이면 고친 뒤 /reload"
+      and relay.spot_advice(["pi 설정(지침·도구 설명)의 전화번호 (010…78)"]) == "지침·스킬·pi 설정이면 고친 뒤 /reload"
+      and relay.spot_advice(["도구 결과 (bash)의 이메일 주소 (ki…@example.org)"]) == "앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작하거나 /tree 로 그 결과 앞으로 돌아가기")
+_ts = "진행 방식\n- 연락처 010-1234-5678\n\n대화 내용\n[요청]\n폴더 2026-07-24 와 20260930 과 run-20260727_0755361"
+check("찾은 곳: 첫 메시지 앞부분(진행 방식·도구 설명)은 'pi 설정', 의심 후보는 숫자가 많은 것부터",
+      relay.personal_spots(_ts) == ["pi 설정(지침·도구 설명)의 전화번호 (010…78)"]
+      and relay.personal_spots(_ts, patterns=relay.SUSPECT_RES, longest_first=True)[0] == "요청 글의 긴 숫자 (202…61)", relay.personal_spots(_ts, patterns=relay.SUSPECT_RES, longest_first=True))
+check("카드번호 모양은 파일로 붙이지 않음 (날짜 범위는 아님)", bool(relay.CARD_RE.search("카드 1234-5678-9012-3456")) and bool(relay.CARD_RE.search("1234 5678 9012 3456"))
+      and not relay.CARD_RE.search("20260101-20261231"))
 check("거절 알림: 다시 부탁한 글처럼 막힌 글을 모르면 찾은 곳은 말하지 않음",
       "찾은 곳" not in str(_quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0])))) and
       "찾지 못했습니다" not in str(_quiet(lambda: _rq.refused(relay.PrivacyRefused(_REFUSALS[0])))))

@@ -329,6 +329,9 @@ ACCOUNT_RE = DigitCountRe(NUMBER_PATTERN, 10, 14)
 # 막혔는데 위의 것을 못 찾았을 때 보여 줄 의심 후보: 8자리 넘는 숫자 (날짜도 들어감. 다시 보내기를 막지는 않음)
 SUSPECT_RES = [("긴 숫자", DigitCountRe(_NUM_BEFORE + r"(?:\d{1,14}[-_]){0,3}\d{2,14}" + _NUM_AFTER, 8, 40))]
 
+# 카드번호 모양 (4자리씩 띄어 쓰거나 이은 것, 이어 쓴 15~19자리): 감추지는 않지만 긴 글을 파일로 붙이지 않고 글로 보내 서비스의 개인정보 확인을 거치게
+CARD_RE = re.compile(r"(?<![\d.])(?:\d{4}[- ]){3}\d{1,7}(?![\d.])|(?<![\d.])\d{15,19}(?![\d.])")
+
 # 막힌 조각에서 개인정보 모양 글 찾기: 보내는 글은 바꾸지 않고, 어디에 있는지만 pi 에 알려 사람이 빼도록 한다
 PERSONAL_RES = [
     ("이메일 주소", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")),
@@ -344,14 +347,16 @@ def personal_values(text):
 
 
 def spot_advice(spots):
-    """찾은 곳에 따라 빼는 방법: 지침·스킬 파일은 고친 뒤 /reload, 앞 대화(명령 결과·요청 글 등)에 남은 것은 /new"""
-    files = any("번째 줄의" in s or s.startswith("스킬") for s in spots)
+    """찾은 곳에 따라 빼는 방법: 지침·스킬·pi 설정은 고친 뒤 /reload (/new 로는 같은 지침이 다시 감),
+    앞 대화(명령 결과·요청 글 등)에 남은 것은 /new 나 /tree 로 그 앞으로 (/compact 로는 남음)"""
+    files = any("번째 줄의" in s or s.startswith(("스킬", "pi 설정")) for s in spots)
     talk = any(s.startswith(("도구 결과", "앞 답변", "요청 글", "보낸 글")) for s in spots)
-    todo = (["지침·스킬 파일이면 고친 뒤 /reload"] if files else []) + (["앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작"] if talk else [])
+    todo = (["지침·스킬·pi 설정이면 고친 뒤 /reload"] if files else []) + (
+        ["앞 대화(명령 결과·요청 글)에 있으면 /new 로 새로 시작하거나 /tree 로 그 결과 앞으로 돌아가기"] if talk else [])
     return ", ".join(todo) or "/new 로 새로 시작"
 
 
-def personal_spots(text, limit=3, only=None, patterns=None):
+def personal_spots(text, limit=3, only=None, patterns=None, longest_first=False):
     """보낸 글에서 개인정보 모양 글이 있는 곳 (예: '~/.pi/agent/AGENTS.md 19번째 줄의 이메일 주소 (se…@example.com)').
     pi 지침 파일(<project_instructions path=…>)이면 파일과 줄, 스킬 설명·도구 결과·요청 글이면 그 이름. only: 이 글들만"""
     home = os.path.expanduser("~").replace("\\", "/").rstrip("/")
@@ -376,6 +381,9 @@ def personal_spots(text, limit=3, only=None, patterns=None):
         if sk >= 0 and text.find("</skill>", sk, s) < 0:
             loc = re.search(r"<location>([^<]*)</location>", text[sk:sk + 3000])
             return "스킬 {}".format(short(loc.group(1))) if loc else "스킬 설명"
+        conv = text.find("\n대화 내용\n")
+        if conv > s:  # 새 대화 첫 메시지의 앞부분: 진행 방식, 도구 설명, pi 지침(시스템 지시)
+            return "pi 설정(지침·도구 설명)"
         heads = {"TOOL_RESULT (": None, "[요청]": "요청 글", "[이전 답변]": "앞 답변", "[답변]": "앞 답변"}
         pos, label = max(((text.rfind(h, 0, s), h) for h in heads), key=lambda x: x[0])
         if pos < 0:
@@ -385,7 +393,7 @@ def personal_spots(text, limit=3, only=None, patterns=None):
             return "도구 결과 ({})".format(name.group(1) if name else "?")
         return heads[label]
 
-    found, starts = [], set()
+    found, starts, digits = [], set(), []
     for kind, rx in patterns or PERSONAL_RES:
         for m in rx.finditer(text):
             if only is not None and m.group(0) not in only:
@@ -396,6 +404,9 @@ def personal_spots(text, limit=3, only=None, patterns=None):
             spot = "{}의 {}{}".format(where(m.start()), kind, hint(kind, m.group(0)))
             if spot not in found:
                 found.append(spot)
+                digits.append(sum(c.isdigit() for c in m.group(0)))
+    if longest_first:  # 의심 후보: 숫자가 많은 것부터 (같으면 나온 차례)
+        found = [f for _, _, f in sorted(zip([-d for d in digits], range(len(found)), found))]
     return found[:limit] + (["외 {}곳".format(len(found) - limit)] if len(found) > limit else [])
 
 
@@ -1681,7 +1692,7 @@ class Relay:
                      "꼭 필요한 정보가 아니면 빼고 다시 하세요 ({}).").format(", ".join(spots), spot_advice(spots))
         elif spots is not None:
             # 못 찾으면 긴 숫자를 의심 후보로 (날짜일 수도 있으므로 다시 보내기는 막지 않음. 사람이 보고 판단)
-            sus = personal_spots(e.sent, patterns=SUSPECT_RES)
+            sus = personal_spots(e.sent, patterns=SUSPECT_RES, longest_first=True)
             found = (" 같은 글로 다시 하면 또 막힐 수 있습니다. 보낸 글에서 이메일·전화번호·계좌번호 모양 글은 찾지 못했습니다" +
                      (". 걸렸을 수 있는 곳 (긴 숫자, 확인 필요): {}. 꼭 필요하지 않으면 빼고 /new 로 다시 하세요.".format(", ".join(sus)) if sus
                       else " (경로의 사용자 폴더 이름 등 다른 글이 걸렸을 수 있음)."))
@@ -1744,7 +1755,7 @@ class Relay:
         limit = self.args.max_chars
         if not self.attach_long() or len(text) + len(marker) + 2 <= limit:
             return build_parts(text, limit, marker), []
-        if personal_values(text):
+        if personal_values(text) or CARD_RE.search(text):
             self.log("  개인정보 모양 글이 있어 긴 글을 파일로 붙이지 않고 나눠 보냅니다 (서비스의 개인정보 확인을 거치게)")
             return build_parts(text, limit, marker), []
         name = "pi-context-{}.txt".format(uuid.uuid4().hex[:4])
@@ -1909,7 +1920,10 @@ class Relay:
         # 안내 문구는 서비스·중계 서버가 만든 정해진 문구일 때만 (이 PC 안에서만 보며 요약에는 안 나옴).
         # 내부 오류 등은 문구에 경로나 처리하던 글이 섞일 수 있어 예외 이름만
         if kind in MSG_KINDS:
-            ev["msg"] = str(e)[:200]
+            msg = str(e)
+            if kind in ("privacy", "privacy_held", "throttle"):  # 개인정보 일부 표시 '(010…78)' 와 답 인용 «…» 은 남기지 않음
+                msg = re.sub(r"«[^»]*»", "«…»", re.sub(r" \([^)]*…[^)]*\)", "", msg))
+            ev["msg"] = msg[:200]
         else:
             ev["exc"] = type(e).__name__
         try:

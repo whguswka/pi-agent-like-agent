@@ -1191,7 +1191,7 @@ class Copilot:
             self.clear_input(sel)
             if st.get("editable") and st.get("focused"):
                 raise BridgeError("입력창에 글자가 다 들어가지 않았습니다 ({}/{}자). Copilot 의 글자 수 제한일 수 있으니 "
-                                  "내 설정 파일의 max_chars 를 줄이세요 (확인: diag.py --input-limit).".format(got, len(text)))
+                                  "내 설정 파일의 max_chars 를 줄이세요 (확인: diag.py --input-limit, 사내AI 는 --inhouse --input-limit).".format(got, len(text)))
             raise BridgeError("Copilot 입력창이 글을 받지 않습니다{} ({}/{}자). 전용 창의 Copilot 화면이 정상인지 보고 "
                               "같은 요청을 다시 보내 주세요.".format(self.state_note(st), got, len(text)))
         if attached:

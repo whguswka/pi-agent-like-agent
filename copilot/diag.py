@@ -503,8 +503,8 @@ def main():
             note = ""
             if open_end:  # 입력창은 더 받지만 Copilot 서버 쪽 한도는 따로 있을 수 있어 3만 자까지만 권함
                 rec, note = min(rec, 30000), " (시험한 {:,}자까지 다 들어감. 서버 쪽 한도를 생각해 3만 자까지만 권장)".format(best)
-            show("권장 max_chars", "{:,}{} -> 내 설정 파일 ~/.pi/agent/bridge.json 에 \"max_chars\": {} (지금 {:,})".format(
-                rec, note, rec, int(cfg.get("max_chars") or 10000)))
+            show("권장 max_chars", "{:,}{} -> 내 설정 파일 {} 에 \"max_chars\": {} (지금 {:,})".format(
+                rec, note, "~/.pi/agent/inhouse.json" if args.inhouse else "~/.pi/agent/bridge.json", rec, int(cfg.get("max_chars") or 10000)))
         else:
             show("권장 max_chars", "X 확인하지 못함 (입력창에 글이 들어가지 않음)")
             ok = False
