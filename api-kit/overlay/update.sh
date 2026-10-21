@@ -169,7 +169,8 @@ fi
 # 3) 설정 반영
 echo "[update] 설정 반영: bash $PI_HOME/install.sh"
 echo
-bash "$PI_HOME/install.sh" || echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 버전: $OLD)" >&2
+INSTALL_OK=1
+bash "$PI_HOME/install.sh" || { INSTALL_OK=; echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 버전: $OLD)" >&2; }
 # 예전 버전으로 되돌린 경우 그 버전의 install.sh 는 새 버전에만 있던 확장을 치우지 못하므로 여기서도 (키트가 낸 적 있는 이름만, 옮겨 둠)
 KIT_EXT="guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
 for f in $KIT_EXT; do
@@ -181,14 +182,16 @@ done
 rmdir "$AGENT_DIR/extensions/lib" 2>/dev/null
 echo
 [ -n "$PI_UPDATE_BOOT" ] && rm -f "$PI_UPDATE_BOOT"  # 꺼내 둔 update.sh
-# 4) 이 버전에서 바뀐 점과 할 일 (CHANGELOG.md 의 '## <새 버전>' 항목. 사내망에서는 GitHub 을 볼 수 없으므로 여기서 보여 줌)
-if [ -n "$NEW_VER" ] && [ -f "$PI_HOME/CHANGELOG.md" ]; then
-  notes="$(awk -v v="$NEW_VER" '$1 == "##" && $2 == v {on = 1; next} on && /^## / {exit} on && NF' "$PI_HOME/CHANGELOG.md")"
-  if [ -n "$notes" ]; then
-    echo "[update] 이 버전에서 바뀐 점 (전체: $PI_HOME/CHANGELOG.md)"
-    printf '%s\n' "$notes" | sed 's/^/  /'
-    echo
-  fi
+# 4) 이 버전에서 바뀐 점과 할 일 (CHANGELOG.md. 사내망에서는 GitHub 을 볼 수 없으므로 여기서 보여 줌).
+#    여러 버전을 건너뛰었으면 건너뛴 버전들의 '할 일' 도 (bin/changelog-notes.sh)
+if [ -f "$PI_HOME/bin/changelog-notes.sh" ]; then
+  bash "$PI_HOME/bin/changelog-notes.sh" "$PI_HOME/CHANGELOG.md" "$OLD_VER" "$NEW_VER"
+fi
+if [ -z "$INSTALL_OK" ]; then
+  # 폴더는 새 버전으로 바뀌었지만 설정 반영(install.sh)이 중간에 멈춤: '완료' 라고 하지 않고 되돌리는 방법을 알림 (이전 버전 폴더는 지우지 말 것)
+  echo "[update] 마치지 못했습니다: 설정 반영(install.sh)이 실패했습니다. 위 메시지를 확인한 뒤 다시 하거나, 이전 버전으로 되돌리세요 (이전 버전 폴더 $OLD 는 지우지 마세요):" >&2
+  echo "         mv \"$PI_HOME\" \"$PI_HOME.failed\" && mv \"$OLD\" \"$PI_HOME\" && bash \"$PI_HOME/install.sh\"" >&2
+  exit 1
 fi
 echo "[update] 완료: ${OLD_VER:-예전 버전} -> ${NEW_VER:-새 버전}. 이전 버전은 $OLD 에 있습니다 (잘 되면 지워도 됨)"
 echo "         pi 를 실행하면 새 버전으로 시작합니다. 상태 확인: pi 안에서 /doctor"

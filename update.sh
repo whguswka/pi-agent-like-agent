@@ -140,23 +140,36 @@ if [ -n "$LIGHT" ]; then
   echo "[update] 업데이트용 zip (pi 본체 없음): 지금 깔린 pi 본체가 새 버전의 것과 같아 그대로 씁니다"
 fi
 
-# 2) 중계 서버 끄기 (우리 중계 서버일 때만. 8766 은 사내AI 중계 서버)
-if command -v curl >/dev/null 2>&1; then
-  for _port in 8765 8766; do
-    case "$(curl -s -m 3 "http://127.0.0.1:$_port/health" 2>/dev/null)" in *'"server": "ok"'*)
-      curl -s -m 3 -X POST "http://127.0.0.1:$_port/shutdown" >/dev/null 2>&1 \
-        && echo "[update] 중계 서버$([ "$_port" = 8765 ] || echo "($_port)")를 껐습니다 (다음 pi 실행 때 새 버전으로 켜짐)"
-      sleep 1 ;;
+# 2) 중계 서버 끄기 (8766 은 사내AI 중계 서버). 켜 둔 채 폴더 이름을 바꾸면 '사용 중' 으로 멈추므로 포트가 닫혔는지 보고,
+#    안 닫히면(예전 중계 서버는 /shutdown 이 없음) 그 포트에서 기다리는 프로세스가 relay.py 일 때만 끈다 (Windows)
+_port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+for _port in 8765 8766; do
+  _port_open "$_port" || continue
+  _name="중계 서버$([ "$_port" = 8765 ] || echo "($_port)")"
+  command -v curl >/dev/null 2>&1 && curl -s -m 5 -X POST "http://127.0.0.1:$_port/shutdown" >/dev/null 2>&1
+  for _i in 1 2 3 4 5 6 7 8 9 10; do _port_open "$_port" || break; sleep 0.3; done
+  if _port_open "$_port"; then
+    case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*)
+      _pid="$(netstat -ano 2>/dev/null | awk -v a="127.0.0.1:$_port" '$2 == a && $3 ~ /:0$/ {print $5; exit}')"
+      if [ -n "$_pid" ] && powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ProcessId=$_pid').CommandLine" 2>/dev/null | grep -q 'relay\.py'; then
+        taskkill //F //PID "$_pid" >/dev/null 2>&1
+        for _i in 1 2 3 4 5 6 7 8 9 10; do _port_open "$_port" || break; sleep 0.3; done
+      fi ;;
     esac
-  done
-fi
+  fi
+  if _port_open "$_port"; then
+    echo "[update] 참고: ${_name}(127.0.0.1:$_port)를 끄지 못했습니다. 아래에서 '사용 중' 으로 멈추면 netstat -ano | grep 127.0.0.1:$_port 의 마지막 숫자로 taskkill //F //PID <번호>"
+  else
+    echo "[update] ${_name}를 껐습니다 (다음 pi 실행 때 새 버전으로 켜짐)"
+  fi
+done
 
 # 3) 폴더 바꾸기 (실패하면 아무것도 바꾸지 않은 상태로 멈춤)
 OLD="$PI_HOME.old"
 rm -rf "$OLD" 2>/dev/null
 [ -e "$OLD" ] && die "지난번 이전 버전 폴더($OLD)를 지우지 못했습니다. 그 폴더를 연 창을 닫고 다시 실행하세요. 지금 버전은 그대로입니다"
 mv "$PI_HOME" "$OLD" 2>/dev/null \
-  || die "지금 폴더의 이름을 바꾸지 못했습니다 (사용 중). pi, Copilot 전용 창, 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요. 지금 버전은 그대로입니다"
+  || die "지금 폴더의 이름을 바꾸지 못했습니다 (사용 중). pi 와 그 폴더를 연 탐색기·터미널을 닫고 다시 실행하세요 (2026-10-03.1 전 버전이면 Copilot 전용 창도). 보이는 창이 없으면 중계 서버일 수 있습니다: netstat -ano | grep -E '127.0.0.1:876[56]' 의 마지막 숫자로 taskkill //F //PID <번호>. 지금 버전은 그대로입니다"
 if ! mv "$TOP" "$PI_HOME"; then
   mv "$OLD" "$PI_HOME" 2>/dev/null
   die "새 버전을 옮기지 못해 원래대로 되돌렸습니다"
@@ -174,7 +187,8 @@ fi
 # 4) 설정 반영
 echo "[update] 설정 반영: bash $PI_HOME/install.sh $PROFILE"
 echo
-bash "$PI_HOME/install.sh" "$PROFILE" || echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 버전: $OLD)" >&2
+INSTALL_OK=1
+bash "$PI_HOME/install.sh" "$PROFILE" || { INSTALL_OK=; echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 버전: $OLD)" >&2; }
 # 예전 버전으로 되돌린 경우 그 버전의 install.sh 는 새 버전에만 있던 확장을 치우지 못하므로 여기서도 (키트가 낸 적 있는 이름만, 옮겨 둠)
 KIT_EXT="copilot-session.ts jupyter.ts guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
 for f in $KIT_EXT; do
@@ -197,14 +211,16 @@ if [ -n "$PY" ] && [ -f "$OLD/copilot/bridge.json" ]; then
   esac
 fi
 [ -n "$PI_UPDATE_BOOT" ] && rm -f "$PI_UPDATE_BOOT"  # 예전 버전용으로 꺼내 둔 update.sh
-# 6) 이 버전에서 바뀐 점과 할 일 (CHANGELOG.md 의 '## <새 버전>' 항목. 사내망에서는 GitHub 을 볼 수 없으므로 여기서 보여 줌)
-if [ -n "$NEW_VER" ] && [ -f "$PI_HOME/CHANGELOG.md" ]; then
-  notes="$(awk -v v="$NEW_VER" '$1 == "##" && $2 == v {on = 1; next} on && /^## / {exit} on && NF' "$PI_HOME/CHANGELOG.md")"
-  if [ -n "$notes" ]; then
-    echo "[update] 이 버전에서 바뀐 점 (전체: $PI_HOME/CHANGELOG.md)"
-    printf '%s\n' "$notes" | sed 's/^/  /'
-    echo
-  fi
+# 6) 이 버전에서 바뀐 점과 할 일 (CHANGELOG.md. 사내망에서는 GitHub 을 볼 수 없으므로 여기서 보여 줌).
+#    여러 버전을 건너뛰었으면 건너뛴 버전들의 '할 일' 도 (bin/changelog-notes.sh)
+if [ -f "$PI_HOME/bin/changelog-notes.sh" ]; then
+  bash "$PI_HOME/bin/changelog-notes.sh" "$PI_HOME/CHANGELOG.md" "$OLD_VER" "$NEW_VER"
+fi
+if [ -z "$INSTALL_OK" ]; then
+  # 폴더는 새 버전으로 바뀌었지만 설정 반영(install.sh)이 중간에 멈춤: '완료' 라고 하지 않고 되돌리는 방법을 알림 (이전 버전 폴더는 지우지 말 것)
+  echo "[update] 마치지 못했습니다: 설정 반영(install.sh)이 실패했습니다. 위 메시지를 확인한 뒤 다시 하거나, 이전 버전으로 되돌리세요 (이전 버전 폴더 $OLD 는 지우지 마세요):" >&2
+  echo "         mv \"$PI_HOME\" \"$PI_HOME.failed\" && mv \"$OLD\" \"$PI_HOME\" && bash \"$PI_HOME/install.sh\" $PROFILE" >&2
+  exit 1
 fi
 echo "[update] 완료: ${OLD_VER:-예전 버전} -> ${NEW_VER:-새 버전}. 이전 버전은 $OLD 에 있습니다 (잘 되면 지워도 됨)"
 echo "         pi 를 실행하면 새 버전으로 시작합니다. 상태 확인: pi 안에서 /doctor (또는 python $PI_HOME/copilot/diag.py --report)"
