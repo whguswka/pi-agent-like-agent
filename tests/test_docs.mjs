@@ -1,6 +1,6 @@
 // 문서 찾기 (profiles/common/agent-template/extensions/kit.ts 의 docs_lookup·/docs) 시험:
 // 결과 읽기·글 만들기·문서 폴더 찾기, Python 고르기, 실제 Python 으로 표준 라이브러리(json, inspect) 찾기
-// 사용법: node tests/test_docs.mjs   (실제 Python: PI_TEST_PYTHON, 없으면 PATH 에서 돌아가는 python3·python. 없으면 그 부분은 건너뜀)
+// 사용법: node tests/test_docs.mjs   (실제 Python: PI_TEST_PYTHON 이나 PI_PYTHON, 없으면 PATH 에서 돌아가는 python3·python. 없으면 그 부분은 건너뜀)
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,7 +66,7 @@ check("글(찾지 못함): 까닭, 비슷한 이름, 설치 이름과 불러오�
 
 // 실제 Python 으로 (PI_TEST_PYTHON 이나 PATH 에서 돌아가는 것)
 const runs = (c) => spawnSync(c, ["-c", "import sys"], { windowsHide: true }).status === 0;
-const real = [process.env.PI_TEST_PYTHON, "python3", "python"].find((c) => c && runs(c));
+const real = [process.env.PI_TEST_PYTHON, process.env.PI_PYTHON, "python3", "python"].find((c) => c && runs(c));
 if (!real) console.log("건너뜀: 돌아가는 Python 이 없음 (PI_TEST_PYTHON 에 python 경로)");
 else {
 	delete process.env.VIRTUAL_ENV;

@@ -367,10 +367,20 @@ export default function (pi: ExtensionAPI) {
 			const wd = workDir();
 			const p = projectOf(wd);
 			if (!p) return;
-			let notes = false; // 작업 폴더의 NOTES.md (jupyter 모드면 노트북의 것)
+			// 작업 폴더의 NOTES.md (jupyter 모드면 노트북의 것). 노트북 연결이 멈춰 있어도 첫 요청이 기다리지 않게 3초까지만
+			let notes = false;
+			let timer: ReturnType<typeof setTimeout> | undefined;
 			try {
-				notes = !!(await readHead(target("NOTES.md", wd), 1));
-			} catch {}
+				notes = await Promise.race([
+					readHead(target("NOTES.md", wd), 1).then((h) => !!h),
+					new Promise<boolean>((ok) => {
+						timer = setTimeout(() => ok(false), 3000);
+					}),
+				]);
+			} catch {
+			} finally {
+				if (timer) clearTimeout(timer);
+			}
 			W.digest = digestOf(readLog(logFile(p.key)), p.label, new Date(), DIGEST_MAX, notes);
 		}
 		const sections = event.systemPromptOptions?.sections;
