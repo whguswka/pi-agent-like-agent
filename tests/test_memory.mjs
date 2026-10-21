@@ -74,6 +74,32 @@ const many = Array.from({ length: 30 }, (_, i) => ({ t: `2026-10-20 ${String(i %
 const dm = m.digestOf(many, "~/tb", now);
 check(`알릴 글: ${m.DIGEST_MAX}자·요청 ${m.DIGEST_ITEMS}개 안 (가장 최근 것들), 알릴 것이 없으면 빈 글`,
 	dm.length <= m.DIGEST_MAX && dm.includes("요청 29") && !dm.includes("요청 20 ") && (dm.match(/^- /gm) || []).length <= m.DIGEST_ITEMS && m.digestOf([], "x", now) === "" && m.digestOf(recs.slice(0, 1), "x", now) === "", [dm.length, dm]);
+// 넘겨받은 요약은 줄 단위로 줄이고 '정한 것' 줄은 남긴다. 실사용 시험(2026-10-21)의 세션 1 요약 그대로:
+//  예전에는 500자에서 잘라 맨 끝의 정한 것(GPU 는 최대)이 빠졌고, 세션 4 가 묻지 않고 합계로 바꿈
+const H1 = [
+	"목표: Windows 11 ARM64에서 관리자 권한·추가 설치 없이 작업 표시줄 우측에 겹쳐 보이는 리소스 모니터(EXE) 만들기.",
+	"한 일: C# WinForms 기반 `resmon.exe` 구현, CPU/RAM/GPU/네트워크 속도·누적량 표시, 1초 갱신, TopMost·Borderless 오버레이 구현.",
+	"한 일: .NET Framework ARM64 `csc.exe`로 빌드 가능하도록 `build.ps1` 작성 및 빌드 성공 확인.",
+	"바꾼 파일: `resmon.cs`",
+	"바꾼 파일: `build.ps1`",
+	"생성 파일: `resmon.exe` (빌드 성공, 실행 시작 확인)",
+	"남은 일: 실제 화면에서 위치가 알림 영역 옆에 정확히 오는지 확인 후 좌표 계산 보정.",
+	"남은 일: GPU 사용률이 작업 관리자와 비슷하게 나오는지 실제 부하를 걸어 검증.",
+	"남은 일: 작업 표시줄 자동 숨김, 다중 모니터, DPI 스케일링 환경 테스트.",
+	"주의: .NET Framework csc는 C# 5까지만 지원해 문자열 보간($\"\")·튜플 반환을 제거하고 `string.Format`, `NetworkResult` 클래스로 변경함.",
+	"주의: `Get-Command csc.exe`는 실패했고 `C:\\Windows\\Microsoft.NET\\FrameworkArm64\\v4.0.30319\\csc.exe` 경로를 직접 사용하도록 수정함.",
+	"정한 것: GPU는 여러 GPU Engine 중 최대 사용률 표시, 누적 전송량은 프로그램 시작 이후 업로드/다운로드를 각각 누적 표시.",
+].join("\n");
+const c500 = m.handoffCut(H1, 500);
+check("넘겨받은 요약 줄이기: 줄 단위, 정한 것은 맨 끝에 있어도 남기고 원래 차례 그대로, 줄인 줄 수 표시",
+	c500.length <= 500 && c500.startsWith("목표: Windows 11") && c500.includes("정한 것: GPU는 여러 GPU Engine 중 최대") && /\n\(… \d+줄 줄임\)$/.test(c500)
+	&& c500.split("\n").every((l) => H1.includes(l) || /^\(… \d+줄 줄임\)$/.test(l)), c500);
+check("넘겨받은 요약 줄이기: 한도 안이면 그대로, 줄바꿈 없는 긴 글은 끝을 자름",
+	m.handoffCut(H1) === H1 && m.handoffCut("가".repeat(1000), 100) === `${"가".repeat(99)}…`, H1.length);
+const dh = m.digestOf([{ t: "2026-10-21 20:45", handoff: H1 }, { t: "2026-10-21 20:46", req: "위치 고쳐 줘" }], "~/work/resmon", now);
+check("알릴 글: 세션 1 요약이 통째로 들어가 정한 것이 남음 (한도 안)", dh.includes(H1) && dh.length <= m.DIGEST_MAX, dh.length);
+check("요약 부탁 글: 정한 것을 맨 앞에, 넘겨받은 결정도 옮겨 적게",
+	m.HANDOFF_PROMPT.includes("맨 앞에 '정한 것:'") && m.HANDOFF_PROMPT.includes("넘겨받은 것 중 아직 유효한 것도 빠짐없이 옮겨"), m.HANDOFF_PROMPT);
 
 // 가짜 pi 로: 요청 -> 기록 -> 새 세션에 알림 (세션 안에서는 같은 글), 확장이 보낸 요청, /handoff, /recall
 const tmp = mkdtempSync(join(tmpdir(), "memory-test-"));
