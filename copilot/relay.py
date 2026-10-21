@@ -267,8 +267,25 @@ def privacy_refusal(reply, mid=False):
     return bool(PRIVACY_TERM_RE.search(text) and PRIVACY_REFUSAL_RE.search(text))
 
 
+class _Found:
+    """DigitCountRe 가 찾은 글 (정규식 match 처럼 group(0)·start()·end())"""
+
+    def __init__(self, start, text):
+        self._start, self._text = start, text
+
+    def group(self, _=0):
+        return self._text
+
+    def start(self):
+        return self._start
+
+    def end(self):
+        return self._start + len(self._text)
+
+
 class DigitCountRe:
-    """정규식에 숫자 개수 조건을 더함 (finditer·sub 만)"""
+    """정규식에 숫자 개수 조건을 더함 (finditer·sub 만). 숫자가 너무 많은 묶음은 '_' 로 이은 뒤 묶음을 떼어
+    앞부분이 맞으면 그것을 (20260727_075536_123 -> 20260727_075536. 하이픈으로 이은 날짜 범위 20260101-20261231 은 떼지 않음)"""
 
     def __init__(self, pattern, lo, hi):
         self.rx, self.lo, self.hi = re.compile(pattern), lo, hi
@@ -276,20 +293,41 @@ class DigitCountRe:
     def ok(self, s):
         return self.lo <= sum(c.isdigit() for c in s) <= self.hi
 
+    def _fit(self, s):
+        parts = re.split(r"(_)", s)
+        while len(parts) > 2 and sum(c.isdigit() for c in "".join(parts)) > self.hi:
+            parts = parts[:-2]
+        t = "".join(parts)
+        return t if t != s and self.ok(t) else ""
+
+    def _found(self, text):
+        for m in self.rx.finditer(text):
+            s = m.group(0)
+            t = s if self.ok(s) else (self._fit(s) if sum(c.isdigit() for c in s) > self.hi else "")
+            if t:
+                yield _Found(m.start(), t)
+
     def finditer(self, text):
-        return (m for m in self.rx.finditer(text) if self.ok(m.group(0)))
+        return self._found(text)
 
     def sub(self, fn, text):
-        return self.rx.sub(lambda m: fn(m) if self.ok(m.group(0)) else m.group(0), text)
+        out, last = [], 0
+        for f in self._found(text):
+            out += [text[last:f.start()], fn(f)]
+            last = f.end()
+        return "".join(out) + text[last:]
 
 
 # 계좌번호 모양 번호: 숫자 묶음 2~4개를 - 나 _ 로 이은 것, 또는 이어 쓴 숫자로 합쳐 10~14자리.
-#  영문자·점·하이픈에 붙은 것은 아님 (UUID, IP, 버전 번호). 날짜(2026-10-20, 20261020)는 8자리라 아님.
+#  영문자·숫자·점에 붙은 것, 16진수 뒤의 하이픈에 이어진 것은 아님 (UUID, IP, 버전 번호, 소수). 뒤의 '.확장자' 는 괜찮음 (log_20260727_075536.txt).
+#  날짜(2026-10-20, 20261020)는 8자리라 아님.
 #  2026-10-20 사내AI 가 계좌번호가 없는 폴더 목록을 '계좌번호와 같은 민감한 정보' 로 막음: '20260727_075536' 같은 날짜·시각이 걸린 것으로 보임 (추측)
-NUMBER_PATTERN = r"(?<![0-9A-Za-z.-])(?:\d{2,8}[-_]){1,3}\d{2,8}(?![0-9A-Za-z.-])|(?<![0-9A-Za-z.-])\d{10,14}(?![0-9A-Za-z.-])"
+_NUM_BEFORE = r"(?<![0-9A-Za-z.])(?<![0-9A-Fa-f]-)"
+_NUM_AFTER = r"(?![0-9A-Za-z-]|\.\d)"
+NUMBER_PATTERN = _NUM_BEFORE + r"(?:\d{2,8}[-_]){1,3}\d{2,8}" + _NUM_AFTER + "|" + _NUM_BEFORE + r"\d{10,14}" + _NUM_AFTER
 ACCOUNT_RE = DigitCountRe(NUMBER_PATTERN, 10, 14)
 # 막혔는데 위의 것을 못 찾았을 때 보여 줄 의심 후보: 8자리 넘는 숫자 (날짜도 들어감. 다시 보내기를 막지는 않음)
-SUSPECT_RES = [("긴 숫자", DigitCountRe(r"(?<![0-9A-Za-z.-])(?:\d{1,14}[-_]){0,3}\d{2,14}(?![0-9A-Za-z.-])", 8, 40))]
+SUSPECT_RES = [("긴 숫자", DigitCountRe(_NUM_BEFORE + r"(?:\d{1,14}[-_]){0,3}\d{2,14}" + _NUM_AFTER, 8, 40))]
 
 # 막힌 조각에서 개인정보 모양 글 찾기: 보내는 글은 바꾸지 않고, 어디에 있는지만 pi 에 알려 사람이 빼도록 한다
 PERSONAL_RES = [
@@ -366,8 +404,11 @@ def personal_spots(text, limit=3, only=None, patterns=None):
 #  이 중계 서버 메모리에만 둔다 (로그·파일에 남기지 않음). 일부만 가리는 방식(ab***@…)은 주소의 일부가 나가므로 쓰지 않는다.
 #  회사의 개인정보 확인은 그대로 돈다 (다른 것이 걸리면 지금처럼 멈추고 알림)
 EMAIL_TOKEN_RE = re.compile(r"\[이메일\d+\]")
-# 번호 감추기 (redact_numbers, 사내AI): 계좌번호 모양 번호(ACCOUNT_RE)를 [번호N] 으로. 되돌리는 방식은 이메일과 같다
+# 번호 감추기 (redact_numbers, 사내AI): 계좌번호 모양 번호(ACCOUNT_RE)와 전화번호를 [번호N] 으로. 되돌리는 방식은 이메일과 같다
 TOKEN_RE = re.compile(r"\[(?:이메일|번호)\d+\]")
+# 새 대화의 첫 메시지 규칙에 늘 넣는 말 (감추기를 켰을 때)
+EMAIL_TOKEN_RULE = "글 속의 [이메일1], [이메일2] 같은 표시는 이메일 주소를 가린 자리입니다. 파일에 쓰거나 고칠 때 그 표시를 그대로 두면 제 쪽에서 원래 주소로 되돌립니다."
+NUMBER_TOKEN_RULE = "글 속의 [번호1], [번호2] 같은 표시는 긴 숫자(날짜·시각이 붙은 이름 등)를 가린 자리입니다. 파일 이름·명령·파일 내용에 그 표시를 그대로 쓰면 제 쪽에서 원래 숫자로 되돌립니다."
 
 
 class Redactor:
@@ -391,6 +432,8 @@ class Redactor:
         if emails:
             text = PERSONAL_RES[0][1].sub(self._swap("이메일"), text)
         if numbers:
+            # 전화번호(띄어 쓰거나 점으로 이은 것 포함)도 같은 [번호N] 으로, 그다음 계좌번호 모양 번호
+            text = PERSONAL_RES[1][1].sub(self._swap("번호"), text)
             text = ACCOUNT_RE.sub(self._swap("번호"), text)
         return text
 
@@ -1244,8 +1287,6 @@ class Usage:
 
 
 USAGE = Usage()
-# 하루 한도 문구 (사용량 제한 중에서 '내일 다시' 로 알릴 것)
-DAILY_LIMIT_RE = re.compile(r"하루|일일|(?<!\d)1 ?일|오늘|내일|daily|per day", re.I)
 
 
 # ---------------------------------------------------------------------------
@@ -1556,7 +1597,8 @@ class CopilotLink:
         except bridge.Throttled as e:
             # 계정 단위 사용량 제한: 새 대화를 열어도 같은 답이 오므로 열지 않고, 지금 대화는 나중에 그대로 이어 쓴다
             self.throttled_at = time.time()
-            if DAILY_LIMIT_RE.search(str(e)):
+            daily = self.cfg.get("daily_limit_pattern") or ""
+            if daily and re.search(daily, str(e), re.I):
                 n = USAGE.hit()
                 raise RelayError(429, "Copilot 하루 질문 한도에 닿았습니다: {}. 오늘 이 PC 에서 보낸 질문 {}개 (다음부터는 이 수를 한도로 "
                                       "어림합니다). 한도가 풀린 뒤(보통 다음 날) 다시 하세요 (같은 Copilot 대화에 이어서 보냅니다).".format(e, n))
@@ -1599,6 +1641,7 @@ class Relay:
         #  (같은 글을 다시 보내면 또 막혀, 새 대화만 계속 열림). 이 프로세스 메모리에만 두고 로그·파일에는 남기지 않음
         self.blocked = set()
         self.redactor = Redactor()  # redact_emails·redact_numbers: 이메일 주소 <-> [이메일N], 계좌번호 모양 번호 <-> [번호N] (메모리에만)
+        self.session = ""  # 지금 대화를 쓰는 pi 의 세션 값 (요청 머리글 X-Pi-Session). 다른 pi 가 끝날 때 이 대화를 끊지 않으려고
 
     def log(self, *a):
         bridge.log(*a)
@@ -2030,8 +2073,13 @@ class Relay:
 
     def full_body(self, messages, tools, names, note=""):
         system = "\n\n".join(content_text(m.get("content")) for m in messages if m.get("role") in ("system", "developer"))
-        rules = (getattr(self.link, "cfg", None) or {}).get("extra_rules") or []  # 서비스별로 덧붙일 진행 규칙
-        rules = [rules] if isinstance(rules, str) else rules
+        cfg = getattr(self.link, "cfg", None) or {}
+        rules = cfg.get("extra_rules") or []  # 서비스별로 덧붙일 진행 규칙
+        rules = [rules] if isinstance(rules, str) else list(rules)
+        # 감춘 자리 표시를 그대로 두라는 규칙은 내 설정이 extra_rules 를 바꿔도 늘 넣는다 (빠지면 표시를 지어내거나 고쳐 써서 되돌리지 못함)
+        for on, rule in ((cfg.get("redact_emails"), EMAIL_TOKEN_RULE), (cfg.get("redact_numbers"), NUMBER_TOKEN_RULE)):
+            if on and rule not in rules:
+                rules.append(rule)
         head = PREAMBLE.format(tag=PROTOCOL_TAG, tools=render_tools(tools), system=system_for_copilot(system),
                                multi_read=(MULTI_WRITE_RULE if self.multi_write() else MULTI_READ_RULE).format(n=BATCH_MAX)
                                if self.multi_read() and "read" in names_of(tools) else "",
@@ -2286,8 +2334,12 @@ def make_handler(relay, jup, cfg, lanes=None):
                 # pi 가 끝나는 중이므로 바로 답하고, 대화 정리는 뒤에서 (설정 다시 읽기 reload 는 같은 대화를 이어 감)
                 reason = str(body.get("reason") or "")
                 if reason != "reload":
+                    sess = str(body.get("session") or self.headers.get("X-Pi-Session") or "")
                     if lanes:
-                        lanes.end(str(body.get("session") or self.headers.get("X-Pi-Session") or ""), reason)
+                        lanes.end(sess, reason)
+                    elif sess and relay.session and sess != relay.session:
+                        # 다른 pi(pi -p 한 번 실행, 이 서비스는 쓰지 않던 창 등)가 끝남: 지금 대화를 쓰는 pi 의 것이 아니므로 그대로
+                        relay.log("다른 pi 의 세션 끝 ({}) -> 지금 대화는 그대로".format(reason or "?"))
                     else:  # 지금까지의 요청 수를 함께 넘김 (정리하기 전에 새 세션의 요청이 먼저 오면 그 대화는 건드리지 않게)
                         threading.Thread(target=relay.end_session, args=(reason, relay.requests), daemon=True).start()
                 return self.send_json(200, {"ok": True})
@@ -2307,6 +2359,8 @@ def make_handler(relay, jup, cfg, lanes=None):
                 return self.jupyter(lambda: fs_op(jup, body))
             if not u.path.rstrip("/").endswith("/chat/completions"):
                 return self.send_json(404, {"error": {"message": "not found"}})
+            if not lanes:
+                relay.session = self.headers.get("X-Pi-Session") or relay.session
             return self.chat(lanes.pick(self.headers.get("X-Pi-Session")) if lanes else relay, body)
 
         def chat(self, relay, body):

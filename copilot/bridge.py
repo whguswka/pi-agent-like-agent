@@ -37,7 +37,10 @@ DEFAULT_CONFIG = {
     "stop_button_pattern": "stop|cancel generat|중지|멈춤|그만",
     "new_chat_pattern": "new chat|new conversation|새 채팅|새 대화|새 채팅 시작",
     "thread_limit_pattern": "reached (its|the) (limit|end)|conversation limit|start a new (chat|topic|conversation)|대화.{0,12}(한도|최대)|새 (대화|채팅).{0,6}시작",
-    "throttle_pattern": "too many requests|try again later|요청이 너무 많|나중에 다시 시도",
+    # 사용량 제한 답: 답이 사과·안내로 시작할 때만 (평범한 짧은 답 '429 Too Many Requests 를 처리하도록 고쳤습니다' 를 제한으로 보지 않게)
+    "throttle_pattern": "^\\W*(현재 요청이 너무 많|죄송[^\\n]{0,40}(요청이 너무 많|나중에 다시 시도)|sorry[^\\n]{0,60}(too many requests|try again later))|일시적으로 응답할 수 없",
+    # 하루 한도 답 (사용량 제한 가운데 이 문구에 맞으면 '하루 한도' 로 알리고 추정 한도를 고침. 사내AI 는 inhouse.json)
+    "daily_limit_pattern": "",
     "stable_seconds": 4.0,
     # 답을 만드는 동안에만 보이는 줄 (예: 처리 단계 제목). 이 줄이 보이는 동안은 글이 멈춰도 끝난 것으로 보지 않는다.
     #  그 줄이 보이는데 글이 reply_busy_max_seconds 동안 그대로면 그래도 읽는다 (화면이 멈춘 경우)

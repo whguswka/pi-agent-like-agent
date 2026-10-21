@@ -596,8 +596,8 @@ with open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhous
     _ih = json.load(_f)
 check("사내AI: 살펴보기·쓰기 한 번에도 기본값(켜짐), 하루 한도 200, 한도 문구", "multi_read" not in _ih and "multi_write" not in _ih
       and _ih.get("daily_question_limit") == 200, _ih)
-_yes = [t for t in ['사내AI는 일일 200회 질문이 가능합니다.', '질문은 하루 200회까지 가능합니다.', '1일 최대 200회까지 질문할 수 있습니다.', '하루 200회까지 질문 가능하며 내일 다시 이용해 주세요.', '일일 질문 한도(200회)를 초과했습니다.', '일일 질문 가능 횟수(200회)를 초과하였습니다.', '오늘 질문 가능 횟수를 모두 사용했습니다.', 'Too many requests. Try again later.'] if not relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
-_no = [t for t in ['파일을 정리했습니다. 오늘 날짜로 저장했습니다.', '오늘 요청하신 1번 작업을 마쳤습니다.', '오늘 요청하신 내용은 바로 적용 가능합니다.', '하루 24회 실행되도록 설정했습니다.', '오늘 3번 고쳤습니다.', '10월 11일 200건을 처리했습니다.', '완료했습니다. 2번 항목도 고쳤습니다.', '하루 평균 120건 요청이 처리됩니다.', '하루 평균 120건 질문이 들어오며 대부분 처리 가능합니다.', '고객 질문이 하루 300건 넘게 들어옵니다.', '하루 100건 초과 거래 계좌를 추렸습니다.', '오늘 사용 횟수가 모두 기록되도록 했습니다.', '고객의 하루 질문 횟수가 모두 집계되었습니다.', '일일 이용 한도 초과 건을 집계했습니다.'] if relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
+_yes = [t for t in ['사내AI는 일일 200회 질문이 가능합니다.', '질문은 하루 200회까지 가능합니다.', '1일 최대 200회까지 질문할 수 있습니다.', '하루 200회까지 질문 가능하며 내일 다시 이용해 주세요.', '일일 질문 한도(200회)를 초과했습니다.', '일일 질문 가능 횟수(200회)를 초과하였습니다.', '오늘 질문 가능 횟수를 모두 사용했습니다.'] if not relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
+_no = [t for t in ['파일을 정리했습니다. 오늘 날짜로 저장했습니다.', '오늘 요청하신 1번 작업을 마쳤습니다.', '오늘 요청하신 내용은 바로 적용 가능합니다.', '하루 24회 실행되도록 설정했습니다.', '오늘 3번 고쳤습니다.', '10월 11일 200건을 처리했습니다.', '완료했습니다. 2번 항목도 고쳤습니다.', '하루 평균 120건 요청이 처리됩니다.', '하루 평균 120건 질문이 들어오며 대부분 처리 가능합니다.', '고객 질문이 하루 300건 넘게 들어옵니다.', '하루 100건 초과 거래 계좌를 추렸습니다.', '오늘 사용 횟수가 모두 기록되도록 했습니다.', '고객의 하루 질문 횟수가 모두 집계되었습니다.', '일일 이용 한도 초과 건을 집계했습니다.', 'API 가 429 Too Many Requests 를 돌려주면 5초 기다렸다가 다시 보내도록 retry.py 를 고쳤습니다.', '오늘 작업: 서버 요청이 너무 많을 때 큐에 쌓도록 바꿨습니다.', "'잠시 후 나중에 다시 시도해 주세요' 안내를 띄우도록 바꿨습니다.", '응답 처리 (try again later 응답 처리)'] if relay.re.search(_ih["throttle_pattern"], t, relay.re.I)]
 check("사내AI 한도 문구: 하루 한도 말은 잡고, 평범한 짧은 답('오늘 요청하신 1번 작업…', '하루 평균 120건 요청…', '하루 100건 초과 거래…')은 잡지 않음", not _yes and not _no, [_yes, _no])
 
 # GET /status: 요청을 처리하는 중(잠금이 잡혀 있어도) 바로 지금 하는 일을 돌려줌
@@ -1525,7 +1525,7 @@ check("multi_write 켬: 서로 다른 파일 쓰기 3개를 한 번에, 진행 �
 _up = os.path.join(_tmp, "inhouse-usage.json")
 _old_usage, relay.USAGE = relay.USAGE, relay.Usage(_up, 200)
 try:
-    _lu = relay.CopilotLink({"cdp_port": 1, "copilot_url_contains": "x"}, None)
+    _lu = relay.CopilotLink({"cdp_port": 1, "copilot_url_contains": "x", "daily_limit_pattern": _ih["daily_limit_pattern"]}, None)
     _lu.cop, _lu.pace = _CopParts(["OK", "답"]), (lambda: None)
     _quiet(lambda: _lu.request(relay.build_parts("가" * 15000, 10000, "[pi-aaaaaa]"), True))
     check("오늘 질문 수: 나눠 보낸 조각마다 하나", relay.USAGE.today() == 2 and relay.Usage(_up, 200).today() == 2, relay.USAGE.today())
@@ -1657,6 +1657,70 @@ check("이어지는 대화의 긴 메시지: 질문 1번, 본문은 '이번 메�
 check("새 대화의 첫 메시지는 그대로 ('진행 방식·지금까지의 대화' 가 파일에)", "지금까지의 대화" in _lc.sent_log[0]["parts"][0], _lc.sent_log[0]["parts"][0][:200])
 check("bridge(Copilot) 기본은 꺼짐, 사내AI 는 켜짐 (2026-10-20 회사 사내AI 에서 확인)", relay.bridge.DEFAULT_CONFIG.get("attach_long_text") is False
       and json.load(open(os.path.join(os.path.dirname(os.path.abspath(relay.__file__)), "inhouse.json"), encoding="utf-8")).get("attach_long_text") is True)
+
+# 중계 서버 보완 (2026-10-21.1)
+# Copilot 기본 사용량 제한 문구: 답이 사과·안내로 시작할 때만 (평범한 짧은 답은 아님)
+_cp = relay.bridge.DEFAULT_CONFIG["throttle_pattern"]
+_normal = ["API 가 429 Too Many Requests 를 돌려주면 5초 기다렸다가 다시 보내도록 retry.py 를 고쳤습니다.", "오늘 작업: 서버 요청이 너무 많을 때 큐에 쌓도록 바꿨습니다.",
+           "'잠시 후 나중에 다시 시도해 주세요' 안내를 띄우도록 바꿨습니다.", "응답 처리 (try again later 응답 처리)"]
+check("Copilot 사용량 제한 문구: 실제 안내('현재 요청이 너무 많아…', 'Sorry… too many requests')는 잡고 평범한 답은 잡지 않음",
+      relay.re.search(_cp, "현재 요청이 너무 많아 일시적으로 응답할 수 없습니다.", relay.re.I) and relay.re.search(_cp, "Sorry, you have sent too many requests. Please try again later.", relay.re.I)
+      and not [t for t in _normal if relay.re.search(_cp, t, relay.re.I)], [t for t in _normal if relay.re.search(_cp, t, relay.re.I)])
+_lt = relay.CopilotLink({"cdp_port": 1, "copilot_url_contains": "x"}, None)
+_lt.cop, _lt.pace = _ThrCop([]), (lambda: None)
+try:
+    _quiet(lambda: _lt.request(["질문\n\n[pi-bbbbbe]"], False))
+    _et3 = None
+except relay.RelayError as e:
+    _et3 = e
+check("하루 한도 문구(daily_limit_pattern)가 없는 서비스는 사용량 제한을 하루 한도로 보지 않음 (추정 한도 그대로)",
+      _et3 is not None and "하루 질문 한도" not in str(_et3) and "몇 분~수십 분" in str(_et3), str(_et3))
+# 번호 감추기: 파일 이름 끝의 .확장자, run-…, ckpt-…, 17자리(앞 14자리), 띄어 쓰거나 점으로 이은 전화번호
+_more = ["log_20260727_075536.txt", "run-20260727_075536", "ckpt-20260727-075536", "backup_20261002_130748.tar.gz", "20260727_075536_123"]
+_miss2 = [t for t in _more if not list(relay.ACCOUNT_RE.finditer(t))]
+_wrong2 = [t for t in ["3.14159265358", "v2.1.20260727", "20260101-20261231", "550e8400-e29b-41d4-a716-446655440000"] if list(relay.ACCOUNT_RE.finditer(t))]
+check("번호 감추기: 파일 이름의 날짜·시각(.확장자, run-…, ckpt-…, 밀리초까지 17자리면 앞 14자리)도, 소수·버전·날짜 범위·UUID 는 아님", not _miss2 and not _wrong2, (_miss2, _wrong2))
+_rd2 = relay.Redactor()
+_tp = _rd2.redact("전화 010 1234 5678 / 010.1234.5678 / 010-1234-5678, a 20260727_075536_123 b", True, True)
+check("번호 감추기: 전화번호(띄어 쓰거나 점으로 이은 것)도 [번호N], 17자리는 앞 14자리만, 되돌리기",
+      _tp == "전화 [번호1] / [번호2] / [번호3], a [번호4]_123 b" and _rd2.restore(_tp) == "전화 010 1234 5678 / 010.1234.5678 / 010-1234-5678, a 20260727_075536_123 b", _tp)
+# 감춘 자리 규칙은 내 설정이 extra_rules 를 바꿔도 첫 메시지에 늘
+_lr5 = FakeLink(["답"])
+_lr5.cfg = {"redact_emails": True, "redact_numbers": True, "extra_rules": ["답은 짧게"], "service_name": "사내AI"}
+_quiet(lambda: relay.Relay(A(), _lr5).handle({"messages": [{"role": "system", "content": "규칙"}, {"role": "user", "content": "안녕"}], "tools": tools}))
+_first5 = _lr5.sent_log[0]["parts"][0]
+check("내 설정의 extra_rules 가 목록을 바꿔도 감춘 자리([이메일N]·[번호N]) 규칙은 첫 메시지에 늘 들어감",
+      "답은 짧게" in _first5 and relay.EMAIL_TOKEN_RULE in _first5 and relay.NUMBER_TOKEN_RULE in _first5, _first5[:600])
+_lr6 = FakeLink(["답"])
+_lr6.cfg = {"service_name": "Copilot"}
+_quiet(lambda: relay.Relay(A(), _lr6).handle({"messages": [{"role": "system", "content": "규칙"}, {"role": "user", "content": "안녕"}], "tools": tools}))
+check("감추기를 끈 서비스(Copilot)는 감춘 자리 규칙을 넣지 않음", relay.EMAIL_TOKEN_RULE not in _lr6.sent_log[0]["parts"][0])
+# 다른 pi 가 끝날 때(pi -p 한 번 실행 등) 지금 대화를 쓰는 pi 의 대화는 그대로
+_r19 = relay.Relay(A(), FakeLink(["답", "답2"]))
+_srv5 = _Srv(("127.0.0.1", 0), relay.make_handler(_r19, None, {"cdp_port": 1, "service_name": "사내AI"}))
+_th.Thread(target=_srv5.serve_forever, daemon=True).start()
+_port5 = _srv5.server_address[1]
+
+
+def _post5(path, body, sess):
+    req = _ureq.Request("http://127.0.0.1:{}{}".format(_port5, path), data=json.dumps(body).encode("utf-8"),
+                        headers={"Content-Type": "application/json", "X-Pi-Session": sess}, method="POST")
+    return json.loads(_ureq.urlopen(req, timeout=30).read())
+
+
+_quiet(lambda: _post5("/v1/chat/completions", {"model": "copilot", "messages": [{"role": "system", "content": "규칙"}, {"role": "user", "content": "안녕"}], "tools": tools}, "A-1"))
+_fresh_before = _r19.fresh
+_quiet(lambda: _post5("/session/end", {"reason": "quit", "session": "B-2"}, "B-2"))
+_time.sleep(0.5)
+check("다른 pi(세션 B)가 끝나도 지금 대화(세션 A)는 그대로 (새 대화로 바꾸지 않음)", _r19.session == "A-1" and _r19.fresh is False and _fresh_before is False,
+      (_r19.session, _r19.fresh))
+_quiet(lambda: _post5("/session/end", {"reason": "quit", "session": "A-1"}, "A-1"))
+for _ in range(20):
+    if _r19.fresh:
+        break
+    _time.sleep(0.1)
+check("그 대화를 쓰던 pi(세션 A)가 끝나면 다음 요청은 새 대화", _r19.fresh is True)
+_srv5.shutdown()
 
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)
