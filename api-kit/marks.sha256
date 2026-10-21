@@ -1,14 +1,14 @@
-# 원래 키트 문서에서 API 키트와 짝을 이룬 글의 sha256 앞 12자리 (커밋 e969dfba099cab3c3babfb8ecaf5ea1ac506430f). api-kit/make-api-kit.sh --update-sha 가 적음
+# 원래 키트 문서에서 API 키트와 짝을 이룬 글의 sha256 앞 12자리 (커밋 efb3bad4a32aad6dff1e74b37458ea40c7935264). api-kit/make-api-kit.sh --update-sha 가 적음
 #  'api:바꾸기' 블록 안 글과 'api=' 줄의 원래 키트 쪽 글. 바뀌면 API 키트 만들기가 멈춤: API 키트 글(조각, api= 뒤)도 고쳐야 하는지 보고 --update-sha
 23a9a8a483a2	docs/반입-검토-요청서.md	바꾸기 제목
-48487625bbdf	docs/반입-검토-요청서.md	api=
+2d4131798f0b	docs/반입-검토-요청서.md	api=
 5d0defac120a	docs/반입-검토-요청서.md	api=
 7d136a30ecaf	docs/반입-검토-요청서.md	api=
 9739fe5ecb42	docs/반입-검토-요청서.md	api=
 0f16245473cc	docs/반입-검토-요청서.md	api=
-4bd4507825c3	docs/반입-검토-요청서.md	api=
+7f63e63a4456	docs/반입-검토-요청서.md	api=
 d27d651894d1	docs/반입-검토-요청서.md	api=
-1c224b3abaa0	docs/반입-검토-요청서.md	바꾸기 3장-설정
+5e1015e1cb3a	docs/반입-검토-요청서.md	바꾸기 3장-설정
 a0346b6286da	docs/반입-검토-요청서.md	api=
 9231803a8fc3	docs/반입-검토-요청서.md	api=
 a11128d9b281	docs/반입-검토-요청서.md	api=
@@ -30,7 +30,7 @@ bd11871c49ce	docs/수동-작업-절차.md	바꾸기 3장-버전
 2f975c4ff5a7	docs/수동-작업-절차.md	바꾸기 3-1-제목
 3da05cd3734f	docs/수동-작업-절차.md	api=
 77bea96128e6	docs/수동-작업-절차.md	바꾸기 3-1-명령
-3d4be4fea497	docs/수동-작업-절차.md	api=
+3f45a6ea4c9f	docs/수동-작업-절차.md	api=
 7f9180463f73	docs/수동-작업-절차.md	api=
 5027408ebdc6	docs/수동-작업-절차.md	api=
 b3ae1d8d1346	docs/수동-작업-절차.md	바꾸기 3-2-명령
@@ -40,12 +40,12 @@ cb76064a94a6	docs/수동-작업-절차.md	api=
 8600745c03a3	docs/수동-작업-절차.md	api=
 0b228bee5086	docs/수동-작업-절차.md	api=
 f37c48b821d1	docs/수동-작업-절차.md	바꾸기 5-1-명령
-3758d4d66400	docs/수동-작업-절차.md	바꾸기 5-2-명령
+f4d73ad5203c	docs/수동-작업-절차.md	바꾸기 5-2-명령
 b58ac346dccd	docs/수동-작업-절차.md	api=
 8b4d0f9d04a0	docs/수동-작업-절차.md	api=
 2056a87f7204	docs/수동-작업-절차.md	api=
 4ba4b2518dfa	docs/수동-작업-절차.md	api=
-be0d8ff45887	docs/수동-작업-절차.md	바꾸기 6장-예
+cdff21e773a9	docs/수동-작업-절차.md	바꾸기 6장-예
 50706d445e5e	docs/수동-작업-절차.md	api=
 fe7f7371ddbe	docs/수동-작업-절차.md	api=
 1604f1b6f432	docs/수동-작업-절차.md	api=
@@ -81,7 +81,9 @@ be78cff8bcb6	README.md	api=
 f2ca8164ebfd	README.md	바꾸기 3-3
 29d8856e8309	README.md	api=
 a26ca93ab221	README.md	바꾸기 3-7
-a199885c9490	README.md	바꾸기 4장
+b725edd7629f	README.md	api=
+3a57d30302b8	README.md	api=
+fa10b5910c8f	README.md	바꾸기 4장
 2d2b500f954d	README.md	api=
 0ef93a5ed82e	README.md	api=
 5048cb94f356	README.md	api=
@@ -90,20 +92,22 @@ b05303f50835	README.md	api=
 dab05b8d8664	README.md	api=
 8947693cac48	README.md	api=
 0062c17e4d04	README.md	api=
+d29183cecec0	README.md	api=
+1536644f567c	README.md	api=
 0a298e96e7da	README.md	api=
 bdd943328cc0	README.md	api=
 e1bbee7ddef4	README.md	api=
 4f0586cbb349	README.md	api=
 3c99762049c5	README.md	api=
-24f0d3ff4d79	README.md	api=
-94261135f335	README.md	바꾸기 6장-앞
+27b8cbd8a4e8	README.md	api=
+3beb216c1294	README.md	바꾸기 6장-앞
 459b79593ec3	README.md	api=
-cd3f6033c302	README.md	바꾸기 7장-방법
+ae7ae1ce979e	README.md	바꾸기 7장-방법
 4e55e3f27f10	README.md	api=
 a4edaaaebb08	README.md	api=
 a1fc24fbe1a1	README.md	바꾸기 8장-파일
 448622156c20	README.md	api=
 a9b01cc571f2	README.md	바꾸기 8장-끝
 e9144b473784	README.md	api=
-d39447b8c20a	README.md	바꾸기 9장-표
-576f402d6f2e	README.md	바꾸기 10장
+723f869c7e58	README.md	바꾸기 9장-표
+83ba580f4ef8	README.md	바꾸기 10장
