@@ -100,6 +100,7 @@ RESET_KINDS = [
     ("turns_short", r"남은 질문 수"),
     ("q_limit", r"질문 수 한도"),
     ("tab_lost", r"연결이 끊겼"),
+    ("no_tools", r"도구가 없다"),
 ]
 
 
@@ -125,13 +126,14 @@ def reply_shape(text):
 
 WAIT_NAMES = [("stream", "원문"), ("stream-late", "원문(늦게)"), ("dom", "화면"), ("dom-fallback", "원문 못 받아 화면"),
               ("dom-busy", "처리 중 기다림"), ("dom-busycap", "기다림 최대까지")]
-NUDGE_NAMES = [("format", "형식"), ("refusal", "실행 거절"), ("code", "코드만"), ("continue", "멈춤"), ("loop", "반복")]
+NUDGE_NAMES = [("format", "형식"), ("refusal", "실행 거절"), ("code", "코드만"), ("continue", "멈춤"), ("loop", "반복"),
+               ("loop_soft", "비슷한 반복"), ("no_tools", "도구 없다 함")]
 ERROR_NAMES = [("throttle", "사용량 제한"), ("no_reply_start", "답 시작 안 됨"), ("reply_not_done", "답 안 끝남"),
                ("input", "입력"), ("send", "전송"), ("marker_missing", "보낸 글 못 찾음"), ("tab", "탭"), ("browser", "브라우저"),
                ("login", "로그인"), ("config", "설정"), ("privacy", "개인정보 확인 거절"), ("privacy_held", "막힌 글 그대로라 안 보냄"), ("reset_failed", "새 대화로도 실패"),
                ("internal", "중계기 내부"), ("other", "기타")]
 RESET_NAMES = [("thread_limit", "대화 한도"), ("thread_changed", "창 바뀜"), ("reconnect", "다시 연결"), ("turns_short", "남은 질문 부족"),
-               ("q_limit", "질문 수 설정"), ("tab_lost", "연결 끊김"), ("other", "기타")]
+               ("q_limit", "질문 수 설정"), ("tab_lost", "연결 끊김"), ("no_tools", "도구 없다 함"), ("other", "기타")]
 WARN_NAMES = [("model_select", "모델 선택 실패"), ("delete", "대화 삭제 실패"), ("mid_not_ok", "중간 조각에 OK 아님")]
 
 

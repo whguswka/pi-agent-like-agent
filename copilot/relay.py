@@ -213,6 +213,13 @@ LOOP_LIMIT = 2  # 직전에 이미 연속 2번 같은 호출이 있었으면 3�
 LOOP_NUDGE = ("방금 주신 작업({name})은 바로 앞에서 이미 {count}번 똑같이 실행했고 결과도 같았습니다. "
               "같은 작업을 다시 하지 마시고, 다음 단계로 넘어가거나 요청이 끝났다면 블록 없이 최종 답을 주세요.")
 LOOP_STOP = "같은 작업({name})이 계속 반복되어 여기서 멈췄습니다. 요청을 조금 바꾸거나 나눠서 다시 시도해 주세요."
+# 결과가 조금씩 달라도(측정값 등) 일을 하는 같은 호출(빌드·실행·측정 명령, 쓰기)이 연달아 되풀이되면 한 번 묻는다
+#  (시험: 빌드 + 60초 측정 명령을 고치는 것 없이 6번 되풀이함. 숫자만 조금씩 달라 위의 반복으로 세지 않았음).
+#  읽기만 하는 호출(tail 로 학습 로그 지켜보기 등)은 세지 않고, 멈추지도 않는다 (기다리는 중일 수 있음)
+LOOP_SOFT_LIMIT = 4  # 직전에 이미 연속 4번 같은 호출이 있었으면 5번째에 묻는다 (그 뒤로 4번마다)
+LOOP_SOFT_NUDGE = ("방금 주신 작업({name})을 바로 앞에서 이미 {count}번 연달아 실행했습니다 (결과는 조금씩 달랐습니다). "
+                   "무언가 바뀌기를 기다리는 중이 아니라면 같은 작업을 되풀이하지 마시고, 지금까지의 결과로 다음 단계로 넘어가거나 "
+                   "요청이 끝났다면 블록 없이 최종 답을 주세요.")
 
 
 def repeated_calls(messages, call):
@@ -235,11 +242,41 @@ def repeated_calls(messages, call):
         break
     return count
 
+
+def same_calls(messages, call):
+    """새 도구 호출과 똑같은 호출이 바로 앞에 연달아 몇 번 있었는지 (결과는 따지지 않음)"""
+    fp = fingerprint({"role": "assistant", "tool_calls": [{"function": {
+        "name": call["name"], "arguments": json.dumps(call["arguments"], ensure_ascii=False)}}]})
+    count = 0
+    for m in reversed(messages):
+        if m.get("role") == "tool":
+            continue
+        if m.get("role") == "assistant" and m.get("tool_calls") and fingerprint(m) == fp:
+            count += 1
+            continue
+        break
+    return count
+
 # 일을 마치지 않고 "다음 블록을 드리겠습니다", "결과를 본 다음" 처럼 멈추면 한 번 이어서 하도록 부탁한다
 CONTINUE_NUDGE = ("아직 끝나지 않았다면 기다리지 마시고 다음 작업을 블록 하나로 바로 주세요. 명령을 글로 보여 주시면 제가 실행할 수 없어요. "
                   "모두 끝났다면 결과를 최종 답으로 정리해 주세요.")
 UNFINISHED_RE = re.compile(r"다음 (블록|단계|작업)을? ?(을 )?(드리|진행|하겠|주시)|다음 (단계|작업)는 |결과를 (보|확인)[^\n]{0,12}(다음|뒤|후)|실행해 ?(주시면|보시고|주세요)|"
-                           r"완료되지 않|아직 (끝나지|완료되지)|❌|(next|following) (step|block)|once you (run|share)", re.I)
+                           r"완료되지 않|아직 (끝나지|완료되지)|❌|(next|following) (step|block)|once you (run|share)"
+                           # 시험에서 놓친 말: "아직 끝난 게 아닙니다", "아직 완료가 아닙니다", "작업이 끝난 상태가 아닙니다",
+                           #  "은 아직 구현되지 않았습니다 … 다음 요청에서 이어서 진행하겠습니다", "계속 수정해야 합니다", "최종 답을 하면 안 되고"
+                           #  ('아닙니다' 는 글자가 '아닙' 이라 '아니' 로는 안 잡힘)
+                           r"|아직 (끝난 ?(게|것이) ?아[니닙님]|완료가 아[니닙님]|완료된 ?(게|것이) ?아[니닙님]|구현되지|반영되지|적용되지)"
+                           r"|(작업|요청)이? (끝난|완료된|완료) 상태가 아[니닙님]|다음 요청에서 (이어|계속)|계속 (수정|진행|작업)해야"
+                           r"|최종 (답|보고)[^\n]{0,10}(하면 안|할 수 없)", re.I)
+# Copilot 이 "이 대화에서는 도구가 없다", "작업 블록을 줄 수 없다" 며 멈춤 (시험: 한 대화에서 질문 80개쯤 지나 처음 받은 진행 규칙을 놓침).
+#  도구를 쓴 뒤에도 생기므로 tools_used_since_user 와 상관없이 본다. 진행 방식을 다시 알리고, 그래도 같으면 새 대화로 처음부터
+NO_TOOLS_CLAIM_RE = re.compile(
+    r"(작업|도구) ?블록을? ?(줄|드릴|제공할|만들) ?수 ?(가 |는 )?없"
+    r"|(현재|지금|이) ?(대화|세션)에서[^\n]{0,30}도구[^\n]{0,40}(없|뿐|아니라)"
+    r"|실행 ?수단이 ?없"
+    r"|(현재|지금|이) ?(대화|세션)에서는? [^\n]{0,20}(파일을|명령을)[^\n]{0,30}(수 ?없|못 ?합)", re.I)
+TOOLS_NUDGE = ("이 대화에서도 도구를 쓸 수 있습니다. 실행은 제가 pi 로 하고 결과를 그대로 붙여 드리니, 직접 실행하실 필요는 없습니다. "
+               "진행 방식을 다시 알려 드립니다: ")
 # 사용자가 도구 없이 답하라고 했거나 계획 모드(pi 의 /plan, 요청 앞에 "[계획 모드]")면 도구를 쓰라고 다시 부탁하지 않는다
 #  (계획을 적은 답에는 "다음 단계는", 코드 예시, "실행할 수 없" 같은 말이 자연스럽게 들어감)
 NO_TOOLS_RE = re.compile(r"도구는? (쓰지|사용하지) ?말|도구 없이|\[계획 모드\]")
@@ -1736,6 +1773,11 @@ class Relay:
     def multi_write(self):
         return bool((getattr(self.link, "cfg", None) or {}).get("multi_write"))
 
+    def protocol_reminder(self, tool_names):
+        """짧은 진행 규칙 요약 (긴 대화에서 처음 받은 규칙을 놓칠 때, 긴 글을 파일로 붙일 때)"""
+        return PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)) or "-",
+                                        multi_read=(MULTI_WRITE_HINT if self.multi_write() else MULTI_READ_HINT) if self.multi_read() else "")
+
     def out(self, text):
         """보낼 글. redact_emails 면 이메일 주소를 [이메일N] 으로, redact_numbers 면 계좌번호 모양 번호를 [번호N] 으로"""
         cfg = getattr(self.link, "cfg", None) or {}
@@ -1759,8 +1801,7 @@ class Relay:
             self.log("  개인정보 모양 글이 있어 긴 글을 파일로 붙이지 않고 나눠 보냅니다 (서비스의 개인정보 확인을 거치게)")
             return build_parts(text, limit, marker), []
         name = "pi-context-{}.txt".format(uuid.uuid4().hex[:4])
-        rule = PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)) or "-",
-                                        multi_read=(MULTI_WRITE_HINT if self.multi_write() else MULTI_READ_HINT) if self.multi_read() else "")
+        rule = self.protocol_reminder(tool_names)
         if whole:
             head = ("[{}]\n긴 내용(진행 방식, 작업 규칙, 사용할 수 있는 도구, 지금까지의 대화)은 첨부한 파일 {} 에 넣었습니다. "
                     "파일을 처음부터 끝까지 읽고 그 안의 진행 방식을 따라 주세요.\n{}\n\n(아래는 그 파일의 끝부분입니다)\n").format(PROTOCOL_TAG, name, rule)
@@ -1983,8 +2024,7 @@ class Relay:
             if asked < self.reminded_at:  # 새 대화로 바뀌었으면 다시 센다
                 self.reminded_at = 0
             if tool_names and asked >= REMIND_AFTER and asked - self.reminded_at >= REMIND_EVERY:
-                text += "\n\n" + PROTOCOL_REMINDER.format(tools=", ".join(sorted(tool_names)),
-                                                         multi_read=(MULTI_WRITE_HINT if self.multi_write() else MULTI_READ_HINT) if self.multi_read() else "")
+                text += "\n\n" + self.protocol_reminder(tool_names)
                 self.reminded_at = asked
             text_out = self.out(text)
             new_thread = False
@@ -2012,14 +2052,20 @@ class Relay:
         self.note_reply(reply)
         if call is None and privacy_refusal(reply):  # 다시 부탁하지 않고 멈춤
             raise PrivacyRefused(reply.get("text", ""), sent=text_out if files else parts[-1])
-        retries, nudged, code_nudged, cont_nudged = 0, False, False, False
+        retries, nudged, code_nudged, cont_nudged, tools_nudged = 0, False, False, False, False
         no_tools = bool(NO_TOOLS_RE.search(last_user_text(messages)))
         while call is None and retries < 2:
+            if tools_nudged and NO_TOOLS_CLAIM_RE.search(body_text or ""):
+                break  # 진행 방식을 다시 알려도 도구가 없다고 함 -> 다른 부탁 없이 아래에서 새 대화로
             if err:  # 형식이 틀리면 다시 요청
                 self.log("도구 블록 오류 -> 다시 요청: {}".format(err))
                 fix = ("방금 블록은 사용할 수 없었습니다: {}\n올바른 형식의 코드 블록 하나로 다시 적어 주세요 "
                        "(요청이 끝났다면 블록 없이 최종 답).").format(err)
                 self.note_nudge("format")
+            elif not tools_nudged and not no_tools and tool_names and NO_TOOLS_CLAIM_RE.search(body_text or ""):
+                self.log("Copilot 이 이 대화에는 도구가 없다며 멈춤 -> 진행 방식을 다시 알리고 다시 요청")
+                fix, tools_nudged = TOOLS_NUDGE + self.protocol_reminder(tool_names), True
+                self.note_nudge("no_tools")
             elif (not nudged and not no_tools and REFUSAL_RE.search(body_text or "") and tool_names
                   and not tools_used_since_user(messages)):  # 도구를 쓴 뒤의 "확인할 수 없습니다" 는 결과에 대한 보통 답
                 self.log("Copilot 이 실행을 거절 -> 설명 후 다시 요청")
@@ -2043,6 +2089,11 @@ class Relay:
             self.note_reply(reply)
             if call is None and privacy_refusal(reply):
                 raise PrivacyRefused(reply.get("text", ""))
+        if call is None and tools_nudged and NO_TOOLS_CLAIM_RE.search(body_text or ""):
+            # 진행 방식을 다시 알려도 같은 답: 이 대화는 규칙을 놓쳤으므로 새 대화에서 지침·도구·대화 내용을 처음부터 다시 넣는다
+            if not force_new:
+                raise ThreadReset("Copilot 이 이 대화에는 도구가 없다고 답했습니다")
+            raise RelayError(502, "Copilot 이 새 대화에서도 도구가 없다고 답했습니다. 요청을 다시 보내거나 /new 로 새로 시작해 보세요.")
         if call and repeated_calls(messages, call) >= LOOP_LIMIT:
             count = repeated_calls(messages, call)
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
@@ -2055,6 +2106,16 @@ class Relay:
             if call and repeated_calls(messages, call) >= LOOP_LIMIT:
                 self.log("반복이 계속됨 -> 이 요청을 멈춤")
                 body_text, call = LOOP_STOP.format(name=call["name"]), None
+        elif call and not look_call(call):
+            count = same_calls(messages, call)
+            if count >= LOOP_SOFT_LIMIT and count % LOOP_SOFT_LIMIT == 0:
+                self.log("같은 도구 호출이 결과만 조금씩 다르게 반복({} {}회) -> 다음 단계로 넘어가도록 한 번 부탁".format(call["name"], count))
+                self.note_nudge("loop_soft")
+                reply = self.ask_again(LOOP_SOFT_NUDGE.format(name=call["name"], count=count))
+                body_text, call, err = self.parse(reply, tool_names)
+                self.note_reply(reply)
+                if call is None and privacy_refusal(reply):
+                    raise PrivacyRefused(reply.get("text", ""))
         if call:
             calls = [call]
             found = [dict(c, arguments=self.redactor.restore(c["arguments"])) for c in reply_calls(reply, tool_names)]

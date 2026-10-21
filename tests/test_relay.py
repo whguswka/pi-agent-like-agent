@@ -354,6 +354,127 @@ lk = FakeLink(["```python\nimport logging\n```", "다시 부탁한 뒤의 답"])
 relay.Relay(A(), lk).handle({"messages": [sys_msg, {"role": "user", "content": "login.py 에 로그 기능을 추가해줘"}], "tools": tools})
 check("(비교) 계획 모드가 아니면 코드만 보여 줄 때 write 블록을 부탁함", len(lk.sent_log) == 2, lk.sent_log)
 
+# 실사용 시험(2026-10-21, 작업 표시줄 모니터)에서 Copilot 이 실제로 한 답 그대로
+STOP_LATER = """빌드는 성공했습니다.
+
+다만 지금 상태는 사용자가 요청한 "AI 사용량 위젯과 비슷한 디자인"이 구현된 상태가 아닙니다.
+
+하지만 아직 핵심인:
+- 둥근 모서리 실제 창 형태 적용
+- CPU/RAM/GPU/RX/TX를 칸 단위로 그리기
+
+은 아직 구현되지 않았습니다.
+
+다음 요청에서 이어서 진행하겠습니다. Metrics는 건드리지 않고 UI만 전면 개편하면 됩니다."""
+STOP_NOT_DONE = """지금 단계에서는 아직 끝난 게 아닙니다.
+
+남아 있는 항목:
+- 총 RX/TX 누적량을 화면에 다시 표시
+- 빌드 후 새 커밋
+
+따라서 지금 최종 답을 하면 안 되고, 계속 수정해야 합니다. 다음 단계로 RX/TX 누적량을 포함한 레이아웃과 위치 조정을 먼저 넣어야 합니다."""
+STOP_NOT_COMPLETE = """아직 완료가 아닙니다.
+
+하지만 남은 작업:
+1. 최적화 후 버전 실행
+2. 커밋
+
+즉, 아직 작업이 끝난 상태가 아닙니다."""
+NO_TOOLS_REPLY = """지금은 다음 작업 블록을 줄 수 없습니다. 이유는 현재 대화에서 사용 가능한 도구가 `bash/edit/read/write`가 아니라 일반 채팅 도구뿐이라, 실제 파일 수정·빌드·측정·커밋을 더 진행할 수 있는 실행 수단이 없습니다.
+
+또한 현재 상태는 **작업 완료 상태가 아닙니다.**
+
+현재 세션에서는 더 이상 파일을 실제로 수정·빌드·측정할 수 없으므로, 완성되었다고 보고할 수 없습니다."""
+DONE_CHECK_SCREEN = """작업 완료했습니다.
+
+- `resmon.cs` 수정
+  - 크기 자동 조정 후 재배치하도록 수정
+
+- 커밋 완료
+  - 커밋: `b458bbe`
+
+이제 실제 화면에서:
+- 높이 정렬이 AI 위젯과 맞는지
+- 폭이 과한지
+
+확인해서 알려 주세요. 다음 단계에서는 보이는 결과에 맞춰 픽셀 단위로 다듬겠습니다."""
+DONE_COMMITTED = """작업 완료.
+
+주의
+- 중간에 잘못 들어갔던 `target.Top ...` 코드는 제거한 뒤 다시 빌드 성공 확인함.
+- 현재 상태는 컴파일 및 커밋까지 완료된 상태임.
+
+이제 실제 화면에서 크기·높이 정렬·선명도·누적량 배치를 확인해 보면 된다."""
+DONE_MEASURED = """작업 완료.
+
+- 측정 결과
+  - `CPU20sAfterWarmup=0.375`
+
+CPU 사용량이 크게 감소했으므로 커밋했습니다.
+
+이번 결과로 보면 병목은 거의 확실하게 GPU 엔진별 `NextValue()` 호출 및 관련 카운터 관리였던 것으로 보입니다."""
+for name, text in [("다음 요청에서 이어서", STOP_LATER), ("아직 끝난 게 아닙니다", STOP_NOT_DONE), ("아직 완료가 아닙니다", STOP_NOT_COMPLETE)]:
+    check("일을 마치지 않은 멈춤(실제 답): " + name, bool(relay.UNFINISHED_RE.search(text)))
+for name, text in [("화면 확인 부탁", DONE_CHECK_SCREEN), ("커밋까지 완료", DONE_COMMITTED), ("측정 후 커밋", DONE_MEASURED)]:
+    check("최종 답(실제 답)은 멈춤·도구 없음으로 보지 않음: " + name,
+          not relay.UNFINISHED_RE.search(text) and not relay.NO_TOOLS_CLAIM_RE.search(text),
+          (relay.UNFINISHED_RE.search(text), relay.NO_TOOLS_CLAIM_RE.search(text)))
+check("'이 대화에는 도구가 없다' 답(실제 답)", bool(relay.NO_TOOLS_CLAIM_RE.search(NO_TOOLS_REPLY)))
+check("환경에 프로그램이 없다는 보통 답은 도구 없음이 아님",
+      not relay.NO_TOOLS_CLAIM_RE.search("이 PC 에는 빌드 도구가 없어서 컴파일하지 못했습니다. csc 를 설치해 주세요."))
+rd = '```json\n{"tool": "read", "arguments": {"path": "resmon.cs"}}\n```'
+u_go = {"role": "user", "content": "계속해. ReadCategory 로 바꿔 줘"}
+lk = FakeLink([NO_TOOLS_REPLY, rd])
+out = relay.Relay(A(), lk).handle({"messages": [sys_msg, u_go], "tools": tools})
+check("도구가 없다는 답 -> 진행 방식을 다시 알리고 다시 요청 (같은 대화)",
+      len(lk.sent_log) == 2 and "진행 방식" in lk.sent_log[1]["parts"][0] and "read" in lk.sent_log[1]["parts"][0]
+      and out.get("tool_calls"), (lk.sent_log, out))
+lk = FakeLink([NO_TOOLS_REPLY, NO_TOOLS_REPLY, rd])
+out = relay.Relay(A(), lk).handle({"messages": [sys_msg, u_go], "tools": tools})
+check("다시 알려도 같으면 새 대화에서 지침·도구·대화를 처음부터",
+      len(lk.sent_log) == 3 and lk.sent_log[2]["new_thread"] and relay.PROTOCOL_TAG in lk.sent_log[2]["parts"][0]
+      and out.get("tool_calls"), (lk.sent_log, out))
+lk = FakeLink([NO_TOOLS_REPLY] * 4)
+try:
+    relay.Relay(A(), lk).handle({"messages": [sys_msg, u_go], "tools": tools})
+    check("새 대화에서도 도구가 없다면 오류", False, "예외 없음")
+except relay.RelayError as e:
+    check("새 대화에서도 도구가 없다면 오류로 알림 (다시 새 대화를 열지 않음)", e.status == 502 and len(lk.sent_log) == 4, (e, lk.sent_log))
+
+# 결과(측정값)만 조금씩 다른 같은 명령을 되풀이 (실제: 빌드 + 60초 측정을 고치는 것 없이 6번)
+mcmd = ("powershell -ExecutionPolicy Bypass -NoProfile -Command \"& 'C:/w/resmon/build.ps1'; \\$p=Start-Process -PassThru 'C:/w/resmon/resmon.exe'; "
+        "Start-Sleep -Seconds 60; Get-Process -Id \\$p.Id | Select-Object ProcessName,CPU,WS,PM; Stop-Process -Id \\$p.Id -Force\"")
+mcall = lambda i: {"role": "assistant", "content": None, "tool_calls": [{"id": "m%d" % i, "type": "function",
+                   "function": {"name": "bash", "arguments": json.dumps({"command": mcmd})}}]}
+mres = lambda i, v: {"role": "tool", "tool_call_id": "m%d" % i, "content": "ProcessName CPU WS PM\nresmon %s 87515136 63606784" % v}
+mhist = [sys_msg, {"role": "user", "content": "resmon 이 CPU 를 너무 많이 써. 줄여 줘"}]
+for i, v in enumerate(["1.609375", "1.59375", "1.671875", "1.59375"]):
+    mhist += [mcall(i), mres(i, v)]
+msame = "```json\n" + json.dumps({"tool": "bash", "arguments": {"command": mcmd}}) + "\n```"
+check("측정값만 다른 반복은 '결과까지 같은 반복'으로 세지 않음 (그래서 따로 셈)",
+      relay.repeated_calls(mhist, {"name": "bash", "arguments": {"command": mcmd}}) == 1
+      and relay.same_calls(mhist, {"name": "bash", "arguments": {"command": mcmd}}) == 4)
+lk = FakeLink([msame, "측정 결과 CPU 가 줄었습니다. 끝났습니다."])
+out = relay.Relay(A(), lk).handle({"messages": mhist, "tools": tools})
+check("같은 명령 5번째(결과만 조금씩 다름) -> 다음 단계로 넘어가도록 한 번 부탁",
+      len(lk.sent_log) == 2 and "연달아 실행했습니다" in lk.sent_log[1]["parts"][0] and not out.get("tool_calls"), (lk.sent_log, out))
+lk = FakeLink([msame, msame])
+out = relay.Relay(A(), lk).handle({"messages": mhist, "tools": tools})
+check("부탁한 뒤에도 같은 명령이면 그대로 실행 (기다리는 중일 수 있어 멈추지 않음)", out.get("tool_calls") and len(lk.sent_log) == 2,
+      (lk.sent_log, out))
+lk = FakeLink([msame])
+out = relay.Relay(A(), lk).handle({"messages": mhist[:-2], "tools": tools})
+check("같은 명령 4번째까지는 그대로 실행", out.get("tool_calls") and len(lk.sent_log) == 1, (lk.sent_log, out))
+tcmd = "tail -n 3 train.log"
+tcall = lambda i: {"role": "assistant", "content": None, "tool_calls": [{"id": "t%d" % i, "type": "function",
+                   "function": {"name": "bash", "arguments": json.dumps({"command": tcmd})}}]}
+thist = [sys_msg, {"role": "user", "content": "학습이 끝날 때까지 지켜봐 줘"}]
+for i in range(6):
+    thist += [tcall(i), {"role": "tool", "tool_call_id": "t%d" % i, "content": "epoch %d/20 loss 0.%d" % (i + 3, 60 - i)}]
+lk = FakeLink(["```json\n" + json.dumps({"tool": "bash", "arguments": {"command": tcmd}}) + "\n```"])
+out = relay.Relay(A(), lk).handle({"messages": thist, "tools": tools})
+check("읽기만 하는 명령(학습 로그 tail)은 7번째도 묻지 않음", out.get("tool_calls") and len(lk.sent_log) == 1, (lk.sent_log, out))
+
 # 모델 선택: pi 모델 id -> Copilot 화면의 모델 이름 (Copilot 은 새 채팅마다 '자동' 으로 돌아가므로 중계 서버가 고름)
 cfgm = {"copilot_model": "GPT 6.0 Sol", "copilot_models": {"gpt-5.6-sol-think": "GPT 5.6 Sol 깊이 생각하기", "screen": ""}}
 check("모델: 표에 있는 id", relay.copilot_model_for("gpt-5.6-sol-think", cfgm) == "GPT 5.6 Sol 깊이 생각하기")
