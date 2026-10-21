@@ -106,6 +106,16 @@ else {
 		t = await kit.lookupDocs("json", "");
 		check("돌아가는 Python 이 없으면 그렇다고 (스토어 바로가기는 고르지 않음)", t.includes("Python 을 찾지 못함"), t);
 	} else console.log("건너뜀: PATH 에 돌아가는 Python 이 있어 '없을 때' 는 보지 않음");
+	// 노트북에서 돌리는 명령 그대로 bash 로 (heredoc, 따옴표 친 인자, 돌아가는 Python 고르기)
+	const sh = spawnSync("bash", ["-c", kit.notebookDocsCommand("json.decoder.JSONDecoder", "raw 'x\" $HOME")], {
+		cwd: none,
+		env: { ...process.env, PI_PYTHON_EXE: real.split("\\").join("/") },
+		encoding: "utf8",
+		windowsHide: true,
+	});
+	const nd = kit.parseDocs(sh.stdout || "");
+	check("노트북 명령을 bash 로: 찾을 이름·말은 그대로 Python 에 (따옴표·$ 도), 결과 줄을 읽음",
+		nd?.path === "json.decoder.JSONDecoder" && nd.kind === "class" && nd.members?.some((x) => x.name === "raw_decode"), [sh.status, String(sh.stdout).slice(-300), String(sh.stderr).slice(-300)]);
 }
 
 rmSync(tmp, { recursive: true, force: true });
