@@ -58,8 +58,15 @@ export const tilde = (p: string) => {
 
 /** 글 파일의 인코딩: UTF-8 (앞의 BOM 은 뺌), BOM 이 있는 UTF-16, 그 밖은 한국어 Windows 의 ANSI(CP949).
  *  메모장·엑셀이 ANSI·유니코드로 저장한 원본도 한글이 깨지지 않게. UTF-8 에 잘못된 바이트가 조금 섞인 것은 UTF-8 로 봄 */
-export type TextEnc = "utf8" | "utf16le" | "utf16be" | "cp949";
-export const ENC_LABEL: Record<TextEnc, string> = { utf8: "UTF-8", utf16le: "UTF-16", utf16be: "UTF-16", cp949: "CP949(ANSI)" };
+export type TextEnc = "utf8" | "utf16le" | "utf16be" | "cp949" | "unknown";
+export const ENC_LABEL: Record<TextEnc, string> = {
+	utf8: "UTF-8",
+	utf16le: "UTF-16",
+	utf16be: "UTF-16",
+	cp949: "CP949(ANSI)",
+	unknown: "인코딩 모름: 한글이 깨졌을 수 있으니 UTF-8 로 저장해 다시 넣으세요",
+};
+const UTF8_STRICT = new TextDecoder("utf-8", { fatal: true });
 export function decodeText(buf: Buffer): { text: string; enc: TextEnc } {
 	if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return { text: buf.subarray(3).toString("utf8"), enc: "utf8" };
 	if (buf[0] === 0xff && buf[1] === 0xfe) return { text: buf.subarray(2).toString("utf16le"), enc: "utf16le" };
@@ -67,17 +74,18 @@ export function decodeText(buf: Buffer): { text: string; enc: TextEnc } {
 		const b = Buffer.from(buf.subarray(2, buf.length - (buf.length % 2)));
 		return { text: b.swap16().toString("utf16le"), enc: "utf16be" };
 	}
-	try {
-		return { text: new TextDecoder("utf-8", { fatal: true }).decode(buf), enc: "utf8" };
-	} catch {}
 	const loose = buf.toString("utf8");
+	if (!loose.includes("�")) return { text: loose, enc: "utf8" };
+	try {
+		return { text: UTF8_STRICT.decode(buf), enc: "utf8" }; // U+FFFD 가 글에 원래 있는 것
+	} catch {}
 	const bad = (loose.match(/�/g) || []).length;
 	const wide = (loose.match(/[^\x00-\x7F]/g) || []).length;
 	if (bad * 10 < wide) return { text: loose, enc: "utf8" };
 	try {
 		return { text: new TextDecoder("euc-kr").decode(buf), enc: "cp949" }; // WHATWG 의 euc-kr 은 CP949 (Node 의 ICU 가 있어야 함)
 	} catch {
-		return { text: loose, enc: "utf8" };
+		return { text: loose, enc: "unknown" };
 	}
 }
 export const readText = (p: string) => decodeText(readFileSync(p)).text;
@@ -413,7 +421,7 @@ export function readTargets(root: string, pages: Page[], targets: string[], offs
 		}
 		const more = i < lines.length ? `\n(… ${lines.length - i}줄 더: wiki_read path="${rel}" offset=${i + 1})` : "";
 		if (!more && start === 1) seen?.add(rel);
-		const notes = [start > 1 ? `${start}줄부터` : "", enc !== "utf8" ? `${ENC_LABEL[enc]} 파일` : ""].filter(Boolean).join(", ");
+		const notes = [start > 1 ? `${start}줄부터` : "", enc === "unknown" ? "인코딩을 모르는 파일: 한글이 깨졌을 수 있음. UTF-8 로 저장해 다시 넣기" : enc !== "utf8" ? `${ENC_LABEL[enc]} 파일` : ""].filter(Boolean).join(", ");
 		out.push(`=== ${rel}${notes ? ` (${notes})` : ""}\n${text.replace(/\n$/, "")}${more}`);
 	}
 	return out.join("\n\n");
@@ -1879,7 +1887,9 @@ export default function (pi: ExtensionAPI) {
 				const t = pageName(arg || `${today()} ${lastPrompt.split("\n")[0].slice(0, 30)}`) || `${today()} 답`;
 				const summary = lastAnswer.replace(/\s+/g, " ").trim().slice(0, 100);
 				const body = `---\ntitle: ${t}\nsummary: ${summary.replace(/^[-#>*\s]+/, "")}\ntype: answer\nsources: []\n---\n# ${t}\n\n**질문:** ${lastPrompt.trim()}\n\n${lastAnswer.trim()}\n`;
-				const r = await locked(() => applyWrite(c.root, c.name, `=== pages/answer/${t}.md\n${body}`, "query", t));
+				// 같은 제목의 답 페이지가 있으면 사용자가 고른 덮어쓰기라 '끝까지 읽지 않음' 검사는 하지 않음 (많이 빠지면 막는 것은 그대로)
+				const rel = `pages/answer/${t}.md`;
+				const r = await locked(() => applyWrite(c.root, c.name, `=== ${rel}\n${body}`, "query", t, today(), new Set([rel])));
 				return r.written.length ? notify(`저장했습니다: [[${r.names[0]}]] (${r.written[0]})`) : notify(r.errors.join("\n"), "error");
 			}
 			if (sub === "lint") {
