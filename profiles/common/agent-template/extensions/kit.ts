@@ -18,8 +18,9 @@ import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, promises as fsp, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { call, nbRun, type RelayError, shown as shownPath, shq, type Target, target, transformInput, workDir } from "./lib/relay.ts";
+import { call, decodeText, nbRun, type RelayError, shown as shownPath, shq, type Target, target, transformInput, workDir } from "./lib/relay.ts";
 
 const agentDirRaw = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 const kitHome = process.env.PI_KIT_HOME || "";
@@ -264,6 +265,8 @@ function helpLines(): string[] {
 		`       내 스킬: ${A}/skills/<이름>/SKILL.md (skill-creator 에게 "○○ 스킬 만들어줘")`,
 		`       내 hook: ${A}/extensions/my-<이름>.ts (hook-creator 에게 "○○할 때 △△하는 hook 만들어줘")`,
 		` 지침  ${A}/AGENTS.md (공통), 프로젝트 폴더의 AGENTS.md (/init 으로 초안) · /remember <내용> 한 줄 더하기`,
+		" 기억  /recall 지난 세션들의 작업 기록 (새 세션에 자동으로 알려 줌) · /handoff 다음 세션에 넘길 요약 · /recall off 끄기",
+		" 설명  /docs <모듈[.이름]> [찾을 말] 설치된 버전의 시그니처·설명 (pi 도 docs_lookup 으로 찾음) · 받은 문서는 ~/pi-docs 에",
 		" 위키  /wiki (상태) · /wiki init 으로 만들기 · ingest <raw/ 파일·폴더> · ask <질문> · save · lint (Obsidian 으로 보기)",
 		" 환경  /kit env 지금 실행 위치의 Python·패키지·GPU·CUDA 버전을 조사해 지침에 적기 (그 버전에 맞춰 일함)",
 		" 로그  /watch <로그> 긴 학습 지켜보기 (아래 줄에 진행, 끝나면 벨·알림) · /watch 상태 · /watch 보내기 끝부분을 pi 에게 · /watch 끄기",
@@ -320,6 +323,429 @@ async function doctorLines(): Promise<string[]> {
 	}
 	const body = out.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r/g, "").split("\n").filter((l) => l.trim());
 	return [head, ...body.map((l) => " " + l)];
+}
+
+// ── 문서 찾기 (docs_lookup 도구, /docs): 설치된 버전의 설명 ───────────────────────────────
+// context7 처럼 모델이 라이브러리 사용법을 추측하지 않게. 사내망이라 인터넷 대신 지금 실행 위치(jupyter 모드면 노트북)에 설치된
+// Python 패키지를 직접 불러와 버전·시그니처·설명·하위 이름을 보고, 문서 폴더(~/pi-docs: 받아 둔 문서 .md·.txt·.html 등)에서 맞는 줄을 더한다.
+// Python 은 작업 폴더의 .venv·venv, 켜 둔 가상 환경·conda, pi 가 찾은 Python, PATH 의 python3·python 차례로 실제로 돌아가는 것
+// (Windows 스토어 바로가기는 Python 이 없으면 안내만 하고 실패하므로 돌려 보고 고름). 찾을 이름은 인자로 넘김 (스크립트에 끼워 넣지 않음)
+export const DOCS_MAX = 5500; // 결과 글 길이 (wiki_read 와 같음. Copilot·사내AI 의 도구 결과 한도 안)
+export const DOCS_GUIDE = "라이브러리의 함수·클래스 사용법(인자, 반환값, 버전 차이)이 확실하지 않으면 추측하지 말고 docs_lookup 으로 지금 설치된 버전의 설명을 먼저 본다";
+export const docsDir = () => process.env.PI_DOCS_DIR || join(homedir(), "pi-docs");
+export const DOCS_PY = String.raw`import sys, os, io, json, inspect, importlib, pkgutil, warnings, contextlib, difflib
+warnings.filterwarnings("ignore")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+name = sys.argv[1] if len(sys.argv) > 1 else ""
+query = sys.argv[2] if len(sys.argv) > 2 else ""
+words = [w for w in query.lower().replace(",", " ").split() if w]
+out = {"python": sys.version.split()[0], "exe": sys.executable, "name": name}
+sink = io.StringIO()
+def first_line(doc):
+    for l in (doc or "").strip().splitlines():
+        l = l.strip()
+        if l:
+            return l[:200]
+    return ""
+def sig(o):
+    try:
+        return str(inspect.signature(o))
+    except Exception:
+        return ""
+def kind(o):
+    if inspect.ismodule(o): return "module"
+    if inspect.isclass(o): return "class"
+    if isinstance(o, property): return "property"
+    if inspect.isroutine(o): return "function"
+    if callable(o): return "callable"
+    return "value"
+def doc_of(o):
+    try:
+        return (inspect.getdoc(o.fget) if isinstance(o, property) else inspect.getdoc(o)) or ""
+    except Exception:
+        return ""
+def version_of(top):
+    try:
+        import importlib.metadata as md
+    except Exception:
+        return None, None
+    names = []
+    try:
+        names = list(md.packages_distributions().get(top, []))
+    except Exception:
+        pass
+    for d in names + [top, top.replace("_", "-")]:
+        try:
+            return d, md.version(d)
+        except Exception:
+            pass
+    return None, None
+parts = [p for p in name.replace("/", ".").replace(":", ".").split(".") if p]
+obj = None
+rest = []
+err = ""
+with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+    for i in range(len(parts), 0, -1):
+        modname = ".".join(parts[:i])
+        try:
+            obj = importlib.import_module(modname)
+            rest = parts[i:]
+            break
+        except ModuleNotFoundError as e:
+            missing = getattr(e, "name", "") or ""
+            if missing and missing != modname and not modname.startswith(missing + "."):
+                err = "%s: 불러오다 오류 (%s)" % (modname, e)
+                break
+            err = str(e)
+        except BaseException as e:
+            err = "%s: 불러오다 오류 (%s: %s)" % (modname, type(e).__name__, e)
+            break
+    found = parts[: len(parts) - len(rest)]
+    if obj is not None:
+        for a in rest:
+            try:
+                obj = getattr(obj, a)
+                found.append(a)
+            except Exception:
+                out["missing"] = a
+                break
+if obj is None:
+    out["error"] = err or "없음"
+    tops = set()
+    try:
+        import importlib.metadata as md
+        tops |= set(md.packages_distributions().keys())
+    except Exception:
+        pass
+    try:
+        tops |= {m.name for m in pkgutil.iter_modules()}
+    except Exception:
+        pass
+    out["close"] = difflib.get_close_matches(parts[0] if parts else name, sorted(tops), n=6, cutoff=0.6)
+else:
+    out["path"] = ".".join(found)
+    out["kind"] = kind(obj)
+    d, v = version_of(parts[0])
+    if v:
+        out["dist"], out["version"] = d, v
+    f = None
+    try:
+        f = None if isinstance(obj, property) else inspect.getsourcefile(obj)
+    except Exception:
+        pass
+    if not f:
+        m = obj if inspect.ismodule(obj) else inspect.getmodule(obj)
+        f = getattr(m, "__file__", None)
+    out["file"] = f or ""
+    if out["kind"] in ("class", "function", "callable"):
+        out["signature"] = sig(obj)
+    out["doc"] = doc_of(obj)[:8000]
+    names = []
+    try:
+        al = getattr(obj, "__all__", None) if inspect.ismodule(obj) else None
+        names = [str(n) for n in al] if isinstance(al, (list, tuple)) else [n for n in dir(obj) if not n.startswith("_")]
+    except Exception:
+        pass
+    if out["kind"] == "value":
+        names = []
+    subs = []
+    if inspect.ismodule(obj) and hasattr(obj, "__path__"):
+        try:
+            subs = sorted({m.name for m in pkgutil.iter_modules(obj.__path__) if not m.name.startswith("_")})
+        except Exception:
+            pass
+    out["submodules"] = subs[:300]
+    out["count"] = len(names)
+    out["names"] = names[:600]
+    members = []
+    with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+        if words:
+            scored = []
+            looked = 0
+            for n in names[:3000]:
+                s = sum(3 for w in words if w in n.lower())
+                if not s and looked < 400:
+                    looked += 1
+                    try:
+                        s = sum(1 for w in words if w in first_line(doc_of(getattr(obj, n))).lower())
+                    except Exception:
+                        s = 0
+                if s:
+                    scored.append((-s, n))
+            picked = [n for _, n in sorted(scored)][:40]
+        else:
+            picked = names[:25]
+        for n in picked:
+            try:
+                o = getattr(obj, n)
+            except Exception:
+                continue
+            k = kind(o)
+            members.append({"name": n, "kind": k, "sig": sig(o)[:240] if k in ("class", "function", "callable") else "", "doc": first_line(doc_of(o)) if k != "value" else ""})
+    out["members"] = members
+    out["matched"] = bool(words)
+sys.__stdout__.write("\n@@DOCS@@" + json.dumps(out, ensure_ascii=True) + "\n")
+sys.__stdout__.flush()
+`;
+
+export interface DocsInfo {
+	name: string;
+	python?: string;
+	exe?: string;
+	error?: string;
+	close?: string[];
+	path?: string;
+	kind?: string;
+	dist?: string;
+	version?: string;
+	file?: string;
+	signature?: string;
+	doc?: string;
+	submodules?: string[];
+	count?: number;
+	names?: string[];
+	members?: { name: string; kind: string; sig: string; doc: string }[];
+	matched?: boolean;
+	missing?: string;
+}
+const KIND_KO: Record<string, string> = { module: "모듈", class: "클래스", function: "함수", property: "속성", callable: "부를 수 있는 것", value: "값" };
+
+/** 실행 결과에서 '@@DOCS@@{...}' 줄 (불러오는 패키지가 섞어 쓴 글은 뺌). 없으면 null */
+export function parseDocs(out: string): DocsInfo | null {
+	const i = out.lastIndexOf("@@DOCS@@");
+	if (i < 0) return null;
+	try {
+		return JSON.parse(out.slice(i + 8).split(/\r?\n/)[0]);
+	} catch {
+		return null;
+	}
+}
+
+/** 문서 폴더에서 찾을 말: 이름의 끝 두 마디(SummaryWriter, add_scalar)와 찾을 말 (두 글자 넘는 것) */
+export function docWords(name: string, query: string): string[] {
+	const ws = [...name.split(/[./:]/).filter(Boolean).slice(-2), ...query.split(/[\s,]+/)].map((w) => w.toLowerCase().trim()).filter((w) => w.length >= 2);
+	return [...new Set(ws)];
+}
+
+const DOC_EXT = /\.(md|markdown|txt|rst|adoc|html?)$/i;
+/** 문서 폴더에서 찾은 줄들: 맞는 말이 많은 줄부터, 파일마다 묶어 (앞뒤 한 줄씩). max 자까지 */
+export function searchDocs(dir: string, words: string[], max = 1500): { text: string; files: number } {
+	const files: string[] = [];
+	const walk = (d: string, depth: number) => {
+		if (depth > 6 || files.length >= 3000) return;
+		let ents: any[] = [];
+		try {
+			ents = readdirSync(d, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const e of ents) {
+			if (e.name.startsWith(".") || e.name === "node_modules") continue;
+			const p = join(d, e.name);
+			if (e.isDirectory()) walk(p, depth + 1);
+			else if (DOC_EXT.test(e.name)) files.push(p);
+		}
+	};
+	walk(dir, 0);
+	if (!words.length || !files.length) return { text: "", files: files.length };
+	type Hit = { f: number; i: number; s: number };
+	const hits: Hit[] = [];
+	const texts: string[][] = [];
+	let bytes = 0;
+	for (const [f, p] of files.entries()) {
+		texts.push([]);
+		try {
+			const st = statSync(p);
+			if (st.size > 3_000_000 || bytes > 50_000_000) continue;
+			bytes += st.size;
+			let t = decodeText(readFileSync(p)).text;
+			if (/\.html?$/i.test(p))
+				t = t
+					.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+					.replace(/<(br|p|div|li|h\d|tr|pre)[^>]*>/gi, "\n")
+					.replace(/<[^>]+>/g, " ")
+					.replace(/&lt;/g, "<")
+					.replace(/&gt;/g, ">")
+					.replace(/&quot;/g, '"')
+					.replace(/&#39;/g, "'")
+					.replace(/&nbsp;/g, " ")
+					.replace(/&amp;/g, "&");
+			const lines = t.split(/\r?\n/);
+			texts[f] = lines;
+			for (const [i, l] of lines.entries()) {
+				const low = l.toLowerCase();
+				const s = words.filter((w) => low.includes(w)).length;
+				if (s) hits.push({ f, i, s });
+			}
+		} catch {}
+	}
+	hits.sort((a, b) => b.s - a.s || a.f - b.f || a.i - b.i);
+	const byFile = new Map<number, number[]>();
+	for (const h of hits.slice(0, 60)) byFile.set(h.f, [...(byFile.get(h.f) || []), h.i]);
+	const out: string[] = [];
+	let size = 0;
+	const rel = (p: string) => p.slice(dir.length).replace(/^[\\/]+/, "").split("\\").join("/");
+	for (const [f, is] of byFile) {
+		const lines = texts[f];
+		const show = new Set<number>();
+		for (const i of is.sort((a, b) => a - b).slice(0, 6)) for (const k of [i - 1, i, i + 1]) if (k >= 0 && k < lines.length && lines[k].trim()) show.add(k);
+		const block = [`=== ${rel(files[f])}`, ...[...show].sort((a, b) => a - b).map((k) => `${k + 1}: ${lines[k].trim().slice(0, 200)}`)].join("\n");
+		if (size + block.length > max) break;
+		out.push(block);
+		size += block.length + 1;
+	}
+	return { text: out.join("\n"), files: files.length };
+}
+
+/** 찾은 설명 -> 모델·사람이 읽을 글 (max 자까지: 머리·시그니처 -> 설명 앞부분 -> 맞는 하위 이름 -> 문서 폴더 -> 그 밖의 이름 차례로 자리를 줌) */
+export function formatDocs(d: DocsInfo, query: string, folder: { text: string; files: number; dir: string }, max = DOCS_MAX): string {
+	const py = d.python ? `Python ${d.python}${d.exe ? ` (${d.exe})` : ""}` : "";
+	const folderPart = folder.text ? `문서 폴더(${tilde(folder.dir)})에서 찾은 줄:\n${folder.text}` : "";
+	const parts: string[] = [];
+	let room = max;
+	const put = (s: string, cap = room) => {
+		if (!s || room <= 0) return;
+		const t = s.length > Math.min(cap, room) ? `${s.slice(0, Math.max(0, Math.min(cap, room) - 1))}…` : s;
+		parts.push(t);
+		room -= t.length + 1;
+	};
+	if (d.error) {
+		put(`=== ${d.name}: 찾지 못함 (${d.error})`);
+		put(py);
+		if (d.close?.length) put(`비슷한 이름: ${d.close.join(", ")}`);
+		put("설치 이름(pip)과 불러오는 이름이 다를 수 있습니다 (예: scikit-learn → sklearn, opencv-python → cv2, pyyaml → yaml)");
+		put(folderPart);
+		return parts.join("\n");
+	}
+	const ver = d.version ? ` · ${d.dist} ${d.version}` : "";
+	put(`=== ${d.path} (${KIND_KO[d.kind || ""] || d.kind})${ver}${py ? ` · ${py}` : ""}`);
+	if (d.missing) put(`'${d.missing}' 는 ${d.path} 에 없습니다. 아래 하위 이름에서 고르세요`);
+	if (d.file) put(`파일: ${d.file}`);
+	if (d.signature) put(`시그니처: ${d.path?.split(".").pop()}${d.signature}`, 800);
+	if (d.doc) {
+		const lines = d.doc.split("\n");
+		let s = "";
+		let k = 0;
+		for (; k < lines.length && s.length + lines[k].length < 2000; k++) s += `${lines[k]}\n`;
+		put(`설명:\n${s.trimEnd()}${k < lines.length ? `\n(… 설명 ${lines.length - k}줄 더: 파일에서 읽기)` : ""}`, 2200);
+	}
+	const ms = d.members || [];
+	if (ms.length) {
+		const head = d.matched ? `'${query}' 에 맞는 하위 이름 ${ms.length}개 (모두 ${d.count}개):` : `하위 이름 (모두 ${d.count}개, 처음 ${ms.length}개):`;
+		const rows = ms.map((x) => `- ${x.name}${x.sig || (x.kind === "class" ? " (클래스)" : x.kind === "module" ? " (모듈)" : "")}${x.doc ? ` — ${x.doc}` : ""}`.slice(0, 300));
+		put([head, ...rows].join("\n"), 1600);
+	} else if (d.matched && d.count) put(`'${query}' 에 맞는 하위 이름 없음 (모두 ${d.count}개)`);
+	put(folderPart, 1500);
+	const shownNames = new Set(ms.map((x) => x.name));
+	const others = (d.names || []).filter((n) => !shownNames.has(n));
+	if (others.length) {
+		let s = "";
+		let k = 0;
+		for (; k < others.length && s.length + others[k].length < 500; k++) s += `${k ? ", " : ""}${others[k]}`;
+		put(`그 밖의 이름: ${s}${k < others.length ? ` … (${(d.count || others.length) - shownNames.size - k}개 더)` : ""}`);
+	}
+	if (d.submodules?.length) put(`하위 모듈: ${d.submodules.slice(0, 40).join(", ")}${d.submodules.length > 40 ? ` … (${d.submodules.length - 40}개 더)` : ""}`);
+	put(`더 보기: docs_lookup name="${d.path}.<이름>" (query 로 좁히기)`);
+	return parts.join("\n");
+}
+
+type Proc = { code: number | null; out: string };
+function runProc(cmd: string, args: string[], ms: number): Promise<Proc> {
+	return new Promise((ok) => {
+		let out = "";
+		let done = false;
+		const env = { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONWARNINGS: "ignore", PYTHONDONTWRITEBYTECODE: "1", TF_CPP_MIN_LOG_LEVEL: "3" };
+		let ch: ReturnType<typeof spawn>;
+		try {
+			ch = spawn(cmd, args, { windowsHide: true, env });
+		} catch (e) {
+			return ok({ code: null, out: `(실행하지 못함: ${(e as Error).message})` });
+		}
+		const finish = (code: number | null, extra = "") => {
+			if (done) return;
+			done = true;
+			ok({ code, out: out + extra });
+		};
+		const t = setTimeout(() => {
+			ch.kill();
+			finish(null, "\n(시간 초과로 멈춤)");
+		}, ms);
+		ch.stdout?.on("data", (d) => (out += d));
+		ch.stderr?.on("data", () => {}); // 불러오는 패키지의 경고는 버림
+		ch.on("error", (e) => {
+			clearTimeout(t);
+			finish(null, `\n(실행하지 못함: ${e.message})`);
+		});
+		ch.on("close", (code) => {
+			clearTimeout(t);
+			finish(code);
+		});
+	});
+}
+
+/** 이 컴퓨터의 Python 후보 (차례대로): 작업 폴더의 가상 환경, 켜 둔 가상 환경·conda, pi 가 찾은 Python, PATH */
+export function pythonCandidates(cwd: string, env = process.env, win = process.platform === "win32"): string[][] {
+	const inEnv = win ? ["Scripts/python.exe", "python.exe"] : ["bin/python3", "bin/python"];
+	const c: string[][] = [];
+	for (const d of [".venv", "venv"]) for (const v of inEnv) c.push([join(cwd, d, v)]);
+	for (const e of [env.VIRTUAL_ENV, env.CONDA_PREFIX]) if (e) for (const v of inEnv) c.push([join(e, v)]);
+	if (env.PI_PYTHON_EXE) c.push([env.PI_PYTHON_EXE]);
+	c.push(["python3"], ["python"]);
+	if (win) c.push(["py", "-3"]);
+	return c;
+}
+const pyCache = new Map<string, string[] | null>();
+async function localPython(cwd: string): Promise<string[] | null> {
+	if (pyCache.has(cwd)) return pyCache.get(cwd) ?? null;
+	let found: string[] | null = null;
+	for (const c of pythonCandidates(cwd)) {
+		if (/[\\/]/.test(c[0]) && !existsSync(c[0])) continue;
+		const r = await runProc(c[0], [...c.slice(1), "-c", "import sys; print(sys.executable)"], 15000);
+		if (r.code === 0 && r.out.trim()) {
+			found = c;
+			break;
+		}
+	}
+	pyCache.set(cwd, found);
+	return found;
+}
+/** 노트북에서: 작업 폴더의 가상 환경, conda, pi 가 찾은 Python, python3, python 가운데 돌아가는 것으로 */
+export function notebookDocsCommand(name: string, query: string): string {
+	return [
+		'PY=""',
+		'for c in "$PWD/.venv/bin/python" "$PWD/venv/bin/python" "${CONDA_PREFIX:+$CONDA_PREFIX/bin/python}" "${PI_PYTHON_EXE:-}" python3 python; do',
+		"  [ -n \"$c\" ] && \"$c\" -c 'import sys' >/dev/null 2>&1 && PY=\"$c\" && break",
+		"done",
+		"[ -n \"$PY\" ] || { echo '@@DOCS@@{\"name\":\"\",\"error\":\"python\"}'; exit 0; }",
+		`PYTHONIOENCODING=utf-8 PYTHONWARNINGS=ignore PYTHONDONTWRITEBYTECODE=1 TF_CPP_MIN_LOG_LEVEL=3 timeout 40 "$PY" - ${shq(name)} ${shq(query)} <<'PIDOCSEOF' 2>/dev/null`,
+		DOCS_PY.trimEnd(),
+		"PIDOCSEOF",
+	].join("\n");
+}
+
+/** 찾기: 설치된 Python 패키지(지금 실행 위치) + 문서 폴더 -> 글 */
+export async function lookupDocs(name: string, query: string): Promise<string> {
+	const n = name.trim();
+	const q = query.trim();
+	if (!n) throw new Error("name 에 Python 모듈·클래스·함수 경로를 주세요 (예: torch.utils.tensorboard.SummaryWriter)");
+	const wd = workDir();
+	let info: DocsInfo | null;
+	let raw = "";
+	if (wd.remote) {
+		raw = (await nbRun(notebookDocsCommand(n, q), wd.cwd || wd.home || "/")).out;
+	} else {
+		const py = await localPython(wd.cwd);
+		if (!py) raw = '@@DOCS@@{"name":"","error":"python"}';
+		else raw = (await runProc(py[0], [...py.slice(1), "-c", DOCS_PY, n, q], 40000)).out;
+	}
+	info = parseDocs(raw);
+	const dir = docsDir();
+	const folder = { ...searchDocs(dir, docWords(n, q)), dir };
+	if (info?.error === "python")
+		info = { name: n, error: `${wd.remote ? "노트북" : "이 컴퓨터"}에서 돌아가는 Python 을 찾지 못함 (작업 폴더의 .venv, PATH 의 python3·python)` };
+	if (!info) info = { name: n, error: `설명을 읽지 못함${/시간 초과/.test(raw) ? " (40초 안에 불러오지 못함)" : ""}: ${raw.replace(/\s+/g, " ").trim().slice(-200)}` };
+	if (!info.name) info.name = n;
+	return formatDocs(info, q, folder);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -706,6 +1132,49 @@ export default function (pi: ExtensionAPI) {
 			if (ctx?.hasUI && WS.w) ctx.ui.setStatus("watch", undefined);
 		} catch {}
 		WS.ctx = null;
+	});
+
+	pi.registerTool({
+		name: "docs_lookup",
+		label: "문서 찾기",
+		description:
+			"설치된 라이브러리의 설명 찾기 (인터넷 대신 지금 실행 위치에 설치된 버전에서). name 에 Python 모듈·클래스·함수 경로 (예: torch.utils.tensorboard.SummaryWriter), " +
+			"query 에 찾을 말 (하위 이름·설명에서). 버전·시그니처·설명·하위 이름과 문서 폴더(~/pi-docs)에서 맞는 줄을 돌려준다",
+		promptSnippet: "설치된 라이브러리의 버전·시그니처·설명과 문서 폴더(~/pi-docs) 찾기",
+		promptGuidelines: [DOCS_GUIDE],
+		parameters: Type.Object({
+			name: Type.String({ description: "Python 모듈·클래스·함수 경로 (예: tensorboard, torch.utils.tensorboard.SummaryWriter.add_scalar)" }),
+			query: Type.Optional(Type.String({ description: "찾을 말 (예: scalar smoothing). 하위 이름·설명과 문서 폴더에서 찾음" })),
+		}),
+		async execute(_id: string, params: any) {
+			const text = await lookupDocs(String(params.name || ""), String(params.query || ""));
+			return { content: [{ type: "text" as const, text }], details: undefined };
+		},
+	});
+	pi.registerCommand("docs", {
+		description: "설치된 라이브러리의 설명 보기 (모델에게 묻지 않음): /docs <모듈[.이름]> [찾을 말]. 문서 폴더 ~/pi-docs 도 찾음",
+		handler: async (args, ctx) => {
+			const [name = "", ...rest] = String(args || "").trim().split(/\s+/);
+			if (!name) {
+				if (shown === "docs") return show(ctx, "docs", undefined);
+				const dir = docsDir();
+				const n = existsSync(dir) ? searchDocs(dir, []).files : -1;
+				return show(ctx, "docs", [
+					"── 문서 찾기 (닫기: /docs 다시 입력) ──",
+					" 사용법  /docs <모듈[.이름]> [찾을 말]   예) /docs torch.utils.tensorboard.SummaryWriter scalar",
+					`         지금 실행 위치(${workDir().remote ? "노트북" : "이 컴퓨터"})에 설치된 버전의 시그니처·설명·하위 이름을 봅니다. pi 도 필요할 때 docs_lookup 으로 찾습니다`,
+					` 문서 폴더  ${tilde(dir)} ${n < 0 ? "(없음: 만들고 받아 둔 문서 .md·.txt·.html 를 넣으면 함께 찾음)" : `(문서 ${n}개)`}`,
+				]);
+			}
+			ctx.ui.notify(`${name} 의 설명을 찾는 중입니다 (패키지를 불러오느라 몇 초 걸릴 수 있음)...`, "info");
+			let text: string;
+			try {
+				text = await lookupDocs(name, rest.join(" "));
+			} catch (e) {
+				return ctx.ui.notify(`찾지 못했습니다: ${(e as Error).message}`, "error");
+			}
+			show(ctx, "docs", [`── /docs ${name}${rest.length ? ` ${rest.join(" ")}` : ""} (닫기: /docs) ──`, text]);
+		},
 	});
 
 	pi.registerCommand("doctor", {

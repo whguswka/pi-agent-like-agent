@@ -6,6 +6,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync,
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createJiti } from "../runtime/node_modules/jiti/lib/jiti.mjs";
 
 const T = mkdtempSync(join(tmpdir(), "pi-watch-"));
@@ -82,7 +83,8 @@ process.env.PI_COPILOT_URL = `http://127.0.0.1:${server.address().port}`;
 process.env.PI_CODING_AGENT_DIR = join(T, "agent");
 process.env.PI_WATCH_POLL_MS = "120";
 
-const jiti = createJiti(import.meta.url);
+// typebox 는 pi 처럼 runtime 의 것으로 (kit.ts 의 docs_lookup 도구)
+const jiti = createJiti(import.meta.url, { alias: { typebox: fileURLToPath(new URL("../runtime/node_modules/typebox/build/index.mjs", import.meta.url)) } });
 const kit = await jiti.import("../profiles/common/agent-template/extensions/kit.ts");
 const { tailLines, doneExit, watchMarker, ago, watchStatus } = kit;
 
@@ -102,6 +104,7 @@ const handlers = new Map();
 const sent = [];
 const pi = {
 	registerCommand: (name, c) => commands.set(name, c),
+	registerTool: () => {},
 	on: (ev, h) => (handlers.get(ev) || handlers.set(ev, []).get(ev)).push(h),
 	sendUserMessage: (text, opts) => sent.push({ text, opts }),
 };

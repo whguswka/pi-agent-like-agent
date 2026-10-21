@@ -1,8 +1,10 @@
 // /kit env (profiles/common/agent-template/extensions/kit.ts) 단위 테스트: 조사 결과 읽기, 지침의 '실행 환경' 부분 쓰기
 // 사용법: node tests/test_kitenv.mjs   (저장소의 runtime/node_modules/jiti 로 .ts 를 불러옴)
+import { fileURLToPath } from "node:url";
 import { createJiti } from "../runtime/node_modules/jiti/lib/jiti.mjs";
 
-const jiti = createJiti(import.meta.url);
+// typebox 는 pi 처럼 runtime 의 것으로 (kit.ts 의 docs_lookup 도구)
+const jiti = createJiti(import.meta.url, { alias: { typebox: fileURLToPath(new URL("../runtime/node_modules/typebox/build/index.mjs", import.meta.url)) } });
 const { parseEnv, putEnv } = await jiti.import("../profiles/common/agent-template/extensions/kit.ts");
 let fails = 0;
 const check = (name, cond, detail = "") => {

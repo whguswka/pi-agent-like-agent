@@ -280,8 +280,8 @@ export default function (pi: ExtensionAPI) {
 		const handoff = rawInput(text) === HANDOFF_PROMPT;
 		const ask = event.source === "extension" ? userAskOf(text) : rawInput(text);
 		if (!ask?.trim()) return;
-		if (W.cur && !handoff) W.cur.req = cut(`${W.cur.req} / ${one(ask)}`, 300);
-		else W.cur = { t: stamp(), req: cut(one(ask), 300), files: [], cmds: [], wiki: [], ans: "", end: "", handoff };
+		if (W.cur && !handoff) W.cur.req = cut(`${W.cur.req} / ${one(scrubText(ask))}`, 300); // 자르기 전에 빼기 (잘린 이메일은 알아보지 못함)
+		else W.cur = { t: stamp(), req: cut(one(scrubText(ask)), 300), files: [], cmds: [], wiki: [], ans: "", end: "", handoff };
 	});
 
 	pi.on("tool_result", async (event: any) => {
