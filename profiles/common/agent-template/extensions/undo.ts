@@ -12,7 +12,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readTarget, removeTarget, shown, type Target, target, writeTarget } from "./lib/relay.ts";
+import { readTarget, removeTarget, shown, type Target, target, transformInput, writeTarget } from "./lib/relay.ts";
 
 const MAX_FILE = 5 * 1024 * 1024;
 type Snap = Target & { label: string; before?: Buffer | null; after?: Buffer | null; skip?: string };
@@ -72,7 +72,7 @@ export default function (pi: ExtensionAPI) {
 		if (!S.note || !event.text || event.text.startsWith("/")) return;
 		const text = `${S.note}\n\n${event.text}`;
 		S.note = "";
-		return { action: "transform", text };
+		return transformInput(event.text, text);
 	});
 
 	pi.registerCommand("undo", {

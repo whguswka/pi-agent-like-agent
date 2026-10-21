@@ -14,7 +14,7 @@
 import { promises as fsp } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { nbRun, readHead, shown, shq, target, type WorkDir, workDir } from "./lib/relay.ts";
+import { nbRun, readHead, shown, shq, target, transformInput, type WorkDir, workDir } from "./lib/relay.ts";
 
 export type Entry = { path: string; dir: boolean }; // 작업 폴더 기준 상대 경로 (/ 구분)
 const SKIP = [".git", "node_modules", "__pycache__", ".venv", "venv", ".ipynb_checkpoints", ".mypy_cache", ".pytest_cache", ".tox", ".idea", ".cache"];
@@ -194,6 +194,6 @@ export default function (pi: ExtensionAPI) {
 		if (!text.includes("@") || text.startsWith("/")) return;
 		const parts = await attachments(text);
 		if (!parts.length) return;
-		return { action: "transform", text: `${parts.join("\n")}\n\n${text}` };
+		return transformInput(text, `${parts.join("\n")}\n\n${text}`);
 	});
 }

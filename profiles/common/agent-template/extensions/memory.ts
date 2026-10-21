@@ -13,11 +13,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readTarget, type Target, target, workDir, writeTarget } from "./lib/relay.ts";
+import { readTarget, type Target, target, transformInput, workDir, writeTarget } from "./lib/relay.ts";
 
 const HEAD = "## 기억할 것";
 
-/** 지침 글에 항목 더하기: "## 기억할 것" 부분 끝에 (없으면 파일 끝에 새로). 이미 있으면 null */
+/** 지침 글에 항목 더하기: "## 기억할 것" 부분 끝에 (없으면 파일 끝에 새로). 이미 있으면 null.
+ *  부분은 다음 제목(#·##)이나 키트가 고치는 부분의 표시(<!-- kit ... -->)에서 끝남 (그 안에 넣으면 키트가 다시 쓸 때 지워짐) */
 export function addMemory(text: string, item: string): string | null {
 	const eol = text.includes("\r\n") ? "\r\n" : "\n";
 	const line = `- ${item}`;
@@ -29,7 +30,7 @@ export function addMemory(text: string, item: string): string | null {
 	}
 	let end = lines.length;
 	for (let k = h + 1; k < lines.length; k++) {
-		if (/^#{1,2}\s/.test(lines[k])) {
+		if (/^#{1,2}\s/.test(lines[k]) || /^<!--\s*\/?kit\b/.test(lines[k].trim())) {
 			end = k;
 			break;
 		}
@@ -56,7 +57,7 @@ export default function (pi: ExtensionAPI) {
 		if (!S.notes.length || !event.text || event.text.startsWith("/")) return;
 		const text = `(사용자가 /remember 로 지침에 더한 내용입니다. 지금부터 지켜 주세요: ${S.notes.join(" / ")})\n\n${event.text}`;
 		S.notes = [];
-		return { action: "transform", text };
+		return transformInput(event.text, text);
 	});
 
 	pi.registerCommand("remember", {

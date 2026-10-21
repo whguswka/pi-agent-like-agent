@@ -1,5 +1,6 @@
 /**
- * 확장끼리 함께 쓰는 도우미 (undo.ts, memory.ts, modes.ts, files.ts): 지금 작업 폴더, 파일 읽기·쓰기·지우기.
+ * 확장끼리 함께 쓰는 도우미 (undo.ts, memory.ts, modes.ts, files.ts, kit.ts, wiki.ts): 지금 작업 폴더, 파일 읽기·쓰기·지우기,
+ * 요청 앞에 알림을 붙일 때 사용자가 친 그대로를 남기기 (transformInput, rawInput).
  * jupyter 모드(PC 의 pi 가 명령·파일 작업을 노트북에서)면 중계 서버를 거쳐 노트북 파일을 다룬다.
  * 지금 작업 폴더는 jupyter.ts 가 globalThis.__piWorkDir 로 알려 준다 (없으면 pi 를 시작한 폴더).
  * 이 폴더(lib)에는 index.ts 가 없으므로 pi 가 확장으로 불러오지 않는다.
@@ -173,3 +174,19 @@ export function shown(t: Target, wd: WorkDir = workDir()): string {
 	}
 	return (t.remote ? "노트북 " : "") + t.abs;
 }
+
+// ── 입력 고치기와 사용자가 친 그대로 ──────────────────────────────
+// 여러 확장이 요청 앞에 알림을 붙인다 (input 이벤트의 transform: /remember·/kit env·/undo 알림, 계획 모드, @파일 내용).
+// pi 는 확장을 폴더에서 읽은 차례로 부르고 그 차례는 정해져 있지 않아, 나중에 불리는 확장은 고친 글을 받는다.
+// 고친 글 -> 사용자가 친 글을 남겨 두어 rawInput 으로 되찾는다 (/wiki save 의 질문, 작업 기록)
+const RAW: Map<string, string> = ((globalThis as any).__piRawInput ||= new Map());
+
+/** input 이벤트에서 돌려줄 transform. 고친 글이 사용자가 친 어떤 글에서 왔는지 남긴다 */
+export function transformInput(from: string, to: string) {
+	RAW.set(to, rawInput(from));
+	while (RAW.size > 8) RAW.delete(RAW.keys().next().value as string);
+	return { action: "transform" as const, text: to };
+}
+
+/** input 이벤트의 글 -> 사용자가 친 그대로 (다른 확장이 고치지 않았으면 그 글) */
+export const rawInput = (text: string): string => RAW.get(text) ?? text;

@@ -19,7 +19,7 @@ import { copyFileSync, existsSync, promises as fsp, mkdirSync, readdirSync, read
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { call, nbRun, type RelayError, shown as shownPath, shq, type Target, target, workDir } from "./lib/relay.ts";
+import { call, nbRun, type RelayError, shown as shownPath, shq, type Target, target, transformInput, workDir } from "./lib/relay.ts";
 
 const agentDirRaw = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 const kitHome = process.env.PI_KIT_HOME || "";
@@ -382,7 +382,7 @@ export default function (pi: ExtensionAPI) {
 		if (!E.note || !event.text || event.text.startsWith("/")) return;
 		const text = `${E.note}\n\n${event.text}`;
 		E.note = "";
-		return { action: "transform", text };
+		return transformInput(event.text, text);
 	});
 
 	async function env(ctx: any) {

@@ -150,6 +150,64 @@ writeFileSync(join(ew, "pages/model/윈도.md"), "---\r\ntitle: 윈도\r\nsummar
 r = w.applyWrite(ew, "고치기위키", "=== 덧붙이기 윈도\n- 나\n", "note", "", "2026-10-21");
 check("쓰기: 줄바꿈이 CRLF 인 페이지는 CRLF 그대로", r.written.length === 1 && read(join(ew, "pages/model/윈도.md")) === "---\r\ntitle: 윈도\r\nsummary: CRLF 페이지\r\ntype: model\r\nupdated: 2026-10-21\r\n---\r\n# 윈도\r\n- 가\r\n- 나\r\n", read(join(ew, "pages/model/윈도.md")));
 
+// 이번에 끝까지 읽지 않은 페이지를 통째로 다시 쓰면 한 줄이라도 빠질 때 거절 (읽은 부분만으로 다시 쓰면 나머지가 지워짐)
+check("다시 쓰기 막기(strict): 몇 줄만 고쳐도 빠진 줄들, 줄을 합친 것은 빠진 것이 아님, 짧은 페이지는 막지 않음",
+	JSON.stringify(w.lostLines(longPage, longPage.replace("30번째 사실", "서른째 사실") + "- 더함\n", true)) === JSON.stringify(["30번째 사실: 학습 작업과 지표에 관한 확인된 내용"])
+	&& !w.lostLines(longPage, longPage.replace("- 1번째 사실: 학습 작업과 지표에 관한 확인된 내용\n- 2번째", "- 1번째 사실: 학습 작업과 지표에 관한 확인된 내용, 2번째"), true).length
+	&& !w.lostLines("---\ntitle: a\n---\n짧은 글\n", "---\ntitle: a\n---\n전혀 다른 글\n", true).length);
+const sw = join(tmp, "읽기위키");
+w.initWiki(sw, "읽기위키", "2026-10-21");
+const tail = Array.from({ length: 200 }, (_, i) => `- 꼬리 ${i + 1}: 운영 절차의 확인된 단계와 명령, 결과를 적은 줄`).join("\n");
+w.applyWrite(sw, "읽기위키", `=== pages/runbook/긴 절차.md\n---\ntitle: 긴 절차\nsummary: 긴 운영 절차\ntype: runbook\n---\n# 긴 절차\n${tail}\n`, "note", "", "2026-10-20");
+w.applyWrite(sw, "읽기위키", `=== pages/runbook/짧은 절차.md\n---\ntitle: 짧은 절차\nsummary: 짧은 운영 절차\ntype: runbook\n---\n# 짧은 절차\n${longBody}\n`, "note", "", "2026-10-20");
+const swPages = w.loadPages(sw);
+const seen = new Set();
+const rdLong = w.readTargets(sw, swPages, ["긴 절차"], 1, 0, 5500, seen);
+check("읽기: 처음부터 끝까지 보여 준 페이지만 '읽음' 으로 (잘렸거나 offset 부터면 아님)",
+	rdLong.includes("offset=") && !seen.has("pages/runbook/긴 절차.md") && (w.readTargets(sw, swPages, ["짧은 절차"], 1, 0, 5500, seen), seen.has("pages/runbook/짧은 절차.md"))
+	&& (w.readTargets(sw, swPages, ["긴 절차"], 150, 0, 5500, seen), !seen.has("pages/runbook/긴 절차.md")), [...seen]);
+const shortRe = `=== pages/runbook/짧은 절차.md\n---\ntitle: 짧은 절차\nsummary: 짧은 운영 절차\ntype: runbook\n---\n# 짧은 절차\n${longBody.replace("30번째 사실", "서른째 사실")}\n`;
+r = w.applyWrite(sw, "읽기위키", shortRe, "note", "", "2026-10-21", new Set());
+check("쓰기: 읽지 않은 페이지를 통째로 다시 써서 한 줄이 빠지면 거절 (끝까지 읽지 않았다는 말과 고치기 안내)",
+	!r.written.length && r.errors[0].includes("1줄") && r.errors[0].includes("끝까지 읽지 않은") && r.errors[0].includes("=== 고치기"), r);
+r = w.applyWrite(sw, "읽기위키", shortRe, "note", "", "2026-10-21", seen);
+check("쓰기: 끝까지 읽은 페이지는 몇 줄 고친 다시 쓰기를 받음", r.written.length === 1 && read(join(sw, "pages/runbook/짧은 절차.md")).includes("서른째 사실"), r);
+const longCut = `=== pages/runbook/긴 절차.md\n---\ntitle: 긴 절차\nsummary: 긴 운영 절차\ntype: runbook\n---\n# 긴 절차\n${tail.split("\n").slice(0, 150).join("\n")}\n- 새 단계\n`;
+r = w.applyWrite(sw, "읽기위키", longCut, "note", "", "2026-10-21", seen);
+check("쓰기: 잘린 앞부분(75%)만으로 다시 써 꼬리가 빠지면 거절 (전에는 70% 기준이라 통과해 지워졌음)",
+	!r.written.length && r.errors[0].includes("50줄") && read(join(sw, "pages/runbook/긴 절차.md")).includes("꼬리 200"), r);
+
+// 코드 블록 안의 '=== ' 줄 (명령 출력 등)은 페이지의 글, 코드 블록 안이라도 페이지 경로 줄은 나눔
+const fenced = "=== pages/runbook/테스트.md\n---\ntitle: 테스트\n---\n```text\n=== RUN   TestA\n--- PASS: TestA\n```\n본문 끝\n=== pages/runbook/둘째.md\n---\ntitle: 둘째\n---\n```bash\n=== 열린 채\n=== 덧붙이기 pages/runbook/테스트.md\n- 더함\n";
+const fb = w.splitBundle(fenced);
+check("나누기: 코드 블록 안의 '=== RUN' 은 글, 닫지 않은 코드 블록이어도 '=== 덧붙이기 …' 줄에서 나눔",
+	fb.length === 3 && fb[0].content.includes("=== RUN   TestA") && fb[0].content.includes("본문 끝") && fb[1].path === "pages/runbook/둘째.md" && fb[1].content.includes("=== 열린 채")
+	&& fb[2].path === "덧붙이기 pages/runbook/테스트.md" && fb[2].content === "- 더함\n", fb);
+const fz = w.splitLessons("=== pages/a/B.md\n---\ntitle: B\n---\n~~~\n=== 제안 아님 출력\n~~~\n=== 작업 방식\n- 다음부터 한다\n");
+check("떼어 내기: 코드 블록 안의 '=== ' 줄은 페이지에 남고 작업 방식은 따로",
+	fz.pages.includes("=== 제안 아님 출력") && JSON.stringify(fz.lessons) === JSON.stringify(["다음부터 한다"]), fz);
+
+// 글자 인코딩: UTF-8(BOM), UTF-16(BOM), 한국어 Windows 의 ANSI(CP949)
+const cp949 = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x20, 0x41]); // "한글 A"
+const u16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("한글 A\n", "utf16le")]);
+const u16be = Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from("한글 A", "utf16le").swap16()]);
+const stray = Buffer.concat([Buffer.from("한글 문서입니다. 모델 운영 회의 내용", "utf8"), Buffer.from([0xff]), Buffer.from(" 끝", "utf8")]);
+check("인코딩: BOM 이 있는 UTF-8·UTF-16(LE·BE), CP949, 잘못된 바이트가 조금 섞인 UTF-8 은 UTF-8",
+	w.decodeText(Buffer.from("﻿한글", "utf8")).text === "한글" && w.decodeText(u16).text === "한글 A\n" && w.decodeText(u16).enc === "utf16le"
+	&& w.decodeText(u16be).text === "한글 A" && w.decodeText(cp949).text === "한글 A" && w.decodeText(cp949).enc === "cp949"
+	&& w.decodeText(stray).enc === "utf8" && w.decodeText(stray).text.includes("모델 운영"), [w.decodeText(cp949), w.decodeText(stray).enc]);
+writeFileSync(join(sw, "raw/엑셀 저장.txt"), Buffer.concat([Buffer.from([0xc8, 0xb8, 0xc0, 0xc7, 0xb7, 0xcf]), Buffer.from(" 10/21\r\n")])); // "회의록 10/21"
+writeFileSync(join(sw, "raw/메모장 유니코드.txt"), u16);
+const enc = w.readTargets(sw, w.loadPages(sw), ["raw/엑셀 저장.txt", "raw/메모장 유니코드.txt"]);
+check("읽기: CP949·UTF-16 원본도 한글 그대로, 인코딩을 알려 줌. UTF-16 은 0 바이트가 있어도 글",
+	enc.includes("=== raw/엑셀 저장.txt (CP949(ANSI) 파일)\n회의록 10/21") && enc.includes("=== raw/메모장 유니코드.txt (UTF-16 파일)\n한글 A")
+	&& w.rawKind(sw, "raw/메모장 유니코드.txt") === "text", enc);
+
+// 작업 방식 부분의 끝 표시를 지웠으면 고치지 않음 (어디까지가 pi 가 고치는 부분인지 모름)
+const half = "# 내 지침\n<!-- kit lessons -->\n## 작업 방식\n- 사람이 손본 줄\n\n## 내가 쓴 다른 규칙\n- 지우면 안 되는 줄\n";
+const hr = w.putLessons(half, ["다음부터 새 규칙"], "2026-10-21");
+check("작업 방식: 시작 표시만 있고 끝 표시가 없으면 고치지 않고 까닭을 알림", !hr.changed && hr.text === half && hr.error?.includes("<!-- /kit lessons -->") && !hr.added.length, hr);
+
 // 검색·읽기
 let pages = w.loadPages(root);
 let hits = w.search(pages, "GPU 메모리 사용률");

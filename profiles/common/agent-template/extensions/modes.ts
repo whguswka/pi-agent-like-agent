@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readTarget, shown, target } from "./lib/relay.ts";
+import { readTarget, shown, target, transformInput } from "./lib/relay.ts";
 import { base, parseShell, strip } from "./lib/shell.ts";
 
 export type Mode = "plan" | "ask" | "auto";
@@ -472,7 +472,7 @@ const userConfig = (): any => {
 	}
 };
 const textOf = (m: any) => (typeof m?.content === "string" ? m.content : (m?.content || []).filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n"));
-const READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const READ_TOOLS = new Set(["read", "grep", "find", "ls", "wiki_search", "wiki_read", "docs_lookup"]);
 
 export default function (pi: ExtensionAPI) {
 	let mode: Mode = (globalThis as any).__piMode; // 확장을 다시 불러와도(/kit share 등) 모드 유지
@@ -519,7 +519,7 @@ export default function (pi: ExtensionAPI) {
 		if (text.startsWith("/")) return;
 		if (event.source !== "extension" && steps.length && steps.every((s) => s.done)) clearSteps(ctx);
 		if (mode !== "plan" || !text.trim()) return;
-		return { action: "transform", text: `${PLAN_NOTE}\n\n${text}` };
+		return transformInput(text, `${PLAN_NOTE}\n\n${text}`);
 	});
 
 	pi.on("tool_call", async (event: any, ctx: any) => {

@@ -23,6 +23,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { rawInput } from "./lib/relay.ts";
 
 // ---------------------------------------------------------------------------
 // 설정
@@ -54,6 +55,33 @@ export const tilde = (p: string) => {
 	const s = slash(p);
 	return s === h || s.startsWith(`${h}/`) ? `~${s.slice(h.length)}` : s;
 };
+
+/** 글 파일의 인코딩: UTF-8 (앞의 BOM 은 뺌), BOM 이 있는 UTF-16, 그 밖은 한국어 Windows 의 ANSI(CP949).
+ *  메모장·엑셀이 ANSI·유니코드로 저장한 원본도 한글이 깨지지 않게. UTF-8 에 잘못된 바이트가 조금 섞인 것은 UTF-8 로 봄 */
+export type TextEnc = "utf8" | "utf16le" | "utf16be" | "cp949";
+export const ENC_LABEL: Record<TextEnc, string> = { utf8: "UTF-8", utf16le: "UTF-16", utf16be: "UTF-16", cp949: "CP949(ANSI)" };
+export function decodeText(buf: Buffer): { text: string; enc: TextEnc } {
+	if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return { text: buf.subarray(3).toString("utf8"), enc: "utf8" };
+	if (buf[0] === 0xff && buf[1] === 0xfe) return { text: buf.subarray(2).toString("utf16le"), enc: "utf16le" };
+	if (buf[0] === 0xfe && buf[1] === 0xff) {
+		const b = Buffer.from(buf.subarray(2, buf.length - (buf.length % 2)));
+		return { text: b.swap16().toString("utf16le"), enc: "utf16be" };
+	}
+	try {
+		return { text: new TextDecoder("utf-8", { fatal: true }).decode(buf), enc: "utf8" };
+	} catch {}
+	const loose = buf.toString("utf8");
+	const bad = (loose.match(/�/g) || []).length;
+	const wide = (loose.match(/[^\x00-\x7F]/g) || []).length;
+	if (bad * 10 < wide) return { text: loose, enc: "utf8" };
+	try {
+		return { text: new TextDecoder("euc-kr").decode(buf), enc: "cp949" }; // WHATWG 의 euc-kr 은 CP949 (Node 의 ICU 가 있어야 함)
+	} catch {
+		return { text: loose, enc: "utf8" };
+	}
+}
+export const readText = (p: string) => decodeText(readFileSync(p)).text;
+
 /** 중계 서버(Copilot·사내AI)로 쓰는 설정인지 (models.json 에 127.0.0.1:8765·8766). 그때만 wiki_write 설명에 중계 서버의 '@tool' 글 형식을 적는다
  *  (API 로 바로 쓰는 모델은 보통의 도구 호출을 쓴다. 그 형식을 보면 도구를 부르지 않고 글로만 쓸 수 있음) */
 export function isBridge(file = join(agentDir(), "models.json")): boolean {
@@ -190,7 +218,7 @@ export function loadPages(root: string): Page[] {
 		.map((rel) => {
 			let text = "";
 			try {
-				text = readFileSync(join(root, rel), "utf8");
+				text = readText(join(root, rel));
 			} catch {}
 			const { meta, body, ok } = parseFrontmatter(text);
 			return {
@@ -355,7 +383,8 @@ export function resolveTarget(root: string, pages: Page[], target: string): stri
 	return raw || null;
 }
 
-export function readTargets(root: string, pages: Page[], targets: string[], offset = 1, limit = 0, budget = 5500): string {
+/** 위키 파일 읽기 (합쳐 budget 자까지). seen 을 주면 처음부터 끝까지 다 보여 준 파일을 더함 (통째로 다시 쓰기 검사: applyWrite) */
+export function readTargets(root: string, pages: Page[], targets: string[], offset = 1, limit = 0, budget = 5500, seen?: Set<string>): string {
 	const out: string[] = [];
 	const per = Math.max(800, Math.floor(budget / Math.max(1, targets.length)));
 	for (const target of targets) {
@@ -365,8 +394,11 @@ export function readTargets(root: string, pages: Page[], targets: string[], offs
 			continue;
 		}
 		let lines: string[];
+		let enc: TextEnc;
 		try {
-			lines = readFileSync(join(root, rel), "utf8").split(/\r?\n/);
+			const d = decodeText(readFileSync(join(root, rel)));
+			lines = d.text.split(/\r?\n/);
+			enc = d.enc;
 		} catch (e) {
 			out.push(`=== ${rel}\n(읽지 못함: ${(e as Error).message})`);
 			continue;
@@ -380,7 +412,9 @@ export function readTargets(root: string, pages: Page[], targets: string[], offs
 			text += `${lines[i]}\n`;
 		}
 		const more = i < lines.length ? `\n(… ${lines.length - i}줄 더: wiki_read path="${rel}" offset=${i + 1})` : "";
-		out.push(`=== ${rel}${start > 1 ? ` (${start}줄부터)` : ""}\n${text.replace(/\n$/, "")}${more}`);
+		if (!more && start === 1) seen?.add(rel);
+		const notes = [start > 1 ? `${start}줄부터` : "", enc !== "utf8" ? `${ENC_LABEL[enc]} 파일` : ""].filter(Boolean).join(", ");
+		out.push(`=== ${rel}${notes ? ` (${notes})` : ""}\n${text.replace(/\n$/, "")}${more}`);
 	}
 	return out.join("\n\n");
 }
@@ -404,7 +438,8 @@ export function pathOrder(a: string, b: string): number {
 export const rawFilesOf = (root: string) => listFiles(root, "raw").filter((r) => !r.startsWith("raw/assets/"));
 
 const BINARY = /\.(pdf|docx?|xlsx?|xlsm|pptx?|hwpx?|od[tsp]|rtf|zip|7z|rar|gz|tgz|bz2|xz|tar|jar|png|jpe?g|gif|bmp|tiff?|webp|svg|ico|heic|mp3|wav|m4a|mp4|mov|avi|mkv|exe|dll|so|bin|class|pyc|parquet|feather|orc|avro|pkl|pickle|joblib|npy|npz|h5|hdf5|onnx|pt|pth|ckpt|safetensors|db|sqlite3?)$/i;
-/** 원본이 글(텍스트)인지: 문서·그림·압축 파일은 이름으로, 그 밖은 앞부분에 0 바이트가 있으면 글이 아님. maxBytes 를 넘으면 big */
+/** 원본이 글(텍스트)인지: 문서·그림·압축 파일은 이름으로, 그 밖은 앞부분에 0 바이트가 있으면 글이 아님 (BOM 이 있는 UTF-16 은 글).
+ *  maxBytes 를 넘으면 big */
 export function rawKind(root: string, rel: string, maxBytes = 0): "text" | "binary" | "big" {
 	if (BINARY.test(rel)) return "binary";
 	let fd = -1;
@@ -414,6 +449,7 @@ export function rawKind(root: string, rel: string, maxBytes = 0): "text" | "bina
 		fd = openSync(p, "r");
 		const buf = Buffer.alloc(4096);
 		const n = readSync(fd, buf, 0, buf.length, 0);
+		if (n >= 2 && ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff))) return "text";
 		return buf.subarray(0, n).includes(0) ? "binary" : "text";
 	} catch {
 		return "binary";
@@ -504,6 +540,7 @@ export function sourceTitle(rel: string, rawFiles: string[], pages: Page[]): str
 
 export const INGEST_LIMIT = 10; // 폴더째 반영: 한 번에 반영하는 원본 수 (Copilot·사내AI 는 원본 하나에 4~12번 오감)
 export const INGEST_MAX_BYTES = 200_000; // 폴더째 반영에서 빼는 큰 원본 (하나씩은 반영할 수 있음)
+export const BIG_INGEST_CHARS = 30_000; // 하나씩 반영할 때 Copilot·사내AI 면 미리 묻는 크기 (wiki_read 로 6번 넘게 읽음)
 export interface IngestPlan {
 	items: string[]; // 이번에 반영할 원본 (차례대로)
 	later: string[]; // 한 번에 하는 수를 넘어 다음에
@@ -546,6 +583,29 @@ export function ingestPrompt(name: string, rel: string, title: string, batch?: {
 // 쓰기 (pages/ 아래만, 여러 페이지를 한 번에) + 목록·기록 자동
 // ---------------------------------------------------------------------------
 
+const SEP = /^===\s+(\S.*?)\s*$/;
+const FENCE_LINE = /^\s*(`{3,}|~{3,})(.*)$/;
+/** 코드 블록 안에서도 나누는 줄로 보는 머리: 페이지 경로, 쓰는 방법(덧붙이기 등), 작업 방식, 제안 */
+const strongHead = (h: string) => /^pages\//i.test(slash(h)) || parseHead(h).how !== "page" || LESSON_SECTION.test(h) || PROPOSAL_SECTION.test(h);
+/** 줄마다: 나누는 줄('=== <머리>')이면 그 머리, 아니면 null. 코드 블록(``` ~~~) 안의 '=== RUN TestA' 같은 명령 출력은 페이지의 글로 둔다
+ *  (코드 블록 안에서는 strongHead 만 나누는 줄. 그래서 코드 블록을 닫지 않았어도 다음 페이지 줄에서는 나뉨) */
+export function sepHeads(lines: string[]): (string | null)[] {
+	let fence = "";
+	return lines.map((line) => {
+		const m = SEP.exec(line);
+		if (m && (!fence || strongHead(m[1]))) {
+			fence = "";
+			return m[1];
+		}
+		const f = FENCE_LINE.exec(line);
+		if (f) {
+			if (!fence) fence = f[1];
+			else if (f[1][0] === fence[0] && f[1].length >= fence.length && !f[2].trim()) fence = "";
+		}
+		return null;
+	});
+}
+
 /** '=== pages/<분류>/<제목>.md' 줄로 나눈 페이지들 */
 export function splitBundle(text: string): { path: string; content: string }[] {
 	const out: { path: string; content: string }[] = [];
@@ -553,11 +613,13 @@ export function splitBundle(text: string): { path: string; content: string }[] {
 	const flush = () => {
 		if (cur) out.push({ path: cur.path, content: `${cur.lines.join("\n").replace(/^\n+/, "").replace(/\s+$/, "")}\n` });
 	};
-	for (const line of text.replace(/\r\n/g, "\n").split("\n")) {
-		const m = /^===\s+(\S.*?)\s*$/.exec(line);
-		if (m) {
+	const lines = text.replace(/\r\n/g, "\n").split("\n");
+	const heads = sepHeads(lines);
+	for (const [i, line] of lines.entries()) {
+		const h = heads[i];
+		if (h !== null) {
 			flush();
-			cur = { path: m[1], lines: [] };
+			cur = { path: h, lines: [] };
 		} else if (cur) cur.lines.push(line);
 	}
 	flush();
@@ -767,8 +829,9 @@ export function editPage(text: string, edits: string): { text: string; error?: s
 
 export const KEEP_MIN_CHARS = 300; // 본문이 이보다 짧은 페이지는 통째로 다시 써도 막지 않음
 /** 통째로 다시 쓴 페이지에서 빠지는 원래 내용: 원래 본문의 줄 가운데 새 본문에 없는 줄 (목록 표시·띄어쓰기는 무시).
- *  원래의 30% 넘게 빠지고 본문이 70% 아래로 짧아지면 그 줄들, 아니면 [] (말을 다듬거나 몇 곳 고친 것은 막지 않음) */
-export function lostLines(oldText: string, newText: string): string[] {
+ *  원래의 30% 넘게 빠지고 본문이 70% 아래로 짧아지면 그 줄들, 아니면 [] (말을 다듬거나 몇 곳 고친 것은 막지 않음).
+ *  strict 면 한 줄이라도 빠지면 그 줄들 (이번 세션에서 끝까지 읽지 않은 페이지: 읽은 부분만으로 다시 쓰면 나머지가 지워짐) */
+export function lostLines(oldText: string, newText: string, strict = false): string[] {
 	const norm = (l: string) => l.replace(/^\s*(?:[-*+]|\d+[.)]|#{1,6}|>)\s+/, "").replace(/\s+/g, " ").trim();
 	const linesOf = (t: string) =>
 		parseFrontmatter(t)
@@ -781,7 +844,9 @@ export function lostLines(oldText: string, newText: string): string[] {
 	const all = news.join("\n");
 	const lost = olds.filter((l) => !all.includes(l));
 	const before = size(olds);
-	return before >= KEEP_MIN_CHARS && size(news) < before * 0.7 && size(lost) > before * 0.3 ? lost : [];
+	if (before < KEEP_MIN_CHARS) return [];
+	if (strict) return lost;
+	return size(news) < before * 0.7 && size(lost) > before * 0.3 ? lost : [];
 }
 
 /** 쓴 방법: 새 페이지, 통째로 다시 씀, 덧붙임, 고침 */
@@ -820,8 +885,9 @@ function backup(root: string, rel: string, date: string) {
 
 /** 페이지들을 쓰고 목록을 다시 만들고 기록을 남긴다 (부르는 쪽에서 한 번에 하나씩: 동시에 쓰면 목록·기록이 섞임).
  *  '=== pages/...' 는 페이지 전체, '=== 덧붙이기 <페이지> [## 절]' 은 끝에 더하기, '=== 고치기 <페이지>' 는 찾아 바꾸기,
- *  '=== 다시쓰기 pages/...' 는 원래 내용이 많이 빠져도 쓰는 페이지 전체 (나누기·정리) */
-export function applyWrite(root: string, name: string, text: string, op = "note", title = "", date = today()): WriteResult {
+ *  '=== 다시쓰기 pages/...' 는 원래 내용이 많이 빠져도 쓰는 페이지 전체 (나누기·정리).
+ *  seen: 이번 세션에서 wiki_read 로 끝까지 읽은 페이지. 그 밖의 있는 페이지를 통째로 다시 쓰면 원래 줄이 하나라도 빠질 때 거절 (lostLines strict) */
+export function applyWrite(root: string, name: string, text: string, op = "note", title = "", date = today(), seen?: Set<string>): WriteResult {
 	const res: WriteResult = { written: [], names: [], kinds: [], errors: [], warnings: [] };
 	const items = splitBundle(text);
 	if (!items.length) {
@@ -845,7 +911,7 @@ export function applyWrite(root: string, name: string, text: string, op = "note"
 			}
 			let old = "";
 			try {
-				old = readFileSync(join(root, p.rel), "utf8");
+				old = readText(join(root, p.rel));
 			} catch (e) {
 				res.errors.push(`${p.rel}: 읽지 못했습니다 (${(e as Error).message})`);
 				continue;
@@ -896,12 +962,14 @@ export function applyWrite(root: string, name: string, text: string, op = "note"
 		if (existed && head.how === "page") {
 			let old = "";
 			try {
-				old = readFileSync(join(root, rel), "utf8");
+				old = readText(join(root, rel));
 			} catch {}
-			const lost = lostLines(old, it.content);
+			const unread = !seen?.has(rel);
+			const lost = lostLines(old, it.content, unread);
 			if (lost.length) {
 				res.errors.push(
-					`${rel}: 통째로 다시 쓴 글에 원래 내용 ${lost.length}줄(약 ${lost.reduce((s, l) => s + l.length, 0)}자)이 없어 쓰지 않았습니다 (예: "${brief(lost[0], 50)}"). ` +
+					`${rel}: 통째로 다시 쓴 글에 원래 내용 ${lost.length}줄(약 ${lost.reduce((s, l) => s + l.length, 0)}자)이 없어 쓰지 않았습니다 (예: "${brief(lost[0], 50)}"` +
+						`${unread ? ". 이번에 끝까지 읽지 않은 페이지라 한 줄이라도 빠지면 쓰지 않음" : ""}). ` +
 						`더할 것은 '=== 덧붙이기 ${rel}' 다음에 더할 글만, 바꿀 곳은 '=== 고치기 ${rel}' 로 쓰세요. 나누거나 정리해서 일부러 줄이는 것이면 '=== 다시쓰기 ${rel}'`,
 				);
 				continue;
@@ -910,6 +978,7 @@ export function applyWrite(root: string, name: string, text: string, op = "note"
 		backup(root, rel, date);
 		mkdirSync(dirname(join(root, rel)), { recursive: true });
 		writeFileSync(join(root, rel), stampUpdated(quoteMeta(it.content), date));
+		seen?.add(rel); // 통째로 쓴 페이지는 모델이 전체를 앎
 		done(rel, existed ? "page" : "new");
 	}
 	if (!res.written.length) return res;
@@ -1159,6 +1228,7 @@ export interface LessonResult {
 	skipped: string[]; // 한 번에 받는 수를 넘음
 	full: boolean; // 한도 때문에 뺀 줄이 있음
 	changed: boolean;
+	error?: string; // 고치지 않은 까닭
 }
 
 /** 지침 글의 '작업 방식' 부분에 줄 더하기 (없으면 끝에 만듦). 같은 줄은 횟수·날짜만, 한도를 넘으면 날짜 표시가 있는 줄 가운데 덜 쓰이고 오래된 것부터 뺌 */
@@ -1167,6 +1237,8 @@ export function putLessons(agents: string, items: string[], date: string, maxLin
 	const res: LessonResult = { text: agents, added: [], bumped: [], dropped: [], rejected: [], skipped: items.slice(LESSON_PER_WRITE), full: false, changed: false };
 	const a = agents.indexOf(LESSON_START);
 	const b = a < 0 ? -1 : agents.indexOf(LESSON_END, a);
+	// 끝 표시를 지웠으면 어디까지가 pi 가 고치는 부분인지 몰라 고치지 않음 (짐작해 고치면 사람이 쓴 내용을 지울 수 있음)
+	if (a >= 0 && b < 0) return { ...res, skipped: [], error: `내 지침 파일(AGENTS.md)에 '${LESSON_START}' 는 있는데 '${LESSON_END}' 가 없어 고치지 않았습니다. 두 줄을 짝으로 두거나 둘 다 지워 주세요` };
 	const inner = a >= 0 && b > a ? agents.slice(a + LESSON_START.length, b).split(/\r?\n/) : [];
 	let list: Lesson[] = inner
 		.filter((l) => l.trim() && !/^#{1,6}\s/.test(l.trim()))
@@ -1370,9 +1442,18 @@ export default function (pi: ExtensionAPI) {
 		chain = run.catch(() => undefined);
 		return run;
 	};
-	let lastPrompt = "";
+	let lastPrompt = ""; // 사용자가 입력한 그대로 (/wiki save 의 질문. 다른 확장이 앞에 붙인 글은 빼고)
 	let lastAnswer = "";
 	let shown = false;
+	/** 이번 세션에서 wiki_read 로 끝까지 읽은 페이지 (위키 폴더마다. 통째로 다시 쓰기 검사) */
+	const seenBy = new Map<string, Set<string>>();
+	const seenOf = (root: string) => {
+		let s = seenBy.get(root);
+		if (!s) seenBy.set(root, (s = new Set()));
+		return s;
+	};
+	/** 요청 하나의 끝(agent_end)마다 덮어쓰는 끝난 모습: 오류 뒤 자동으로 다시 하는 것이 있어 다 끝난 뒤(agent_settled)에 봄 */
+	let lastEnd = "";
 	/** 폴더째 반영: 원본 하나를 요청 하나로, 앞 요청이 끝나면(agent_settled) 다음을 보냄 */
 	let batch: null | {
 		name: string;
@@ -1406,22 +1487,33 @@ export default function (pi: ExtensionAPI) {
 			if (next.length !== cur.length) pi.setActiveTools(next);
 		} catch {}
 	};
+	// 끝난 세션(/new·/resume·/reload 뒤)의 ctx 를 쓰면 오류가 나고, 타이머 안의 오류는 pi 를 멈추게 하므로 화면 고치기·알림은 오류를 내보내지 않음
 	const status = (ctx: any) => {
-		const { name, root } = current();
-		const prog = batch ? ` · 반영 ${batch.i + 1}/${batch.items.length}` : "";
-		if (ctx?.hasUI) ctx.ui.setStatus?.("wiki", root ? ctx.ui.theme.fg("accent", `위키: ${name}${prog}`) : undefined);
+		try {
+			const { name, root } = current();
+			const prog = batch ? ` · 반영 ${batch.i + 1}/${batch.items.length}` : "";
+			if (ctx?.hasUI) ctx.ui.setStatus?.("wiki", root ? ctx.ui.theme.fg("accent", `위키: ${name}${prog}`) : undefined);
+		} catch {}
 	};
 	const show = (ctx: any, text: string | undefined) => {
-		if (!ctx?.hasUI) return;
-		ctx.ui.setWidget("pi-wiki", text ? [text] : undefined);
-		shown = !!text;
-	};
-	const send = (text: string) => {
 		try {
-			pi.sendUserMessage(text);
-		} catch {
-			pi.sendUserMessage(text, { deliverAs: "followUp" });
-		}
+			if (!ctx?.hasUI) return;
+			ctx.ui.setWidget("pi-wiki", text ? [text] : undefined);
+			shown = !!text;
+		} catch {}
+	};
+	const say = (ctx: any, text: string, level = "info") => {
+		try {
+			ctx.ui.notify(text, level);
+		} catch {}
+	};
+	/** 요청 보내기. 다른 요청을 하는 중이면 그것이 끝난 뒤에 (그냥 보내면 pi 가 '이미 처리 중' 오류만 알림) */
+	const send = (ctx: any, text: string) => {
+		let busy = false;
+		try {
+			busy = typeof ctx?.isIdle === "function" && !ctx.isIdle();
+		} catch {}
+		pi.sendUserMessage(text, busy ? { deliverAs: "followUp" } : undefined);
 	};
 	const result = (text: string) => ({ content: [{ type: "text" as const, text }], details: undefined });
 	/** 대화창에 '[위키]' 항목을 남김 (pi 화면). 다른 실행 방식(RPC 등)에서는 notice 일 때만 알림으로 */
@@ -1517,9 +1609,10 @@ export default function (pi: ExtensionAPI) {
 		const title = sourceTitle(rel, rawFilesOf(batch.root), loadPages(batch.root));
 		batch.prompt = ingestPrompt(batch.name, rel, title, { i: batch.i + 1, n: batch.items.length });
 		batch.sent = true;
+		lastEnd = "";
 		status(ctx);
 		try {
-			send(batch.prompt);
+			send(ctx, batch.prompt);
 		} catch {
 			finish(ctx, "error"); // 보내지 못하면 '반영 중' 으로 남지 않게
 		}
@@ -1528,7 +1621,11 @@ export default function (pi: ExtensionAPI) {
 		const b = batch;
 		batch = null;
 		status(ctx);
-		if (!b || !ctx?.hasUI) return;
+		let ui = false;
+		try {
+			ui = !!ctx?.hasUI;
+		} catch {}
+		if (!b || !ui) return;
 		const rest = b.items.length - b.ok.length + b.later; // 반영 안 된 것도 같은 명령을 다시 치면 다시 함
 		const again = `/wiki ingest ${b.dir === "raw" ? "raw" : b.dir.slice(4)}`;
 		const missed = b.missed.length ? `, 반영 안 됨 ${b.missed.length}개 (${few(b.missed, 3)})` : "";
@@ -1539,13 +1636,14 @@ export default function (pi: ExtensionAPI) {
 			unfinished: "답이 끝나지 않음",
 			user: "다른 요청이 들어옴",
 		};
-		if (why === "done") return ctx.ui.notify(`위키 반영을 마쳤습니다: ${b.ok.length}개 반영${missed}.${cont}`, b.missed.length ? "warning" : "info");
+		if (why === "done") return say(ctx, `위키 반영을 마쳤습니다: ${b.ok.length}개 반영${missed}.${cont}`, b.missed.length ? "warning" : "info");
 		if (why === "miss")
-			return ctx.ui.notify(
+			return say(
+				ctx,
 				`원본 2개가 연달아 위키에 반영되지 않아 멈췄습니다 (${few(b.missed.slice(-2))}). 모델의 답을 보고 고친 뒤 ${again} (계획 모드면 /plan 으로 끈 뒤). 반영 ${b.ok.length}개.${cont}`,
 				"warning",
 			);
-		ctx.ui.notify(`위키 반영을 멈췄습니다 (${reason[why] || why}): ${b.ok.length}개 반영${missed}.${cont}`, "warning");
+		say(ctx, `위키 반영을 멈췄습니다 (${reason[why] || why}): ${b.ok.length}개 반영${missed}.${cont}`, "warning");
 	};
 	/** 요청 하나가 끝난 뒤: 그 원본이 반영됐는지 보고 다음 원본을 보내거나 끝냄 */
 	const step = (ctx: any) => {
@@ -1603,7 +1701,7 @@ export default function (pi: ExtensionAPI) {
 			const targets = [...(Array.isArray(params.paths) ? params.paths : []), ...(params.path ? [params.path] : [])].map(String);
 			if (!targets.length) throw new Error("path 또는 paths 를 주세요 (예: index.md)");
 			const one = targets.length === 1;
-			return result(readTargets(root, loadPages(root), targets, one ? Number(params.offset) || 1 : 1, one ? Number(params.limit) || 0 : 0));
+			return result(readTargets(root, loadPages(root), targets, one ? Number(params.offset) || 1 : 1, one ? Number(params.limit) || 0 : 0, 5500, seenOf(root)));
 		},
 	});
 
@@ -1630,10 +1728,10 @@ export default function (pi: ExtensionAPI) {
 			const op = String(params.op || "note");
 			const sp = splitLessons(String(params.text || ""));
 			const extra = sp.lessons.length + sp.proposals.length > 0;
-			const pagesGiven = /^===\s+\S/m.test(sp.pages);
+			const pagesGiven = splitBundle(sp.pages).length > 0;
 			const r: WriteResult =
 				pagesGiven || !extra
-					? await locked(() => applyWrite(root, name, sp.pages, op, String(params.title || "")))
+					? await locked(() => applyWrite(root, name, sp.pages, op, String(params.title || ""), today(), seenOf(root)))
 					: { written: [], names: [], kinds: [], errors: [], warnings: [] };
 			const learned = await locked(() => learn(cfg, name, op, sp.lessons, sp.proposals));
 			const lines = [
@@ -1661,6 +1759,9 @@ export default function (pi: ExtensionAPI) {
 			const arg = rest.join(" ").trim();
 			const cfg = readConfig();
 			const notify = (m: string, level = "info") => ctx.ui.notify(m, level);
+			// 폴더째 반영 중에 켜진 위키를 바꾸면 남은 원본이 다른 위키에 쓰이므로 막음
+			if (batch && (sub === "init" || sub === "use" || sub === "off"))
+				return notify(`폴더째 반영 중입니다 (${batch.i + 1}/${batch.items.length}). 끝난 뒤에 하거나 Esc 로 멈춘 뒤 다시 입력해 주세요`, "warning");
 			if (sub === "init") {
 				const name = rest[0] || "모델운영";
 				const root = wikiDir(rest.slice(1).join(" ")) || cfg.wikis[name] || defaultDir(name);
@@ -1724,6 +1825,7 @@ export default function (pi: ExtensionAPI) {
 			if (sub === "ingest") {
 				if (!arg) return notify("/wiki ingest <raw/ 안의 파일·폴더> (예: /wiki ingest 회의록.md, /wiki ingest 회의록). raw/ 전체는 /wiki ingest raw", "warning");
 				if (batch) return notify(`폴더째 반영 중입니다 (${batch.i + 1}/${batch.items.length}). 멈추려면 Esc`, "warning");
+				if ((globalThis as any).__piMode === "plan") return notify("계획 모드에서는 위키에 쓰지 못합니다 (wiki_write 가 막힘). /plan 으로 끈 뒤 다시 입력해 주세요", "warning");
 				const t = rawTarget(c.root, arg);
 				if (t.many)
 					return notify(`'${arg}' 에 맞는 원본이 여러 개입니다. 경로를 적어 주세요: ${t.many.slice(0, 6).map((r) => r.slice(4)).join(", ")}${t.many.length > 6 ? ` 외 ${t.many.length - 6}개` : ""}`, "warning");
@@ -1731,7 +1833,22 @@ export default function (pi: ExtensionAPI) {
 				const pages = loadPages(c.root);
 				if (!t.dir) {
 					if (rawKind(c.root, t.rel) === "binary") return notify(`${t.rel} 은 글(텍스트)이 아니라 반영하지 못합니다. 문서는 텍스트(.md·.txt)로 바꿔 raw/ 에 넣으세요`, "warning");
-					return send(ingestPrompt(c.name, t.rel, sourceTitle(t.rel, rawFilesOf(c.root), pages)));
+					// Copilot·사내AI 는 wiki_read 한 번에 5500자라 큰 원본은 읽는 데만 여러 번 오감 (사내AI 는 하루 질문 수에 들어감): 미리 묻기
+					if (ctx.hasUI && isBridge()) {
+						let chars = 0;
+						try {
+							chars = readText(join(c.root, t.rel)).length;
+						} catch {}
+						const reads = Math.ceil(chars / 5500);
+						if (chars > BIG_INGEST_CHARS) {
+							const ok = await ctx.ui.confirm(
+								`${t.rel} 은 약 ${Math.round(chars / 1000)}천 자입니다. 반영할까요?`,
+								`Copilot·사내AI 는 wiki_read 한 번에 5500자까지라 읽는 데만 약 ${reads}번, 쓰기까지 ${reads + 3}~${reads + 8}번쯤 오갑니다 (사내AI 는 하루 질문 수에 들어감).\n장·주제마다 파일을 나누어 raw/ 의 한 폴더에 넣으면 폴더째 반영(/wiki ingest <폴더>)으로 하나씩 반영하고, 멈춰도 남은 것부터 이어 갑니다.`,
+							);
+							if (!ok) return notify("위키 반영을 하지 않았습니다", "info");
+						}
+					}
+					return send(ctx, ingestPrompt(c.name, t.rel, sourceTitle(t.rel, rawFilesOf(c.root), pages)));
 				}
 				// 폴더째: 원본 하나를 요청 하나로 차례로 (한 요청에 몰면 대화가 길어지고, 끊기면 어디까지 했는지 알기 어려움)
 				if (!ctx.hasUI) return notify("폴더째 반영은 pi 화면에서 합니다 (물어볼 수 없는 실행 방식)", "warning");
@@ -1754,7 +1871,8 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (sub === "ask") {
 				if (!arg) return notify("/wiki ask <질문>", "warning");
-				return send(`'${c.name}' 위키를 근거로 답해 줘. 먼저 wiki_search 로 찾고 wiki_read 로 읽은 뒤, 답 끝에 근거 페이지를 [[제목]] 으로 밝혀 줘. 위키에 없으면 없다고 말해 줘.\n\n질문: ${arg}`);
+				lastPrompt = arg; // /wiki save 의 질문
+				return send(ctx, `'${c.name}' 위키를 근거로 답해 줘. 먼저 wiki_search 로 찾고 wiki_read 로 읽은 뒤, 답 끝에 근거 페이지를 [[제목]] 으로 밝혀 줘. 위키에 없으면 없다고 말해 줘.\n\n질문: ${arg}`);
 			}
 			if (sub === "save") {
 				if (!lastAnswer.trim()) return notify("저장할 답이 없습니다 (pi 의 답이 나온 뒤에 /wiki save)", "warning");
@@ -1797,22 +1915,31 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event: unknown, ctx: any) => {
 		batch = null; // 새 세션에서는 폴더째 반영을 이어 가지 않음 (같은 명령으로 남은 것부터)
+		seenBy.clear();
 		applyTools(!!current().root);
 		status(ctx);
 	});
-
-	// 폴더째 반영 중에 사용자가 직접 요청하면 지금 원본까지만 하고 멈춤 (/ 로 시작하는 명령은 그대로)
-	pi.on("input", async (event: any) => {
-		if (batch && event.source !== "extension" && !String(event.text || "").trim().startsWith("/")) batch.stop ||= "user";
+	// 세션이 끝나면(/new·/resume·/reload·끝내기) 폴더째 반영도 끝: 그 세션의 ctx 로 다음 원본을 보내지 않게
+	pi.on("session_shutdown", async () => {
+		batch = null;
 	});
 
-	// 요청이 제대로 끝났는지: 마지막이 끝까지 쓴 답이어야 함 (Esc·오류·도구 실행 중에 끊김이면 멈춤)
+	pi.on("input", async (event: any) => {
+		const text = rawInput(String(event.text || ""));
+		if (event.source === "extension" || text.trim().startsWith("/")) return;
+		if (text.trim()) lastPrompt = text;
+		// 폴더째 반영 중에 사용자가 직접 요청하면 지금 원본까지만 하고 멈춤 (/ 로 시작하는 명령은 그대로)
+		if (batch) batch.stop ||= "user";
+	});
+
+	// 요청이 제대로 끝났는지: 마지막이 끝까지 쓴 답이어야 함 (Esc·오류·도구 실행 중에 끊김이면 멈춤).
+	// 오류 뒤에는 pi 가 알아서 다시 할 수 있어 끝날 때마다 덮어쓰고, 다 끝난 뒤(agent_settled)에 정함
 	pi.on("agent_end", async (event: any) => {
 		if (!batch) return;
 		const msgs: any[] = event.messages || [];
 		const last = msgs[msgs.length - 1];
-		if (!(last?.role === "assistant" && last.stopReason === "stop"))
-			batch.stop ||= last?.stopReason === "aborted" ? "abort" : last?.stopReason === "error" ? "error" : "unfinished";
+		lastEnd =
+			last?.role === "assistant" && last.stopReason === "stop" ? "" : last?.stopReason === "aborted" ? "abort" : last?.stopReason === "error" ? "error" : "unfinished";
 		const asked = batch.prompt;
 		if (msgs.some((m) => m?.role === "user" && textOf(m).trim() && !textOf(m).includes(asked))) batch.stop ||= "user";
 	});
@@ -1820,11 +1947,19 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_settled", async (_event: unknown, ctx: any) => {
 		if (!batch?.sent) return;
 		batch.sent = false;
-		setTimeout(() => step(ctx), 0); // 다른 확장의 '끝남' 처리가 늦어지지 않게 따로
+		if (lastEnd) batch.stop ||= lastEnd;
+		lastEnd = "";
+		// 다른 확장의 '끝남' 처리가 늦어지지 않게 따로. 타이머 안의 오류는 pi 를 멈추게 하므로 내보내지 않음
+		setTimeout(() => {
+			try {
+				step(ctx);
+			} catch {
+				batch = null;
+			}
+		}, 0);
 	});
 
 	pi.on("before_agent_start", async (event: any) => {
-		lastPrompt = String(event.prompt || "");
 		const { cfg, name, root } = current();
 		if (!root) return;
 		const g = event.systemPromptOptions?.promptGuidelines;

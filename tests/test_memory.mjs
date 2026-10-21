@@ -25,6 +25,10 @@ s = addMemory("## 기억할 것\n### 세부\n- A\n", "B");
 check("### 세부 제목은 같은 부분으로 봄", s === "## 기억할 것\n### 세부\n- A\n- B\n", s);
 s = addMemory("규칙\n\n\n", "B");
 check("끝의 빈 줄은 정리", s === "규칙\n\n## 기억할 것\n- B\n", s);
+s = addMemory("## 기억할 것\n- A\n<!-- kit lessons -->\n## 작업 방식\n- x (2026-10-20)\n<!-- /kit lessons -->\n", "B");
+check("키트가 고치는 부분(<!-- kit ... -->) 안에는 넣지 않음 (그 앞에)", s === "## 기억할 것\n- A\n- B\n<!-- kit lessons -->\n## 작업 방식\n- x (2026-10-20)\n<!-- /kit lessons -->\n", s);
+s = addMemory("## 기억할 것\n- A\n\n<!-- kit env: pc -->\n## 실행 환경: PC\n<!-- /kit env: pc -->\n", "B");
+check("실행 환경 부분(<!-- kit env -->) 앞, 빈 줄 앞에", s === "## 기억할 것\n- A\n- B\n\n<!-- kit env: pc -->\n## 실행 환경: PC\n<!-- /kit env: pc -->\n", s);
 
 console.log(fails ? `\n실패 ${fails}개` : "\n모두 통과");
 process.exit(fails ? 1 : 0);
