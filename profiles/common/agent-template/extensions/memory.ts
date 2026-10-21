@@ -10,15 +10,16 @@
  *    (/reload 로 다시 읽으면 Copilot 새 대화가 열려 느리므로 쓰지 않는다)
  *  - 지우거나 고치려면 그 파일을 직접 고친다
  *
- * 2) 작업 기록 (/recall, /handoff): 세션을 새로 시작해도 이 프로젝트에서 하던 일을 이어 가게
+ * 2) 작업 기록 (/recall): 세션을 새로 시작해도 이 프로젝트에서 하던 일을 이어 가게
  *  - 요청이 끝날 때마다 질문 없이 남긴다: 사용자가 친 요청, 바꾼 파일, 돌린 명령, 위키에 쓴 페이지, 답의 앞부분.
  *    확장이 보낸 요청은 사용자를 대신한 것(/plan <요청>, 계획대로 진행, /wiki ask)만 (폴더째 반영·/watch 의 로그는 남기지 않음)
  *  - 같은 프로젝트(작업 폴더. jupyter 모드면 노트북 작업 폴더)에서 세션을 시작하면 지난 기록을 지침의 <recent_work> 부분으로 알린다.
  *    세션 안에서는 첫 요청 때 정한 같은 글 (지침이 바뀌면 Copilot·사내AI 는 새 대화를 열므로)
- *  - /handoff: 다음 세션에 넘길 요약을 모델에게 부탁해(질문 1번) 기록에 넣는다. /new·/resume 때 이 세션의 요청이 3개 이상이면 물어본다
+ *  - /recall save: 다음 세션에 넘길 요약을 모델에게 부탁해(질문 1번) 기록에 넣는다. /new·/resume 때 이 세션의 요청이 3개 이상이면 물어본다.
+ *    기본 명령 /handoff(작업 폴더의 NOTES.md 에 정리)는 그대로이고, 그 파일이 있으면 새 세션에 있다고 알린다
  *  - 기록은 PC 의 ~/.pi/agent/work-log/<프로젝트>.jsonl (프로젝트마다 최근 200개).
  *    이메일·전화번호·카드·계좌번호 모양 번호는 '…' 로 빼고, 비밀로 보이는 글은 남기지 않는다
- *  - /recall (보기) · /recall off·on (끄기·켜기) · /recall clear (이 프로젝트 기록 지우기)
+ *  - /recall (보기) · /recall save (요약 남기기) · /recall off·on (끄기·켜기) · /recall clear (이 프로젝트 기록 지우기)
  */
 
 import { createHash } from "node:crypto";
@@ -28,6 +29,7 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	rawInput,
+	readHead,
 	readTarget,
 	scrubText,
 	shown,
@@ -88,7 +90,7 @@ export type WorkRec = {
 	wiki?: string[]; // 위키에 쓴 페이지
 	ans?: string; // 답의 앞부분
 	end?: string; // 끝까지 답하지 못했으면 aborted·error 등
-	handoff?: string; // /handoff 로 남긴 요약
+	handoff?: string; // /recall save 로 남긴 요약
 };
 export const LOG_KEEP = 200; // 프로젝트마다 남기는 기록 수
 export const DIGEST_MAX = 1200; // 지침에 알리는 글의 길이 (사내AI 는 입력 한 번에 만 자라 지침·도구 설명과 나눠 씀)
@@ -185,8 +187,9 @@ export function turnLine(r: WorkRec): string {
 	return `- ${shortT(r.t)} "${cut(r.req || "", 70)}"${more.length ? ` → ${more.join(" · ")}` : ""}`;
 }
 
-/** 새 세션에 알릴 글: 마지막 요약(/handoff)과 최근 요청들 (오래된 것부터). 알릴 것이 없으면 "" */
-export function digestOf(recs: WorkRec[], where: string, now = new Date(), max = DIGEST_MAX): string {
+/** 새 세션에 알릴 글: 마지막 요약(/recall save)과 최근 요청들 (오래된 것부터). notes: 작업 폴더에 NOTES.md(/handoff 로 정리한 메모)가 있음.
+ *  알릴 것이 없으면 "" */
+export function digestOf(recs: WorkRec[], where: string, now = new Date(), max = DIGEST_MAX, notes = false): string {
 	const since = now.getTime() - DIGEST_DAYS * 86_400_000;
 	const recent = recs.filter((r) => {
 		const d = Date.parse(r.t.replace(" ", "T"));
@@ -195,6 +198,7 @@ export function digestOf(recs: WorkRec[], where: string, now = new Date(), max =
 	const parts = [
 		`이 프로젝트(${where})에서 지난 세션들에 한 일입니다 (pi 가 자동으로 남긴 기록). 오래되었거나 틀릴 수 있으니 파일은 지금 내용을 다시 확인하고, 사용자가 이어서 하자고 하면 이것을 참고한다.`,
 	];
+	if (notes) parts.push("작업 폴더의 NOTES.md 에 /handoff 로 정리한 작업 메모가 있다 (이어서 할 때 먼저 읽어 본다).");
 	const ho = [...recent].reverse().find((r) => r.handoff);
 	if (ho?.handoff) {
 		const text = ho.handoff.length > 500 ? `${ho.handoff.slice(0, 499)}…` : ho.handoff;
@@ -330,7 +334,7 @@ export default function (pi: ExtensionAPI) {
 				const text = c.end === "stop" ? c.ans.split(/\r?\n/).map(scrubText).filter((l) => l.trim()).join("\n").trim() : "";
 				if (!text) {
 					W.handoff = "";
-					return say(ctx, "다음 세션에 넘길 요약을 남기지 못했습니다 (답이 끝나지 않음). 다시: /handoff", "warning");
+					return say(ctx, "다음 세션에 넘길 요약을 남기지 못했습니다 (답이 끝나지 않음). 다시: /recall save", "warning");
 				}
 				appendLog(file, { t: c.t, handoff: cut(text, 1500) });
 				W.handoff = "done";
@@ -360,9 +364,14 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event: any) => {
 		if (!recallOn()) return;
 		if (W.digest === null) {
-			const p = projectOf(workDir());
+			const wd = workDir();
+			const p = projectOf(wd);
 			if (!p) return;
-			W.digest = digestOf(readLog(logFile(p.key)), p.label);
+			let notes = false; // 작업 폴더의 NOTES.md (jupyter 모드면 노트북의 것)
+			try {
+				notes = !!(await readHead(target("NOTES.md", wd), 1));
+			} catch {}
+			W.digest = digestOf(readLog(logFile(p.key)), p.label, new Date(), DIGEST_MAX, notes);
 		}
 		const sections = event.systemPromptOptions?.sections;
 		if (W.digest && sections && typeof sections === "object") sections.recent_work = W.digest;
@@ -405,7 +414,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("recall", {
-		description: "작업 기록: 지난 세션들에서 한 일 보기 (새 세션에 지침으로 알려 줌). off·on (끄기·켜기), clear (이 프로젝트 기록 지우기)",
+		description: "작업 기록: 지난 세션들에서 한 일 보기 (새 세션에 지침으로 알려 줌). save (다음 세션에 넘길 요약), off·on (끄기·켜기), clear (이 프로젝트 기록 지우기)",
 		handler: async (args, ctx) => {
 			const sub = String(args || "").trim().toLowerCase();
 			const notify = (m: string, level = "info") => ctx.ui.notify(m, level);
@@ -421,6 +430,14 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (!p) return notify("작업 폴더를 아직 모릅니다 (노트북에 연결된 뒤 다시)", "warning");
 			const file = logFile(p.key);
+			if (sub === "save" || sub === "요약") {
+				// 다음 세션에 넘길 요약 (모델에게 한 번). 기본 명령 /handoff 는 NOTES.md 에 정리 (파일로 남김)
+				if (!recallOn()) return notify("작업 기록이 꺼져 있습니다 (켜기: /recall on)", "warning");
+				if ((globalThis as any).__piMode === "plan") return notify("계획 모드에서는 요약을 남기지 않습니다 (/plan 으로 끈 뒤 다시)", "warning");
+				if (!ctx.isIdle()) return notify("지금 하는 작업이 끝난 뒤 다시 입력해 주세요", "warning");
+				W.again = "";
+				return startHandoff();
+			}
 			if (sub === "clear" || sub === "지우기") {
 				const n = readLog(file).length;
 				if (!n) return notify(`이 프로젝트(${p.label})의 작업 기록이 없습니다`);
@@ -433,7 +450,7 @@ export default function (pi: ExtensionAPI) {
 				W.digest = ""; // 이번 세션에도 더 알리지 않음
 				return notify(`작업 기록 ${n}개를 지웠습니다 (${tildePath(file)})${fresh}`);
 			}
-			if (sub) return notify("사용법: /recall (보기) · off · on · clear (이 프로젝트 기록 지우기) · /handoff (다음 세션에 넘길 요약)", "warning");
+			if (sub) return notify("사용법: /recall (보기) · save (다음 세션에 넘길 요약) · off · on · clear (이 프로젝트 기록 지우기)", "warning");
 			if (widget) {
 				widget = false;
 				return ctx.ui.setWidget("pi-recall", undefined);
@@ -453,24 +470,11 @@ export default function (pi: ExtensionAPI) {
 				` 기록 ${recs.length}개 · ${tildePath(file)}`,
 				shownNow ? " 이번 세션에 알린 것:" : " 다음 요청 때 알릴 것:",
 				...body,
-				" 명령  /recall off·on · clear (이 프로젝트 기록 지우기) · /handoff (다음 세션에 넘길 요약)",
+				" 명령  /recall save (다음 세션에 넘길 요약) · off·on · clear (이 프로젝트 기록 지우기) · /handoff 는 NOTES.md 에 정리",
 			];
 			if (!ctx.hasUI) return notify(lines.join("\n"));
 			ctx.ui.setWidget("pi-recall", [lines.join("\n")]);
 			widget = true;
-		},
-	});
-
-	pi.registerCommand("handoff", {
-		description: "다음 세션에 넘길 작업 요약을 남김 (모델에게 한 번 물음). 같은 프로젝트에서 새 세션을 시작하면 지침으로 알려 줌",
-		handler: async (_args, ctx) => {
-			const notify = (m: string, level = "info") => ctx.ui.notify(m, level);
-			if (!recallOn()) return notify("작업 기록이 꺼져 있습니다 (켜기: /recall on)", "warning");
-			if ((globalThis as any).__piMode === "plan") return notify("계획 모드에서는 요약을 남기지 않습니다 (/plan 으로 끈 뒤 다시)", "warning");
-			if (!projectOf(workDir())) return notify("작업 폴더를 아직 모릅니다 (노트북에 연결된 뒤 다시)", "warning");
-			if (!ctx.isIdle()) return notify("지금 하는 작업이 끝난 뒤 다시 입력해 주세요", "warning");
-			W.again = "";
-			startHandoff();
 		},
 	});
 

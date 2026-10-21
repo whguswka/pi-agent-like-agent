@@ -265,7 +265,7 @@ function helpLines(): string[] {
 		`       내 스킬: ${A}/skills/<이름>/SKILL.md (skill-creator 에게 "○○ 스킬 만들어줘")`,
 		`       내 hook: ${A}/extensions/my-<이름>.ts (hook-creator 에게 "○○할 때 △△하는 hook 만들어줘")`,
 		` 지침  ${A}/AGENTS.md (공통), 프로젝트 폴더의 AGENTS.md (/init 으로 초안) · /remember <내용> 한 줄 더하기`,
-		" 기억  /recall 지난 세션들의 작업 기록 (새 세션에 자동으로 알려 줌) · /handoff 다음 세션에 넘길 요약 · /recall off 끄기",
+		" 기억  /recall 지난 세션들의 작업 기록 (새 세션에 자동으로 알려 줌) · /recall save 다음 세션에 넘길 요약 · /recall off 끄기",
 		" 설명  /docs <모듈[.이름]> [찾을 말] 설치된 버전의 시그니처·설명 (pi 도 docs_lookup 으로 찾음) · 받은 문서는 ~/pi-docs 에",
 		" 위키  /wiki (상태) · /wiki init 으로 만들기 · ingest <raw/ 파일·폴더> · ask <질문> · save · lint (Obsidian 으로 보기)",
 		" 환경  /kit env 지금 실행 위치의 Python·패키지·GPU·CUDA 버전을 조사해 지침에 적기 (그 버전에 맞춰 일함)",

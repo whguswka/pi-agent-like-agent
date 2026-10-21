@@ -157,7 +157,14 @@ check("요약은 기록에 (이메일은 뺌), 끝나면 /new 를 다시 입력�
 	lg.at(-1).handoff === "목표: 검증 손실까지 텐서보드로\n남은 일: 학습률 그래프\n연락: …" && notes.at(-1)[0].includes("/new 을 다시 입력") && (await emit("session_before_switch", { reason: "new" })) === undefined, [lg.at(-1), notes.at(-1)]);
 await emit("session_start", { reason: "new" });
 const d2 = await prompt();
-check("다음 세션: 넘겨받은 요약과 최근 요청", d2.includes("넘겨받은 요약") && d2.includes("남은 일: 학습률 그래프") && d2.includes("다섯 번째 요청") && !d2.includes("HANDOFF") && !d2.includes(m.HANDOFF_PROMPT.slice(0, 20)), d2);
+check("다음 세션: 넘겨받은 요약과 최근 요청", d2.includes("넘겨받은 요약") && d2.includes("남은 일: 학습률 그래프") && d2.includes("다섯 번째 요청") && !d2.includes("HANDOFF") && !d2.includes(m.HANDOFF_PROMPT.slice(0, 20)) && !d2.includes("NOTES.md"), d2);
+writeFileSync(join(proj, "NOTES.md"), "# 메모\n");
+await emit("session_start", { reason: "new" });
+const d3 = await prompt();
+check("작업 폴더에 NOTES.md(기본 명령 /handoff 로 정리)가 있으면 있다고 알림", d3.includes("작업 폴더의 NOTES.md 에 /handoff 로 정리한 작업 메모가 있다") && d3.includes("다섯 번째 요청"), d3);
+check("기록이 없어도 NOTES.md 가 있으면 알림", m.digestOf([], "x", now, m.DIGEST_MAX, true).includes("NOTES.md"));
+await emit("session_start", { reason: "new" });
+const d4 = await prompt();
 
 // /recall: 보기, 끄기·켜기, 지우기
 await cmds.recall.handler("", ctx);
@@ -168,12 +175,12 @@ const nLog = log().length;
 await turn("끈 뒤의 요청", { tools: [["edit", { path: "d.py" }]] });
 check("/recall off: 지침에 알리지 않고 남기지도 않음", (await prompt()) === undefined && log().length === nLog && m.recallOn() === false);
 await cmds.recall.handler("on", ctx);
-check("/recall on: 다시 알림 (이번 세션의 같은 글)", (await prompt()) === d2);
+check("/recall on: 다시 알림 (이번 세션의 같은 글)", (await prompt()) === d4 && d4.includes("다섯 번째 요청"));
 await cmds.recall.handler("clear", ctx);
 check("/recall clear: 이 프로젝트 기록을 지우고 이번 세션에도 더 알리지 않음", !existsSync(m.logFile(m.projectOf(globalThis.__piWorkDir).key)) && (await prompt()) === undefined && notes.at(-1)[0].includes("지웠습니다"));
 globalThis.__piMode = "plan";
-await cmds.handoff.handler("", ctx);
-check("/handoff: 계획 모드에서는 하지 않음", notes.at(-1)[0].includes("계획 모드"));
+await cmds.recall.handler("save", ctx);
+check("/recall save: 계획 모드에서는 하지 않음, /handoff 는 기본 명령(NOTES.md)으로 남겨 둠 (확장 명령으로 가리지 않음)", notes.at(-1)[0].includes("계획 모드") && !cmds.handoff);
 globalThis.__piMode = "auto";
 
 // 노트북에 아직 연결되지 않았으면 남기지도 알리지도 않음 (연결된 뒤 첫 요청에)
