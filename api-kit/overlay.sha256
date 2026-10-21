@@ -1,4 +1,4 @@
-# overlay/ 가 대신하는 원래 파일의 sha256 (커밋 efb3bad4a32aad6dff1e74b37458ea40c7935264). 원래 키트에 없는 새 파일은 적지 않음
+# overlay/ 가 대신하는 원래 파일의 sha256 (커밋 52b2960aa37403d1d6782a92f9d5dad328c3cb08). 원래 키트에 없는 새 파일은 적지 않음
 3f6ff05483c5550cea897e37cf444e19e52439209143355ba88f4aa2c5c0345d  CHANGELOG.md
 f6fe54634b2e9c6b536678c1efb5313861df9fdc493c8bb18039b11741cf4e1f  VERSION
 0cde89266bb4760fa896d781c47fb02dea3cfff0c528b4b52ba864919cd74801  bin/kit-config.sh
