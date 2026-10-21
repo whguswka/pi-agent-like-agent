@@ -6,6 +6,8 @@
  *  - 목록·기록 고치기와 기계적 점검(깨진 링크, 고아 페이지, 반영 안 된 원본)은 이 확장의 코드가 하고
  *  - 모델은 짧은 검색 결과(wiki_search)와 여러 페이지를 한 번에 읽고 쓰는 도구(wiki_read, wiki_write)를 쓴다.
  * 위키는 PC 폴더 (jupyter 모드에서도 PC). 링크는 Obsidian 형식 [[페이지 제목]]. 고치기 전 페이지는 .history/ 에 남긴다.
+ * 있는 페이지는 덧붙이기·고치기(찾아 바꾸기)로 고친다. 읽은 부분만으로 통째로 다시 쓰면 나머지가 지워지므로, 원래 내용이 많이 빠지는 다시 쓰기는 거절한다.
+ * wiki_write 마다 무엇을 썼고 무엇을 배웠는지(작업 방식) 대화창에 '[위키]' 항목으로 남긴다 (모델에게는 가지 않음).
  *
  * 명령: /wiki (상태), /wiki init [이름] [폴더], /wiki use <이름>, /wiki off, /wiki ingest <raw/ 안 파일·폴더>,
  *       /wiki ask <질문>, /wiki save [제목], /wiki lint, /wiki reindex
@@ -20,6 +22,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
 // 설정
@@ -45,6 +48,12 @@ export function wikiDir(arg: string, cwd = process.cwd()): string {
 	return isAbsolute(s) ? s : resolve(cwd, s);
 }
 export const slash = (p: string) => p.replace(/\\/g, "/");
+/** 화면에 보일 경로: 홈은 ~ 로 줄임 */
+export const tilde = (p: string) => {
+	const h = slash(homedir());
+	const s = slash(p);
+	return s === h || s.startsWith(`${h}/`) ? `~${s.slice(h.length)}` : s;
+};
 /** 중계 서버(Copilot·사내AI)로 쓰는 설정인지 (models.json 에 127.0.0.1:8765·8766). 그때만 wiki_write 설명에 중계 서버의 '@tool' 글 형식을 적는다
  *  (API 로 바로 쓰는 모델은 보통의 도구 호출을 쓴다. 그 형식을 보면 도구를 부르지 않고 글로만 쓸 수 있음) */
 export function isBridge(file = join(agentDir(), "models.json")): boolean {
@@ -584,11 +593,218 @@ export function stampUpdated(content: string, date: string): string {
 	return m[1] + head + m[3] + content.slice(m[0].length);
 }
 
+// ---------------------------------------------------------------------------
+// 있는 페이지 고치기: 덧붙이기, 고치기(찾아 바꾸기), 통째로 다시 쓸 때 원래 내용이 빠지는지
+//  (Copilot·사내AI 는 읽기가 5500자로 잘리고 답도 길게 못 써서, 읽은 부분만으로 통째로 다시 쓰면 나머지가 지워짐)
+// ---------------------------------------------------------------------------
+
+/** '=== ' 줄의 쓰는 방법: 페이지 전체(page), 덧붙이기(append), 고치기(edit), 일부러 줄이는 다시 쓰기(rewrite) */
+export type WriteHow = "page" | "append" | "edit" | "rewrite";
+const HOW_WORDS: Record<string, WriteHow> = { 덧붙이기: "append", 덧붙임: "append", 추가: "append", append: "append", 고치기: "edit", 고침: "edit", 수정: "edit", edit: "edit", 다시쓰기: "rewrite", rewrite: "rewrite" };
+
+/** '=== 덧붙이기 pages/a/B.md ## 절' -> { how: "append", target: "pages/a/B.md", section: "## 절" }. 방법을 적지 않았으면 페이지 전체 */
+export function parseHead(head: string): { how: WriteHow; target: string; section: string } {
+	const t = head.trim();
+	const m = /^(\S+?)[:：]?\s+(\S.*)$/.exec(t);
+	const how = m ? HOW_WORDS[m[1].toLowerCase()] : undefined;
+	if (!m || !how) return { how: "page", target: t, section: "" };
+	const s = how === "append" ? /^(.*?)\s+(#{1,6}\s+\S.*)$/.exec(m[2]) : null;
+	return { how, target: (s ? s[1] : m[2]).trim(), section: s ? s[2].trim() : "" };
+}
+
+/** 덧붙이기·고치기 대상: pages/ 안 경로, 페이지 이름이나 제목 ([[제목]] 도. 폴더가 틀려도 이름이 맞으면) */
+export function findPage(pages: Page[], target: string): Page | undefined {
+	const t = slash(target.trim()).replace(/^\.\//, "").replace(/^\[\[|\]\]$/g, "").trim();
+	if (!t) return undefined;
+	return (
+		pages.find((p) => key(p.rel) === key(t) || key(p.rel) === key(`${t}.md`)) ||
+		pages.find((p) => key(p.name) === key(baseOf(t)) || key(p.title) === key(t))
+	);
+}
+
+/** 머리말의 목록 값을 'k: [a, b]' 한 줄로 (아래 '- 값' 줄들도 지움. 없으면 끝에 넣음) */
+export function setMetaList(content: string, k: string, values: string[]): string {
+	const m = /^(﻿?---[ \t]*\r?\n)([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))/.exec(content);
+	if (!m) return content;
+	const lines = m[2].split(/\r?\n/);
+	const out: string[] = [];
+	let at = -1;
+	for (let i = 0; i < lines.length; i++) {
+		if (new RegExp(`^${k}\\s*:`).test(lines[i])) {
+			at = out.length;
+			while (i + 1 < lines.length && /^\s*-\s+/.test(lines[i + 1])) i++;
+			continue;
+		}
+		out.push(lines[i]);
+	}
+	const line = `${k}: [${values.join(", ")}]`;
+	if (at < 0) out.push(line);
+	else out.splice(at, 0, line);
+	return m[1] + out.join("\n") + m[3] + content.slice(m[0].length);
+}
+
+const FENCE = /^\s*(```|~~~)/;
+const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s/;
+const headingOf = (line: string) => {
+	const h = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+	return h ? { level: h[1].length, text: h[2].replace(/\s+/g, " ").trim().toLowerCase() } : null;
+};
+const brief = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const firstLine = (s: string) => s.split("\n").find((l) => l.trim())?.trim() || "";
+
+/** 페이지 끝(section '## 절' 을 주면 그 절 끝, 없는 절이면 끝에 만듦)에 add 를 덧붙임 (글은 줄바꿈 \n).
+ *  add 앞의 머리말(--- sources: [...] ---)은 페이지의 sources 에 더하고, 페이지 제목 줄(# 제목)을 다시 적었으면 뺌 */
+export function appendTo(text: string, add: string, section = ""): { text: string; error?: string } {
+	const page = parseFrontmatter(text);
+	const extra = parseFrontmatter(add.replace(/^(?:[ \t]*\n)+/, ""));
+	const fm = extra.ok && Object.keys(extra.meta).length > 0; // '---' 두 줄(가로줄) 사이의 글은 머리말이 아님
+	let body = (fm ? extra.body : add).replace(/^(?:[ \t]*\n)+/, "").replace(/\s+$/, "");
+	const h1 = page.body.split("\n").find((l) => /^#\s+\S/.test(l));
+	if (h1 && body.split("\n")[0].trim() === h1.trim()) body = body.split("\n").slice(1).join("\n").replace(/^(?:[ \t]*\n)+/, "");
+	const srcs = fm ? list(extra.meta.sources).map(String) : [];
+	if (!body && !srcs.length) return { text, error: "덧붙일 글이 없습니다" };
+	let head = text.slice(0, text.length - page.body.length);
+	const cur = list(page.meta.sources).map(String);
+	const more = srcs.filter((s, i) => !cur.some((c) => key(c) === key(s)) && srcs.findIndex((x) => key(x) === key(s)) === i);
+	if (more.length && page.ok) head = setMetaList(head, "sources", [...cur, ...more]);
+	if (!body) return { text: head + page.body };
+	const out = page.body.replace(/\s+$/, "").split("\n");
+	let at = out.length; // 이 줄 앞에 넣음
+	let make = "";
+	if (section) {
+		const want = headingOf(section);
+		let fence = false;
+		let level = 0; // 찾은 절의 제목 수준 (0: 아직 못 찾음)
+		for (let i = 0; i < out.length; i++) {
+			if (FENCE.test(out[i])) fence = !fence;
+			const h = fence ? null : headingOf(out[i]);
+			if (!h) continue;
+			if (!level) {
+				if (want && h.text === want.text) level = h.level;
+			} else if (h.level <= level) {
+				at = i;
+				break;
+			}
+		}
+		if (!level) make = section;
+	}
+	let end = at;
+	while (end > 0 && !out[end - 1].trim()) end--;
+	const before = out.slice(0, end);
+	const chunk = [...(make ? [make, ""] : []), ...body.split("\n")];
+	const sep = !before.length || (!make && LIST_ITEM.test(before[before.length - 1]) && LIST_ITEM.test(chunk[0])) ? [] : [""];
+	const after = at < out.length ? ["", ...out.slice(at)] : [];
+	return { text: `${head}${[...before, ...sep, ...chunk, ...after].join("\n")}\n` };
+}
+
+/** 고치기 글: '<<<<<<< 찾기' 줄, 페이지의 지금 글, '=======' 줄, 바꿀 글, '>>>>>>> 바꾸기' 줄 (블록 여러 개. 찾기·바꾸기 말은 아무것이나) */
+export function parseEdits(text: string): { pairs: { find: string; repl: string }[]; error?: string } {
+	const pairs: { find: string; repl: string }[] = [];
+	let mode = "";
+	let find: string[] = [];
+	let repl: string[] = [];
+	for (const line of text.replace(/\r\n/g, "\n").split("\n")) {
+		if (/^<{7}(\s|$)/.test(line)) {
+			if (mode) return { pairs, error: "'<<<<<<<' 블록이 닫히기 전에 새 블록이 열렸습니다" };
+			mode = "find";
+			find = [];
+			repl = [];
+		} else if (mode === "find" && /^={7}\s*$/.test(line)) mode = "repl";
+		else if (mode === "repl" && /^>{7}(\s|$)/.test(line)) {
+			pairs.push({ find: find.join("\n"), repl: repl.join("\n") });
+			mode = "";
+		} else if (mode === "find") find.push(line);
+		else if (mode === "repl") repl.push(line);
+	}
+	if (mode) return { pairs, error: "블록이 닫히지 않았습니다 ('=======' 줄과 '>>>>>>> 바꾸기' 줄)" };
+	if (!pairs.length)
+		return {
+			pairs,
+			error:
+				"고칠 블록이 없습니다. '<<<<<<< 찾기' 줄, 페이지의 지금 글 그대로, '=======' 줄, 바꿀 글, '>>>>>>> 바꾸기' 줄로 쓰세요 (더할 글은 '=== 덧붙이기', 새 페이지는 '=== pages/<분류>/<제목>.md')",
+		};
+	return { pairs };
+}
+
+/** 찾아 바꾸기를 차례로 (글은 줄바꿈 \n). 찾을 글은 한 곳에만 맞아야 함. 그대로 없으면 줄마다 앞뒤 띄어쓰기를 무시하고 맞춤.
+ *  하나라도 못 하면 페이지는 그대로 (error) */
+export function applyEdits(text: string, pairs: { find: string; repl: string }[]): { text: string; error?: string } {
+	const edges = (s: string) => s.replace(/^(?:[ \t]*\n)+/, "").replace(/(?:\n[ \t]*)+$/, "");
+	const norm = (s: string) => s.trim().replace(/\s+/g, " ");
+	let cur = text;
+	for (const [i, p] of pairs.entries()) {
+		const find = edges(p.find);
+		const repl = edges(p.repl);
+		const where = pairs.length > 1 ? `${i + 1}번째 블록: ` : "";
+		const many = (n: number) => `${where}찾을 글이 ${n}곳에 있습니다 (앞뒤 줄을 더 넣어 한 곳만 맞게): "${brief(firstLine(find))}"`;
+		if (!find.trim()) return { text, error: `${where}찾을 글이 비었습니다 ('<<<<<<< 찾기' 와 '=======' 사이에 페이지의 지금 글)` };
+		const n = cur.split(find).length - 1;
+		if (n > 1) return { text, error: many(n) };
+		if (n === 1) {
+			const at = cur.indexOf(find);
+			let end = at + find.length;
+			if (!repl && (at === 0 || cur[at - 1] === "\n") && cur[end] === "\n") end++; // 줄째 지우면 그 줄바꿈도
+			cur = cur.slice(0, at) + repl + cur.slice(end);
+			continue;
+		}
+		const lines = cur.split("\n");
+		const want = find.split("\n").map(norm);
+		const hits: number[] = [];
+		for (let s = 0; s + want.length <= lines.length; s++) if (want.every((w, k) => norm(lines[s + k]) === w)) hits.push(s);
+		if (hits.length > 1) return { text, error: many(hits.length) };
+		if (!hits.length) return { text, error: `${where}페이지에 없는 글입니다: "${brief(firstLine(find))}". wiki_read 로 지금 글을 읽고 그대로 옮겨 적으세요` };
+		lines.splice(hits[0], want.length, ...(repl ? repl.split("\n") : []));
+		cur = lines.join("\n");
+	}
+	return { text: cur };
+}
+
+/** 고치기 글(블록들)로 페이지 글 고치기 */
+export function editPage(text: string, edits: string): { text: string; error?: string } {
+	const e = parseEdits(edits);
+	return e.error ? { text, error: e.error } : applyEdits(text, e.pairs);
+}
+
+export const KEEP_MIN_CHARS = 300; // 본문이 이보다 짧은 페이지는 통째로 다시 써도 막지 않음
+/** 통째로 다시 쓴 페이지에서 빠지는 원래 내용: 원래 본문의 줄 가운데 새 본문에 없는 줄 (목록 표시·띄어쓰기는 무시).
+ *  원래의 30% 넘게 빠지고 본문이 70% 아래로 짧아지면 그 줄들, 아니면 [] (말을 다듬거나 몇 곳 고친 것은 막지 않음) */
+export function lostLines(oldText: string, newText: string): string[] {
+	const norm = (l: string) => l.replace(/^\s*(?:[-*+]|\d+[.)]|#{1,6}|>)\s+/, "").replace(/\s+/g, " ").trim();
+	const linesOf = (t: string) =>
+		parseFrontmatter(t)
+			.body.split(/\r?\n/)
+			.map(norm)
+			.filter((l) => l && !/^(?:-{3,}|`{3,}.*|~{3,}.*)$/.test(l));
+	const size = (ls: string[]) => ls.reduce((s, l) => s + l.length, 0);
+	const olds = linesOf(oldText);
+	const news = linesOf(newText);
+	const all = news.join("\n");
+	const lost = olds.filter((l) => !all.includes(l));
+	const before = size(olds);
+	return before >= KEEP_MIN_CHARS && size(news) < before * 0.7 && size(lost) > before * 0.3 ? lost : [];
+}
+
+/** 쓴 방법: 새 페이지, 통째로 다시 씀, 덧붙임, 고침 */
+export type WriteKind = "new" | "page" | "append" | "edit";
+export const KIND_LABEL: Record<WriteKind, string> = { new: "새로", page: "다시 씀", append: "덧붙임", edit: "고침" };
+
 export interface WriteResult {
 	written: string[];
 	names: string[];
+	kinds: WriteKind[];
 	errors: string[];
 	warnings: string[];
+}
+
+/** '새로 [[A]] · 덧붙임 [[B]], [[C]]' */
+export function writtenText(r: WriteResult): string {
+	return (Object.keys(KIND_LABEL) as WriteKind[])
+		.map((k) => {
+			const ns = r.names.filter((_, i) => r.kinds[i] === k);
+			return ns.length ? `${KIND_LABEL[k]} ${ns.map((n) => `[[${n}]]`).join(", ")}` : "";
+		})
+		.filter(Boolean)
+		.join(" · ");
 }
 
 export const today = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -602,28 +818,69 @@ function backup(root: string, rel: string, date: string) {
 	copyFileSync(src, dst);
 }
 
-/** 페이지들을 쓰고 목록을 다시 만들고 기록을 남긴다 (부르는 쪽에서 한 번에 하나씩: 동시에 쓰면 목록·기록이 섞임) */
+/** 페이지들을 쓰고 목록을 다시 만들고 기록을 남긴다 (부르는 쪽에서 한 번에 하나씩: 동시에 쓰면 목록·기록이 섞임).
+ *  '=== pages/...' 는 페이지 전체, '=== 덧붙이기 <페이지> [## 절]' 은 끝에 더하기, '=== 고치기 <페이지>' 는 찾아 바꾸기,
+ *  '=== 다시쓰기 pages/...' 는 원래 내용이 많이 빠져도 쓰는 페이지 전체 (나누기·정리) */
 export function applyWrite(root: string, name: string, text: string, op = "note", title = "", date = today()): WriteResult {
-	const res: WriteResult = { written: [], names: [], errors: [], warnings: [] };
+	const res: WriteResult = { written: [], names: [], kinds: [], errors: [], warnings: [] };
 	const items = splitBundle(text);
 	if (!items.length) {
 		res.errors.push("페이지가 없습니다. 페이지마다 '=== pages/<분류>/<제목>.md' 줄 다음에 머리말(---)과 본문을 쓰세요");
 		return res;
 	}
 	let pages = loadPages(root);
+	const done = (rel: string, kind: WriteKind) => {
+		res.written.push(rel);
+		res.names.push(baseOf(rel));
+		res.kinds.push(kind);
+		pages = loadPages(root);
+	};
 	for (const it of items) {
-		const bad = checkWritePath(it.path);
+		const head = parseHead(it.path);
+		if (head.how === "append" || head.how === "edit") {
+			const p = findPage(pages, head.target);
+			if (!p) {
+				res.errors.push(`${head.target}: 없는 페이지라 ${head.how === "append" ? "덧붙이지" : "고치지"} 못했습니다. 새 페이지는 '=== pages/<분류>/<제목>.md' 줄 다음에 머리말과 함께 쓰세요`);
+				continue;
+			}
+			let old = "";
+			try {
+				old = readFileSync(join(root, p.rel), "utf8");
+			} catch (e) {
+				res.errors.push(`${p.rel}: 읽지 못했습니다 (${(e as Error).message})`);
+				continue;
+			}
+			const crlf = old.includes("\r\n");
+			const base = crlf ? old.replace(/\r\n/g, "\n") : old;
+			const r = head.how === "append" ? appendTo(base, it.content, head.section) : editPage(base, it.content);
+			if (r.error) {
+				res.errors.push(`${p.rel}: ${r.error}`);
+				continue;
+			}
+			const fm = parseFrontmatter(r.text);
+			if (p.ok && (!fm.ok || !str(fm.meta.title) || !str(fm.meta.summary) || !str(fm.meta.type))) {
+				res.errors.push(`${p.rel}: 고치면 머리말(title / summary / type)이 빠지게 되어 쓰지 않았습니다`);
+				continue;
+			}
+			backup(root, p.rel, date);
+			const next = stampUpdated(quoteMeta(r.text), date);
+			writeFileSync(join(root, p.rel), crlf ? next.replace(/\n/g, "\r\n") : next);
+			done(p.rel, head.how);
+			continue;
+		}
+		const path = head.how === "rewrite" ? findPage(pages, head.target)?.rel || head.target : head.target;
+		const bad = checkWritePath(path);
 		if (bad) {
-			res.errors.push(`${it.path}: ${bad}`);
+			res.errors.push(`${path}: ${bad}`);
 			continue;
 		}
 		const fm = parseFrontmatter(it.content);
 		const t = str(fm.meta.title);
 		if (!fm.ok || !t || !str(fm.meta.summary) || !str(fm.meta.type)) {
-			res.errors.push(`${it.path}: 머리말(--- title / summary / type ---)이 없거나 빠진 항목이 있습니다`);
+			res.errors.push(`${path}: 머리말(--- title / summary / type ---)이 없거나 빠진 항목이 있습니다`);
 			continue;
 		}
-		let rel = slash(it.path.trim()).replace(/^\.\//, "");
+		let rel = slash(path.trim()).replace(/^\.\//, "");
 		// 새 페이지는 파일 이름 = 제목 (링크 [[제목]] 이 이어지게). 이미 있는 파일을 고칠 때는 그 경로 그대로
 		if (!existsSync(join(root, rel)) && baseOf(rel) !== pageName(t)) {
 			const fixed = `${rel.slice(0, rel.lastIndexOf("/") + 1)}${pageName(t)}.md`;
@@ -632,19 +889,32 @@ export function applyWrite(root: string, name: string, text: string, op = "note"
 		}
 		const dup = pages.find((p) => key(p.name) === key(baseOf(rel)) && p.rel !== rel);
 		if (dup) {
-			res.errors.push(`${rel}: 같은 이름의 페이지가 이미 있습니다 (${dup.rel}). 그 페이지를 고치거나 다른 제목을 쓰세요`);
+			res.errors.push(`${rel}: 같은 이름의 페이지가 이미 있습니다 (${dup.rel}). 그 페이지에 '=== 덧붙이기 ${dup.rel}' 나 '=== 고치기 ${dup.rel}' 로 쓰거나 다른 제목을 쓰세요`);
 			continue;
+		}
+		const existed = existsSync(join(root, rel));
+		if (existed && head.how === "page") {
+			let old = "";
+			try {
+				old = readFileSync(join(root, rel), "utf8");
+			} catch {}
+			const lost = lostLines(old, it.content);
+			if (lost.length) {
+				res.errors.push(
+					`${rel}: 통째로 다시 쓴 글에 원래 내용 ${lost.length}줄(약 ${lost.reduce((s, l) => s + l.length, 0)}자)이 없어 쓰지 않았습니다 (예: "${brief(lost[0], 50)}"). ` +
+						`더할 것은 '=== 덧붙이기 ${rel}' 다음에 더할 글만, 바꿀 곳은 '=== 고치기 ${rel}' 로 쓰세요. 나누거나 정리해서 일부러 줄이는 것이면 '=== 다시쓰기 ${rel}'`,
+				);
+				continue;
+			}
 		}
 		backup(root, rel, date);
 		mkdirSync(dirname(join(root, rel)), { recursive: true });
 		writeFileSync(join(root, rel), stampUpdated(quoteMeta(it.content), date));
-		res.written.push(rel);
-		res.names.push(baseOf(rel));
-		pages = loadPages(root);
+		done(rel, existed ? "page" : "new");
 	}
 	if (!res.written.length) return res;
 	reindex(root, name, pages);
-	appendFileSync(join(root, "log.md"), logEntry(date, op, title || res.names[0], res.names));
+	appendFileSync(join(root, "log.md"), logEntry(date, op, title || res.names[0], [...new Set(res.names)]));
 	const names = new Set(pages.map((p) => key(p.name)));
 	const rawNames = new Set(listFiles(root, "raw").map((r) => key(baseOf(r.split("/").pop() || ""))));
 	for (const rel of res.written) {
@@ -777,6 +1047,7 @@ export const WIKI_TEMPLATE = (name: string) => `# ${name} 위키
   ---
   \`\`\`
 - 한 페이지에 한 주제. 길어지면 나누고 서로 [[링크]]. 근거가 된 원본은 sources 에
+- 있는 페이지는 통째로 다시 쓰지 않고 덧붙이거나 고친다 (wiki_write 의 덧붙이기·고치기. 읽은 부분만으로 다시 쓰면 나머지가 지워짐)
 - 확인한 사실과 추측을 나눈다. 확인 안 된 것은 "(확인 필요)"
 - 남기지 않는 것: 비밀번호·토큰·접속 정보, 개인정보
 
@@ -1054,6 +1325,19 @@ export function proposalCount(dir = lessonsDir()): number {
 
 export const WIKI_TOOLS = ["wiki_search", "wiki_read", "wiki_write"];
 
+/** wiki_write 가 한 일을 대화창에 남기는 항목 (pi.appendEntry: 세션 파일에 남아 다시 열어도 보이고, 모델에게는 가지 않음) */
+export const ENTRY = "pi-wiki";
+export type ViewLine = { t: string; s?: "ok" | "dim" | "warn" | "err" | "head" };
+const VIEW_COLOR: Record<string, string> = { ok: "success", dim: "muted", warn: "warning", err: "error", head: "customMessageText" };
+export function renderEntry(data: any, theme: any) {
+	if (!data || !Array.isArray(data.lines)) return undefined;
+	const box = new Box(1, 0, (t: string) => theme.bg("customMessageBg", t));
+	const label = theme.fg("customMessageLabel", theme.bold(`[${data.title || "위키"}]`));
+	const lines = data.lines.map((l: ViewLine) => theme.fg(VIEW_COLOR[l?.s || ""] || "customMessageText", String(l?.t ?? "")));
+	box.addChild(new Text([label, ...lines].join("\n"), 0, 0));
+	return box;
+}
+
 /** 위키가 켜져 있을 때 지침에 더할 규칙 (세션 안에서는 매번 같은 글: Copilot·사내AI 대화를 새로 열지 않게) */
 export function guideLines(name: string, root: string, auto: Auto, topic: string, lessons: LessonMode = "off"): string[] {
 	if (auto === "off") return [];
@@ -1062,7 +1346,9 @@ export function guideLines(name: string, root: string, auto: Auto, topic: string
 		`${topic}에 관한 질문·작업이면 시작할 때 wiki_search 로 위키를 먼저 찾아보고, 찾은 페이지를 근거로 쓰고 답에 [[페이지 제목]] 으로 밝힌다`,
 	];
 	if (auto === "write")
-		g.push("작업 중 새로 확인한 사실·결정·절차·장애 원인과 해결이 위키에 없거나 다르면, 끝내기 전에 wiki_write 로 한 번에 남기고 답 끝에 '위키에 남김: [[제목]]' 을 적는다. 추측·비밀번호·개인정보는 남기지 않는다");
+		g.push(
+			"작업 중 새로 확인한 사실·결정·절차·장애 원인과 해결이 위키에 없거나 다르면, 끝내기 전에 wiki_write 로 한 번에 남기고(있는 페이지는 통째로 다시 쓰지 말고 덧붙이기·고치기로) 답 끝에 '위키에 남김: [[제목]]' 을 적는다. 추측·비밀번호·개인정보는 남기지 않는다",
+		);
 	if (auto === "ask") g.push("작업 중 새로 확인한 것 가운데 위키에 남길 만한 것이 있으면 답 끝에 한두 줄로 제안하고, 사용자가 원하면 wiki_write 로 남긴다");
 	if (lessons !== "off")
 		g.push(
@@ -1138,29 +1424,44 @@ export default function (pi: ExtensionAPI) {
 		}
 	};
 	const result = (text: string) => ({ content: [{ type: "text" as const, text }], details: undefined });
-	const brief = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s);
+	/** 대화창에 '[위키]' 항목을 남김 (pi 화면). 다른 실행 방식(RPC 등)에서는 notice 일 때만 알림으로 */
+	const post = (ctx: any, title: string, lines: ViewLine[], level: string, notice: boolean) => {
+		if (!lines.length) return;
+		if (ctx?.mode === "tui" && typeof pi.appendEntry === "function") {
+			try {
+				pi.appendEntry(ENTRY, { title, lines });
+				return;
+			} catch {}
+		}
+		if (notice && ctx?.hasUI) {
+			try {
+				ctx.ui.notify([title, ...lines.map((l) => l.t)].join("\n"), level);
+			} catch {}
+		}
+	};
 
-	/** 위키를 쓸 때 함께 받은 작업 방식·제안: auto 면 내 지침의 '작업 방식' 에, propose 면 제안 모음에 (알림 글도 만듦) */
+	/** 위키를 쓸 때 함께 받은 작업 방식·제안: auto 면 내 지침의 '작업 방식' 에, propose 면 제안 모음에.
+	 *  lines 는 모델에게 가는 도구 결과, view 는 사람에게 보이는 '[위키]' 항목 (무엇을 배웠는지) */
 	const learn = (cfg: Config, wiki: string, op: string, lessons: string[], proposals: string[]) => {
-		const out = { lines: [] as string[], notice: "", level: "info", handled: false };
+		const out = { lines: [] as string[], view: [] as ViewLine[], level: "info", handled: false };
 		if (!lessons.length && !proposals.length) return out;
 		out.handled = true;
 		const mode = lessonMode(cfg);
 		if (mode === "off") {
 			out.lines.push("작업 방식: 꺼져 있어 남기지 않음 (wiki.json 의 lessons)");
+			out.view.push({ t: "작업 방식: 꺼져 있어 남기지 않음 (켜기 /wiki lessons on)", s: "dim" });
 			return out;
 		}
 		if (op === "ingest" || batch) {
 			out.lines.push("작업 방식: 원본 반영(ingest) 중에는 남기지 않음");
+			out.view.push({ t: "작업 방식: 원본 반영(ingest) 중이라 남기지 않음", s: "dim" });
 			return out;
 		}
-		const notes: string[] = [];
-		const props = [...(mode === "propose" && lessons.length ? [`지침의 작업 방식에 더하기:\n${lessons.map((t) => `- ${t}`).join("\n")}`] : []), ...proposals];
 		if (mode === "auto" && lessons.length) {
 			const r = saveLessons(lessons);
 			if (r.error) {
 				out.lines.push(`작업 방식: ${r.error}`);
-				notes.push(r.error);
+				out.view.push({ t: `작업 방식: ${r.error}`, s: "err" });
 				out.level = "warning";
 			}
 			if (r.added.length) out.lines.push(`작업 방식: 내 지침에 ${r.added.length}줄 더함 (${r.added.join(" / ")})`);
@@ -1168,21 +1469,34 @@ export default function (pi: ExtensionAPI) {
 			if (r.full) out.lines.push(`작업 방식: 한도(${LESSON_MAX_LINES}줄·${LESSON_MAX_CHARS}자)를 넘어 덜 쓰인 ${r.dropped.length}줄을 뺌. 다음에는 비슷한 줄을 합쳐 짧게`);
 			if (r.rejected.length) out.lines.push(`작업 방식: 이메일·전화번호·비밀로 보이는 ${r.rejected.length}줄은 남기지 않음`);
 			if (r.skipped.length) out.lines.push(`작업 방식: 한 번에 ${LESSON_PER_WRITE}줄까지라 ${r.skipped.length}줄은 남기지 않음`);
-			if (r.added.length || r.dropped.length)
-				notes.push(
-					`내 지침의 '작업 방식' 에 ${r.added.length}줄 더함${r.added.length ? `: ${r.added.map((t) => brief(t)).join(" / ")}` : ""}${r.dropped.length ? ` (한도로 ${r.dropped.length}줄 뺌)` : ""}. ` +
-						"다음 세션부터 반영 · 보기 /wiki lessons · 되돌리기 /wiki lessons undo",
-				);
+			if (r.added.length || r.bumped.length || r.dropped.length) {
+				out.view.push({ t: `배운 작업 방식 → 내 지침 ${tilde(agentsFile())} 의 '작업 방식' (다음 세션부터 반영):`, s: "head" });
+				out.view.push(...r.added.map((t): ViewLine => ({ t: `  + ${t}`, s: "ok" })));
+				out.view.push(...r.bumped.map((t): ViewLine => ({ t: `  = ${t} (이미 있어 횟수만 올림)`, s: "dim" })));
+				out.view.push(...r.dropped.map((t): ViewLine => ({ t: `  - ${t} (한도 ${LESSON_MAX_LINES}줄·${LESSON_MAX_CHARS}자라 뺌 → lessons/archive.md)`, s: "warn" })));
+			}
+			if (r.rejected.length) out.view.push({ t: `  × 이메일·전화번호·비밀로 보이는 ${r.rejected.length}줄은 남기지 않음`, s: "warn" });
+			if (r.skipped.length) out.view.push({ t: `  × 한 번에 ${LESSON_PER_WRITE}줄까지라 ${r.skipped.length}줄은 남기지 않음`, s: "warn" });
+			if (r.changed) out.view.push({ t: "  보기 /wiki lessons · 되돌리기 /wiki lessons undo", s: "dim" });
 		}
+		// 제안: propose 면 작업 방식 줄도 하나씩 제안으로
+		const props = [...(mode === "propose" ? lessons.map((t) => `지침의 작업 방식에 더하기:\n- ${t}`) : []), ...proposals];
 		if (props.length) {
 			const s = saveProposals(props, wiki);
 			if (s.saved) {
 				out.lines.push(`제안: ${s.saved}건을 모음 (사용자가 보고 적용)`);
-				notes.push(`작업 방식 제안 ${s.saved}건을 모았습니다: ${slash(join(lessonsDir(), "proposals.md"))} (보기 /wiki lessons)`);
+				out.view.push({ t: `작업 방식 제안 ${s.saved}건을 모음 → ${tilde(join(lessonsDir(), "proposals.md"))} (사람이 보고 적용 · 보기 /wiki lessons):`, s: "head" });
+				for (const p of props.filter((t) => !secretish(t))) {
+					const ls = p.split("\n").map((l) => l.trim().replace(/^[-*•]\s+/, "")).filter(Boolean);
+					const what = ls[0] === "지침의 작업 방식에 더하기:" ? `(내 지침에) ${ls[1] || ""}` : `${ls[0]}${ls.length > 1 ? ` (+${ls.length - 1}줄)` : ""}`;
+					out.view.push({ t: `  ? ${brief(what, 160)}`, s: "dim" });
+				}
 			}
-			if (s.rejected) out.lines.push(`제안: 이메일·전화번호·비밀로 보이는 ${s.rejected}건은 남기지 않음`);
+			if (s.rejected) {
+				out.lines.push(`제안: 이메일·전화번호·비밀로 보이는 ${s.rejected}건은 남기지 않음`);
+				out.view.push({ t: `  × 이메일·전화번호·비밀로 보이는 제안 ${s.rejected}건은 남기지 않음`, s: "warn" });
+			}
 		}
-		out.notice = notes.join("\n");
 		return out;
 	};
 
@@ -1256,6 +1570,8 @@ export default function (pi: ExtensionAPI) {
 		sendItem(ctx);
 	};
 
+	pi.registerEntryRenderer?.(ENTRY, (entry: any, _opts: unknown, theme: any) => renderEntry(entry?.data, theme));
+
 	pi.registerTool({
 		name: "wiki_search",
 		label: "위키 찾기",
@@ -1296,13 +1612,16 @@ export default function (pi: ExtensionAPI) {
 		label: "위키 쓰기",
 		description:
 			"위키 페이지 쓰기 (pages/ 아래만, 여러 페이지를 한 번에). text 에 페이지마다 '=== pages/<분류>/<제목>.md' 줄, 이어서 머리말(--- title / summary / type / sources ---)과 본문. " +
+			"있는 페이지는 통째로 다시 쓰지 말고, 더할 것은 '=== 덧붙이기 pages/<분류>/<제목>.md' 줄 다음에 더할 글만 (끝에 붙음. 줄 끝에 '## 절 제목' 을 붙이면 그 절 끝에), " +
+			"바꿀 곳은 '=== 고치기 pages/<분류>/<제목>.md' 줄 다음에 '<<<<<<< 찾기' 줄, 페이지의 지금 글 그대로, '=======' 줄, 바꿀 글, '>>>>>>> 바꾸기' 줄 (여러 곳이면 블록 여러 개). " +
+			"원래 내용이 많이 빠지는 통째 다시 쓰기는 거절된다 (나누기·정리로 일부러 줄이면 '=== 다시쓰기 pages/...'). " +
 			"링크는 [[페이지 제목]]. 목록(index.md)과 기록(log.md)은 자동. op(ingest·query·lint·note)와 title 은 기록에 남는다." +
 			(lessonMode(readConfig()) !== "off"
 				? " '=== 작업 방식' 부분(한 줄씩)은 내 지침의 작업 방식에, '=== 제안' 부분은 제안 모음에 들어간다 (페이지 없이 이것만 써도 됨)."
 				: "") +
 			(isBridge() ? " 이스케이프 없이 ```text 블록에 '@tool wiki_write op=ingest title=\"제목\"' 줄 다음에 text 를 이어 써도 된다" : ""),
 		parameters: Type.Object({
-			text: Type.String({ description: "'=== pages/<분류>/<제목>.md' 줄로 나눈 페이지들 (머리말 포함)" }),
+			text: Type.String({ description: "'=== pages/<분류>/<제목>.md' 줄로 나눈 페이지들 (머리말 포함), '=== 덧붙이기 …'·'=== 고치기 …' 부분" }),
 			op: Type.Optional(Type.String({ description: "ingest | query | lint | note" })),
 			title: Type.Optional(Type.String({ description: "기록에 남길 제목" })),
 		}),
@@ -1313,19 +1632,23 @@ export default function (pi: ExtensionAPI) {
 			const extra = sp.lessons.length + sp.proposals.length > 0;
 			const pagesGiven = /^===\s+\S/m.test(sp.pages);
 			const r: WriteResult =
-				pagesGiven || !extra ? await locked(() => applyWrite(root, name, sp.pages, op, String(params.title || ""))) : { written: [], names: [], errors: [], warnings: [] };
+				pagesGiven || !extra
+					? await locked(() => applyWrite(root, name, sp.pages, op, String(params.title || "")))
+					: { written: [], names: [], kinds: [], errors: [], warnings: [] };
 			const learned = await locked(() => learn(cfg, name, op, sp.lessons, sp.proposals));
 			const lines = [
-				r.written.length ? `썼습니다 ${r.written.length}쪽: ${r.names.map((n) => `[[${n}]]`).join(", ")} (목록·기록 고침)` : pagesGiven || !extra ? "쓴 페이지 없음" : "",
+				r.written.length ? `썼습니다 ${new Set(r.written).size}쪽: ${writtenText(r)} (목록·기록 고침)` : pagesGiven || !extra ? "쓴 페이지 없음" : "",
 				...r.errors.map((e) => `오류: ${e}`),
 				...r.warnings.map((w) => `참고: ${w}`),
 				...learned.lines,
 			].filter(Boolean);
-			if (learned.notice && ctx?.hasUI) {
-				try {
-					ctx.ui.notify(learned.notice, learned.level);
-				} catch {}
-			}
+			// 사람에게: 무엇을 썼고 무엇을 배웠는지 (배울 때인데 '=== 작업 방식' 이 없었으면 그렇다고)
+			const view: ViewLine[] = [];
+			if (r.written.length) view.push({ t: `썼습니다 ${new Set(r.written).size}쪽: ${writtenText(r)}` });
+			if (r.errors.length) view.push({ t: `쓰지 못함 ${r.errors.length}건: ${brief(r.errors[0], 120)}${r.errors.length > 1 ? " 등" : ""}`, s: "err" });
+			if (learned.view.length) view.push(...learned.view);
+			else if (r.written.length && lessonMode(cfg) !== "off" && op !== "ingest" && !batch) view.push({ t: "작업 방식: 이번에 배운 것 없음", s: "dim" });
+			if (r.written.length || learned.view.length) post(ctx, `위키 '${name}'`, view, learned.level, learned.view.length > 0);
 			if (!r.written.length && (pagesGiven || !learned.handled)) throw new Error(lines.join("\n"));
 			return result(lines.join("\n"));
 		},

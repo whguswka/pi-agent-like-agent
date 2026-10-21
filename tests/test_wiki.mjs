@@ -1,13 +1,15 @@
 // LLM 위키(profiles/common/agent-template/extensions/wiki.ts) 단위 테스트
-// 사용법: node tests/test_wiki.mjs   (저장소의 runtime/node_modules/jiti 로 .ts 를, typebox 는 pi 처럼 runtime 의 것으로)
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// 사용법: node tests/test_wiki.mjs   (저장소의 runtime/node_modules/jiti 로 .ts 를, typebox 는 pi 처럼 runtime 의 것으로, pi-tui 는 tests/stubs 의 것으로)
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "../runtime/node_modules/jiti/lib/jiti.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const jiti = createJiti(import.meta.url, { alias: { typebox: join(ROOT, "runtime/node_modules/typebox/build/index.mjs") } });
+const jiti = createJiti(import.meta.url, {
+	alias: { typebox: join(ROOT, "runtime/node_modules/typebox/build/index.mjs"), "@earendil-works/pi-tui": join(ROOT, "tests/stubs/pi-tui.mjs") },
+});
 const w = await jiti.import("../profiles/common/agent-template/extensions/wiki.ts");
 let fails = 0;
 const check = (name, cond, detail = "") => {
@@ -74,6 +76,79 @@ check("고치기 전 페이지는 .history/<날짜>/ 에", r.written.length === 
 r = w.applyWrite(root, "모델운영", "=== pages/model/x.md\n제목 없음\n=== raw/x.md\n---\ntitle: x\n---\n", "note", "", "2026-10-15");
 check("머리말 없는 페이지, pages/ 밖은 쓰지 않음", !r.written.length && r.errors.length === 2 && r.errors.some((e) => e.includes("머리말")) && r.errors.some((e) => e.includes("pages/ 아래만")), r);
 check("'=== 경로' 줄이 없으면 안내", w.applyWrite(root, "모델운영", "---\ntitle: a\n---\n", "note").errors[0].includes("=== pages/"));
+
+// 있는 페이지 고치기: 덧붙이기, 고치기(찾아 바꾸기), 통째로 다시 쓸 때 원래 내용이 빠지면 거절 (따로 만든 위키에서)
+const hd = (s) => JSON.stringify(w.parseHead(s));
+check("'=== ' 머리: 페이지 전체, 덧붙이기(+절), 고치기, 다시쓰기, 다른 말·쌍점도",
+	hd("pages/model/A.md") === JSON.stringify({ how: "page", target: "pages/model/A.md", section: "" })
+	&& hd("덧붙이기 pages/model/수요 예측 모델.md ## 변경 이력") === JSON.stringify({ how: "append", target: "pages/model/수요 예측 모델.md", section: "## 변경 이력" })
+	&& hd("고치기 [[수요 예측 모델]]") === JSON.stringify({ how: "edit", target: "[[수요 예측 모델]]", section: "" })
+	&& hd("다시쓰기 pages/model/A.md") === JSON.stringify({ how: "rewrite", target: "pages/model/A.md", section: "" })
+	&& w.parseHead("append: pages/a/B.md").how === "append" && w.parseHead("수정 pages/a/B.md").how === "edit" && w.parseHead("작업 방식").how === "page",
+	[hd("덧붙이기 pages/model/수요 예측 모델.md ## 변경 이력"), hd("고치기 [[수요 예측 모델]]")]);
+let ap = w.appendTo("---\ntitle: A\nsummary: s\ntype: model\n---\n# A\n- 하나\n- 둘\n\n", "- 셋\n");
+check("덧붙이기: 끝에 (목록 뒤의 목록은 빈 줄 없이)", ap.text === "---\ntitle: A\nsummary: s\ntype: model\n---\n# A\n- 하나\n- 둘\n- 셋\n", ap.text);
+ap = w.appendTo("# A\n본문\n", "새 문단\n");
+check("덧붙이기: 문단은 빈 줄을 두고, 머리말 없는 페이지도", ap.text === "# A\n본문\n\n새 문단\n", ap.text);
+const sec = "---\ntitle: A\nsummary: s\ntype: model\n---\n# A\n## 개요\n가\n\n## 변경 이력\n- 1월: 처음\n```\n## 코드 안의 제목\n```\n### 세부\n나\n\n## 담당\n홍\n";
+ap = w.appendTo(sec, "- 10월: 바꿈", "## 변경 이력");
+check("덧붙이기: '## 절' 끝에 (아래 단계 제목·코드 블록 안의 # 은 절 안, 같은 단계 제목 앞)",
+	ap.text.includes("### 세부\n나\n\n- 10월: 바꿈\n\n## 담당\n홍\n") && ap.text.split("10월").length === 2, ap.text);
+ap = w.appendTo(sec, "- 담당 바뀜", "### 담당");
+check("덧붙이기: 절 제목은 단계가 달라도 글이 같으면 그 절", ap.text.endsWith("## 담당\n홍\n\n- 담당 바뀜\n"), ap.text);
+ap = w.appendTo(sec, "처음 생긴 절의 글", "## 장애");
+check("덧붙이기: 없는 절이면 끝에 만듦", ap.text.endsWith("## 담당\n홍\n\n## 장애\n\n처음 생긴 절의 글\n"), ap.text);
+ap = w.appendTo("---\ntitle: A\nsummary: s\ntype: model\nsources:\n  - raw/a.md\n---\n# A\n본문\n", "---\nsources: [raw/b.md, raw/a.md]\n---\n# A\n더한 글\n");
+check("덧붙이기: 앞의 머리말 sources 는 페이지 sources 에 더함 (겹치면 하나), 제목 줄을 다시 적었으면 뺌",
+	ap.text === "---\ntitle: A\nsummary: s\ntype: model\nsources: [raw/a.md, raw/b.md]\n---\n# A\n본문\n\n더한 글\n" && w.parseFrontmatter(ap.text).meta.sources.join("|") === "raw/a.md|raw/b.md", ap.text);
+check("덧붙이기: 덧붙일 글이 없으면 오류", !!w.appendTo("# A\n", "\n\n").error);
+check("덧붙이기: 키가 없는 '---' 두 줄(가로줄) 사이의 글은 머리말로 보지 않음", w.appendTo("# A\n본문\n", "---\n그냥 문단\n---\n").text === "# A\n본문\n\n---\n그냥 문단\n---\n");
+const ed = (text, edits) => w.editPage(text, edits);
+const pg = "---\ntitle: A\nsummary: s\ntype: model\n---\n# A\n- 학습: 매주 월요일\n- 지표: MAPE\n  - 기준 10%\n- 담당: 홍\n";
+let er = ed(pg, "<<<<<<< 찾기\n- 학습: 매주 월요일\n=======\n- 학습: 매주 화요일 (10월부터)\n>>>>>>> 바꾸기\n");
+check("고치기: 찾은 한 곳만 바꾸고 나머지는 그대로", !er.error && er.text === pg.replace("매주 월요일", "매주 화요일 (10월부터)"), er);
+er = ed(pg, "<<<<<<< SEARCH\n-   학습:  매주 월요일   \n- 지표: MAPE\n=======\n- 학습: 매주 수요일\n- 지표: MAPE\n>>>>>>> REPLACE\n");
+check("고치기: 띄어쓰기만 다르면 줄 단위로 맞춤, SEARCH/REPLACE 말도", !er.error && er.text.includes("- 학습: 매주 수요일\n- 지표: MAPE\n  - 기준 10%"), er);
+er = ed(pg, "<<<<<<< 찾기\n  - 기준 10%\n=======\n>>>>>>> 바꾸기\n<<<<<<< 찾기\nsummary: s\n=======\nsummary: 새 요약\n>>>>>>> 바꾸기\n");
+check("고치기: 블록 여러 개, 줄째 지우기(빈 줄을 남기지 않음), 머리말도", !er.error && er.text.includes("- 지표: MAPE\n- 담당: 홍") && er.text.includes("summary: 새 요약"), er);
+er = ed(pg, "<<<<<<< 찾기\n- 담당: 홍\n=======\n- 담당: 김\n>>>>>>> 바꾸기\n<<<<<<< 찾기\n없는 줄\n=======\nx\n>>>>>>> 바꾸기\n");
+check("고치기: 하나라도 못 찾으면 페이지는 그대로, 몇 번째 블록인지와 지금 글을 읽으라는 말", er.error?.includes("2번째 블록") && er.error.includes("페이지에 없는 글") && er.error.includes("wiki_read") && er.text === pg, er);
+er = ed("# A\n- x\n- y\n- x\n", "<<<<<<< 찾기\n- x\n=======\n- z\n>>>>>>> 바꾸기\n");
+check("고치기: 여러 곳에 맞으면 오류 (앞뒤 줄을 더 넣으라는 말)", er.error?.includes("2곳") && er.error.includes("앞뒤 줄"), er);
+check("고치기: 블록이 없거나 닫히지 않으면 오류",
+	ed(pg, "그냥 새 글\n").error?.includes("'<<<<<<< 찾기'") && ed(pg, "<<<<<<< 찾기\nx\n=======\ny\n").error?.includes("닫히지") && ed(pg, "<<<<<<< 찾기\n\n=======\ny\n>>>>>>> 바꾸기").error?.includes("비었습니다"));
+const longBody = Array.from({ length: 30 }, (_, i) => `- ${i + 1}번째 사실: 학습 작업과 지표에 관한 확인된 내용`).join("\n");
+const longPage = `---\ntitle: 긴 페이지\nsummary: s\ntype: model\n---\n# 긴 페이지\n${longBody}\n`;
+check("다시 쓰기 막기: 읽은 앞부분만으로 다시 쓰면 빠진 줄들",
+	w.lostLines(longPage, `---\ntitle: 긴 페이지\nsummary: s\ntype: model\n---\n# 긴 페이지\n${longBody.split("\n").slice(0, 10).join("\n")}\n- 새 사실\n`).length === 20);
+check("다시 쓰기 막기: 몇 줄 고치거나 더한 것, 짧은 페이지는 막지 않음",
+	!w.lostLines(longPage, longPage.replace("3번째 사실", "셋째 사실").replace("7번째", "일곱째") + "- 더함\n").length
+	&& !w.lostLines("---\ntitle: a\n---\n짧은 글\n", "---\ntitle: a\n---\n전혀 다른 글\n").length
+	&& !w.lostLines(longPage, longPage.replace(/^- /gm, "* ")).length);
+const ew = join(tmp, "고치기위키");
+w.initWiki(ew, "고치기위키", "2026-10-21");
+w.applyWrite(ew, "고치기위키", `=== pages/model/수요 예측 모델.md\n---\ntitle: 수요 예측 모델\nsummary: 주간 수요 예측\ntype: model\nsources: [raw/회의록.md]\n---\n# 수요 예측 모델\n${longBody}\n\n## 변경 이력\n- 1월: 처음 배포\n`, "ingest", "", "2026-10-20");
+const em = () => read(join(ew, "pages/model/수요 예측 모델.md"));
+r = w.applyWrite(ew, "고치기위키", "=== 덧붙이기 pages/model/수요 예측 모델.md ## 변경 이력\n---\nsources: [raw/회의록 10월.md]\n---\n- 10월: 학습 요일을 화요일로\n=== 고치기 [[수요 예측 모델]]\n<<<<<<< 찾기\n- 2번째 사실: 학습 작업과 지표에 관한 확인된 내용\n=======\n- 2번째 사실: 학습은 매주 화요일\n>>>>>>> 바꾸기\n", "ingest", "10월 회의록", "2026-10-21");
+check("쓰기: 덧붙이기·고치기 (경로·[[제목]]), 나머지 내용은 그대로, sources·updated, .history, 기록",
+	r.written.length === 2 && JSON.stringify(r.kinds) === JSON.stringify(["append", "edit"]) && em().includes("- 1번째 사실") && em().includes("- 30번째 사실")
+	&& em().includes("- 1월: 처음 배포\n- 10월: 학습 요일을 화요일로\n") && em().includes("- 2번째 사실: 학습은 매주 화요일") && em().includes("sources: [raw/회의록.md, raw/회의록 10월.md]")
+	&& em().includes("updated: 2026-10-21") && existsSync(join(ew, ".history/2026-10-21/pages/model/수요 예측 모델.md"))
+	&& read(join(ew, "log.md")).includes("## [2026-10-21] ingest | 10월 회의록\n- [[수요 예측 모델]]\n")
+	&& w.writtenText(r) === "덧붙임 [[수요 예측 모델]] · 고침 [[수요 예측 모델]]", [r, em()]);
+const before = em();
+r = w.applyWrite(ew, "고치기위키", `=== pages/model/수요 예측 모델.md\n---\ntitle: 수요 예측 모델\nsummary: 주간 수요 예측\ntype: model\n---\n# 수요 예측 모델\n${longBody.split("\n").slice(0, 8).join("\n")}\n- 새로 안 것\n`, "note", "", "2026-10-21");
+check("쓰기: 통째로 다시 써서 원래 내용이 많이 빠지면 쓰지 않고 덧붙이기·고치기·다시쓰기를 알려 줌",
+	!r.written.length && r.errors[0].includes("원래 내용") && r.errors[0].includes("=== 덧붙이기 pages/model/수요 예측 모델.md") && r.errors[0].includes("=== 고치기") && r.errors[0].includes("=== 다시쓰기") && em() === before, r);
+r = w.applyWrite(ew, "고치기위키", `=== 다시쓰기 [[수요 예측 모델]]\n---\ntitle: 수요 예측 모델\nsummary: 주간 수요 예측 (나눔)\ntype: model\n---\n# 수요 예측 모델\n자세한 것은 [[수요 예측 학습]]\n`, "lint", "나누기", "2026-10-21");
+check("쓰기: '=== 다시쓰기' 는 일부러 줄이는 것이라 씀 (제목으로 찾은 그 경로에, 고치기 전 것은 .history)",
+	JSON.stringify(r.kinds) === JSON.stringify(["page"]) && em().includes("자세한 것은") && !em().includes("1번째 사실")
+	&& readdirSync(join(ew, ".history/2026-10-21/pages/model")).some((f) => read(join(ew, ".history/2026-10-21/pages/model", f)).includes("- 10월: 학습 요일을 화요일로")), r);
+r = w.applyWrite(ew, "고치기위키", "=== 덧붙이기 pages/model/없는 페이지.md\n글\n=== 고치기 pages/model/수요 예측 모델.md\n<<<<<<< 찾기\ntitle: 수요 예측 모델\nsummary: 주간 수요 예측 (나눔)\ntype: model\n=======\n>>>>>>> 바꾸기\n", "note", "", "2026-10-21");
+check("쓰기: 없는 페이지에 덧붙이기, 머리말을 지우는 고치기는 쓰지 않음", !r.written.length && r.errors[0].includes("없는 페이지") && r.errors[1].includes("머리말"), r);
+writeFileSync(join(ew, "pages/model/윈도.md"), "---\r\ntitle: 윈도\r\nsummary: CRLF 페이지\r\ntype: model\r\n---\r\n# 윈도\r\n- 가\r\n");
+r = w.applyWrite(ew, "고치기위키", "=== 덧붙이기 윈도\n- 나\n", "note", "", "2026-10-21");
+check("쓰기: 줄바꿈이 CRLF 인 페이지는 CRLF 그대로", r.written.length === 1 && read(join(ew, "pages/model/윈도.md")) === "---\r\ntitle: 윈도\r\nsummary: CRLF 페이지\r\ntype: model\r\nupdated: 2026-10-21\r\n---\r\n# 윈도\r\n- 가\r\n- 나\r\n", read(join(ew, "pages/model/윈도.md")));
 
 // 검색·읽기
 let pages = w.loadPages(root);
@@ -320,6 +395,53 @@ check("/wiki lessons off 를 다시: 이미 꺼짐", said.includes("이미 꺼�
 said = await lessonsCmd("아무거나");
 check("/wiki lessons 모르는 말: 사용법, 설정은 그대로", said.includes("사용법") && w.readConfig().lessons === "off", said);
 check("말: on·auto·켜기 -> auto, propose·제안, off·끄기", w.LESSON_WORDS.on === "auto" && w.LESSON_WORDS["켜기"] === "auto" && w.LESSON_WORDS["제안"] === "propose" && w.LESSON_WORDS["끄기"] === "off");
+// 대화창의 '[위키]' 항목: 무엇을 썼고 무엇을 배웠는지 (pi 화면에서는 pi.appendEntry 로 남김. 모델에게는 가지 않음)
+setCfg();
+const entries = [];
+const renderers = {};
+const tools2 = {};
+w.default({
+	registerTool: (t) => (tools2[t.name] = t), registerCommand: () => {}, on: () => {}, getActiveTools: () => [], setActiveTools: () => {}, sendUserMessage: () => {},
+	appendEntry: (type, data) => entries.push([type, data]), registerEntryRenderer: (type, fn) => (renderers[type] = fn),
+});
+const tuiNotes = [];
+const tuiCtx = { hasUI: true, mode: "tui", ui: { notify: (m, l) => tuiNotes.push([m, l]) } };
+const call2 = (text, op = "note") => tools2.wiki_write.execute("t2", { text, op }, undefined, undefined, tuiCtx);
+const lastEntry = () => entries[entries.length - 1]?.[1];
+const entryText = (d) => (d?.lines || []).map((l) => l.t).join("\n");
+await call2(`=== pages/concept/항목 시험.md\n${page("항목 시험", "concept", "가")}=== 작업 방식\n- 다음부터 위키를 쓰기 전에 같은 제목의 페이지가 있는지 먼저 찾는다\n`);
+let en = lastEntry();
+check("[위키] 항목: 쓴 페이지, 배운 줄 전체(+), 지침 위치·보기·되돌리기 (알림은 따로 띄우지 않음)",
+	entries.length === 1 && entries[0][0] === w.ENTRY && en.title === "위키 '배움위키'" && entryText(en).includes("썼습니다 1쪽: 새로 [[항목 시험]]")
+	&& en.lines.some((l) => l.s === "ok" && l.t === "  + 다음부터 위키를 쓰기 전에 같은 제목의 페이지가 있는지 먼저 찾는다")
+	&& entryText(en).includes("AGENTS.md") && entryText(en).includes("/wiki lessons undo") && !tuiNotes.length, [entries, tuiNotes]);
+await call2("=== 덧붙이기 [[항목 시험]]\n나\n");
+check("[위키] 항목: 배울 때인데 작업 방식이 없으면 '이번에 배운 것 없음'", entries.length === 2 && entryText(lastEntry()).includes("덧붙임 [[항목 시험]]") && entryText(lastEntry()).includes("이번에 배운 것 없음"), lastEntry());
+await call2("=== 작업 방식\n- 다음부터 위키를 쓰기 전에 같은 제목의 페이지가 있는지 먼저 찾는다\n");
+check("[위키] 항목: 이미 있는 줄은 '=' (횟수만 올림)", lastEntry().lines.some((l) => l.t.startsWith("  = 다음부터 위키를") && l.t.includes("횟수만")), lastEntry());
+await call2(`=== pages/source/반영 시험.md\n${page("반영 시험", "source", "x")}`, "ingest");
+check("[위키] 항목: 원본 반영(ingest)이고 작업 방식이 없으면 작업 방식 줄은 없음", entryText(lastEntry()).includes("새로 [[반영 시험]]") && !entryText(lastEntry()).includes("작업 방식"), lastEntry());
+let thrown2 = "";
+try {
+	await call2(`=== pages/concept/항목 시험.md\n${page("항목 시험", "concept", "")}`.replace("summary", "x"));
+} catch (e) {
+	thrown2 = e.message;
+}
+check("[위키] 항목: 아무것도 못 쓰고 배운 것도 없으면 남기지 않음 (도구 오류로 보임)", thrown2.includes("오류:") && entries.length === 4, [thrown2, entries.length]);
+setCfg({ lessons: "propose" });
+await call2("=== 작업 방식\n- 제안 시험 줄\n=== 제안\n- llm-wiki 스킬에 고치기 예시를 더한다\n- 둘째 줄\n");
+en = lastEntry();
+check("[위키] 항목: 제안만이면 모은 곳과 '?' 줄 (내 지침에 더할 줄, 제안의 첫 줄)",
+	entryText(en).includes("제안 2건을 모음") && entryText(en).includes("proposals.md") && en.lines.some((l) => l.t === "  ? (내 지침에) 제안 시험 줄")
+	&& en.lines.some((l) => l.t === "  ? llm-wiki 스킬에 고치기 예시를 더한다 (+1줄)"), en);
+setCfg({ lessons: "off" });
+await call2("=== 덧붙이기 [[항목 시험]]\n다\n");
+check("[위키] 항목: 작업 방식이 꺼져 있으면 '배운 것 없음' 줄도 없음", entryText(lastEntry()).includes("덧붙임") && !entryText(lastEntry()).includes("작업 방식"), lastEntry());
+const theme = { fg: (c, s) => `<${c}>${s}`, bg: (c, s) => `{${c}}${s}`, bold: (s) => `*${s}*` };
+const drawn = renderers[w.ENTRY]({ type: "custom", customType: w.ENTRY, data: entries[0][1] }, { expanded: false }, theme).render(80);
+check("[위키] 항목 그리기: 이름표, 줄마다 색 (배운 줄 success, 흐린 줄 muted), 틀린 데이터는 그리지 않음",
+	drawn[0] === "{customMessageBg}<customMessageLabel>*[위키 '배움위키']*" && drawn.some((l) => l === "{customMessageBg}<success>  + 다음부터 위키를 쓰기 전에 같은 제목의 페이지가 있는지 먼저 찾는다")
+	&& drawn.some((l) => l.includes("<muted>  보기 /wiki lessons")) && w.renderEntry(undefined, theme) === undefined && w.renderEntry({ title: "x" }, theme) === undefined, drawn);
 if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
 
