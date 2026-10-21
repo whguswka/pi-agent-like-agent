@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readTarget, shown, target, transformInput } from "./lib/relay.ts";
+import { readTarget, shown, target, transformInput, userAsk } from "./lib/relay.ts";
 import { base, parseShell, strip } from "./lib/shell.ts";
 
 export type Mode = "plan" | "ask" | "auto";
@@ -585,7 +585,7 @@ export default function (pi: ExtensionAPI) {
 				setMode(ctx, next);
 				steps = found.map((text) => ({ text, done: false }));
 				showSteps(ctx);
-				pi.sendUserMessage(proceedText(found.length, next));
+				pi.sendUserMessage(userAsk(proceedText(found.length, next), `(계획대로 진행, ${found.length}단계)`));
 			} finally {
 				asking = false;
 			}
@@ -611,7 +611,7 @@ export default function (pi: ExtensionAPI) {
 			if (req.startsWith("/")) return ctx.ui.notify(`계획 모드입니다. / 로 시작하는 명령은 대신 보낼 수 없으니 지금 직접 입력해 주세요: ${req}`, "info");
 			// 다른 작업 중이면 그 작업이 끝난 뒤 보내지도록 줄 세움 (그냥 보내면 "이미 처리 중" 오류로 요청이 사라짐. 쉬고 있으면 바로 보냄)
 			if (!ctx.isIdle()) ctx.ui.notify("지금 작업이 끝나면 이 요청을 계획 모드로 이어서 보냅니다", "info");
-			setTimeout(() => pi.sendUserMessage(req, { deliverAs: "followUp" }), 0);
+			setTimeout(() => pi.sendUserMessage(userAsk(req), { deliverAs: "followUp" }), 0);
 		},
 	});
 

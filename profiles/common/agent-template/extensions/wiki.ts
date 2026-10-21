@@ -23,7 +23,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { rawInput } from "./lib/relay.ts";
+import { rawInput, secretish, userAsk } from "./lib/relay.ts";
 
 // ---------------------------------------------------------------------------
 // 설정
@@ -1175,11 +1175,6 @@ const LESSON_END = "<!-- /kit lessons -->";
 const LESSON_HEAD = "## 작업 방식 (위키를 쓸 때 pi 가 배운 것. 고치거나 지워도 되고, 끝의 날짜 표시를 지운 줄은 pi 가 건드리지 않음)";
 const LESSON_SECTION = /^작업\s*방식$/;
 const PROPOSAL_SECTION = /^제안$/;
-const SECRETISH =
-	/[\w.+-]+@[\w-]+(\.[\w-]+)+|\[(이메일|번호)\d+\]|(?<!\d)0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}(?!\d)|(password|passwd|비밀번호|암호|토큰|token|secret|api[_ -]?key)\s*[:=]/i;
-/** 계좌번호 모양 번호 (중계 서버의 ACCOUNT_RE 와 같음): 숫자 묶음을 - _ 로 이은 것이나 이어 쓴 숫자로 합쳐 10~14자리 */
-const NUMBERISH = /(?<![0-9A-Za-z.-])(?:\d{2,8}[-_]){1,3}\d{2,8}(?![0-9A-Za-z.-])|(?<![0-9A-Za-z.-])\d{10,14}(?![0-9A-Za-z.-])/g;
-const numberish = (s: string) => [...s.matchAll(NUMBERISH)].some((m) => (m[0].match(/\d/g) || []).length >= 10 && (m[0].match(/\d/g) || []).length <= 14);
 
 export function lessonMode(cfg: { auto: Auto; lessons?: LessonMode }): LessonMode {
 	if (cfg.lessons === "auto" || cfg.lessons === "propose" || cfg.lessons === "off") return cfg.lessons;
@@ -1191,8 +1186,8 @@ export const lessonLabel = (m: LessonMode, short = false) =>
 	short ? { auto: "켜짐", propose: "제안만", off: "꺼짐" }[m] : { auto: "켜짐 (위키를 쓸 때 내 지침에 자동으로)", propose: "제안만 (lessons/proposals.md 에 모음)", off: "꺼짐" }[m];
 export const lessonsDir = () => join(agentDir(), "lessons");
 export const agentsFile = () => join(agentDir(), "AGENTS.md");
-/** 이메일·전화번호·비밀로 보이는 글 */
-export const secretish = (s: string) => SECRETISH.test(s) || numberish(s);
+/** 이메일·전화번호·계좌번호 모양 번호·비밀로 보이는 글 (lib/relay.ts: 작업 기록과 같은 꼴) */
+export { secretish };
 
 /** wiki_write 의 글에서 '=== 작업 방식'(한 줄씩)·'=== 제안'(부분마다 하나) 을 떼어 냄. 나머지(페이지들)는 그대로 */
 export function splitLessons(text: string): { pages: string; lessons: string[]; proposals: string[] } {
@@ -1880,7 +1875,8 @@ export default function (pi: ExtensionAPI) {
 			if (sub === "ask") {
 				if (!arg) return notify("/wiki ask <질문>", "warning");
 				lastPrompt = arg; // /wiki save 의 질문
-				return send(ctx, `'${c.name}' 위키를 근거로 답해 줘. 먼저 wiki_search 로 찾고 wiki_read 로 읽은 뒤, 답 끝에 근거 페이지를 [[제목]] 으로 밝혀 줘. 위키에 없으면 없다고 말해 줘.\n\n질문: ${arg}`);
+				const ask = `'${c.name}' 위키를 근거로 답해 줘. 먼저 wiki_search 로 찾고 wiki_read 로 읽은 뒤, 답 끝에 근거 페이지를 [[제목]] 으로 밝혀 줘. 위키에 없으면 없다고 말해 줘.\n\n질문: ${arg}`;
+				return send(ctx, userAsk(ask, `위키에 물음: ${arg}`));
 			}
 			if (sub === "save") {
 				if (!lastAnswer.trim()) return notify("저장할 답이 없습니다 (pi 의 답이 나온 뒤에 /wiki save)", "warning");

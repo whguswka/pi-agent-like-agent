@@ -190,3 +190,60 @@ export function transformInput(from: string, to: string) {
 
 /** input 이벤트의 글 -> 사용자가 친 그대로 (다른 확장이 고치지 않았으면 그 글) */
 export const rawInput = (text: string): string => RAW.get(text) ?? text;
+
+// 확장이 사용자를 대신해 보내는 요청 (/plan <요청>, 계획대로 진행, /wiki ask, /handoff): 작업 기록(memory.ts)이 사용자의 요청으로 남기게 표시.
+// 표시하지 않은 확장의 요청(폴더째 반영, /watch 의 로그 등)은 기록하지 않는다
+const ASKS: Map<string, string> = ((globalThis as any).__piUserAsks ||= new Map());
+
+/** 보낼 글을 사용자의 요청으로 표시하고 그 글을 그대로 돌려준다. label: 기록에 남길 글 (없으면 보낸 글) */
+export function userAsk(text: string, label = text): string {
+	ASKS.set(text, label);
+	while (ASKS.size > 8) ASKS.delete(ASKS.keys().next().value as string);
+	return text;
+}
+
+/** input 이벤트의 글이 확장이 대신 보낸 사용자의 요청이면 기록에 남길 글 */
+export const userAskOf = (text: string): string | undefined => ASKS.get(rawInput(text));
+
+// ── 개인정보·비밀로 보이는 글 (위키의 작업 방식, 작업 기록) ──────────────
+// 중계 서버(relay.py)의 감추기와 같은 꼴: 이메일, 전화번호, 카드번호, 계좌번호 모양 번호
+// (숫자 묶음을 - _ 로 이은 것이나 이어 쓴 숫자로 합쳐 10~14자리. 너무 길면 끝의 _ 묶음을 떼어 봄), [이메일N]·[번호N]
+const EMAIL_RE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+const PHONE_RE = /(?<!\d)0\d{1,2}[- .]?\d{3,4}[- .]?\d{4}(?!\d)/g;
+const CARD_RE = /(?<![\d.])(?:\d{4}[- ]){3}\d{1,7}(?![\d.])|(?<![\d.])\d{15,19}(?![\d.])/g;
+const TOKEN_RE = /\[(?:이메일|번호)\d+\]/g;
+const SECRET_RE = /(?:password|passwd|비밀번호|암호|토큰|token|secret|api[_ -]?key)\s*[:=]/i;
+const NB = "(?<![0-9A-Za-z.])(?<![0-9A-Fa-f]-)";
+const NA = "(?![0-9A-Za-z-]|\\.\\d)";
+const NUMBER_RE = new RegExp(`${NB}(?:\\d{2,8}[-_]){1,3}\\d{2,8}${NA}|${NB}\\d{10,14}${NA}`, "g");
+const digitCount = (s: string) => (s.match(/\d/g) || []).length;
+/** 계좌번호 모양인 부분: 10~14자리 (넘으면 끝의 _ 묶음을 떼어 봄) */
+function accountPart(m: string): string | null {
+	let s = m;
+	while (digitCount(s) > 14 && s.includes("_")) s = s.slice(0, s.lastIndexOf("_"));
+	const n = digitCount(s);
+	return n >= 10 && n <= 14 ? s : null;
+}
+const has = (re: RegExp, s: string) => {
+	re.lastIndex = 0;
+	return re.test(s);
+};
+
+/** 이메일·전화번호·카드·계좌번호 모양 번호·[이메일N]·비밀로 보이는 글이 들었는지 */
+export function secretish(s: string): boolean {
+	return has(EMAIL_RE, s) || has(TOKEN_RE, s) || has(PHONE_RE, s) || has(CARD_RE, s) || SECRET_RE.test(s) || [...s.matchAll(NUMBER_RE)].some((m) => accountPart(m[0]) !== null);
+}
+
+/** 기록에 남길 글: 이메일·전화번호·카드·계좌번호 모양 번호·[이메일N] 은 '…' 로 빼고, 비밀로 보이는 글이면 "" */
+export function scrubText(s: string): string {
+	if (SECRET_RE.test(s)) return "";
+	return s
+		.replace(EMAIL_RE, "…")
+		.replace(TOKEN_RE, "…")
+		.replace(CARD_RE, "…")
+		.replace(PHONE_RE, "…")
+		.replace(NUMBER_RE, (m) => {
+			const a = accountPart(m);
+			return a === null ? m : `…${m.slice(a.length)}`;
+		});
+}

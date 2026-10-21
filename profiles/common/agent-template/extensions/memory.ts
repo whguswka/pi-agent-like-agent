@@ -1,6 +1,7 @@
 /**
- * 기억하기 (/remember <내용>): 앞으로도 지킬 내용을 지침 파일(AGENTS.md)에 적어 둔다.
+ * 기억하기
  *
+ * 1) /remember <내용>: 앞으로도 지킬 내용을 지침 파일(AGENTS.md)에 적어 둔다.
  *  /remember 테스트는 pytest -q 로 돌린다
  *  - 어디에 적을지 고른다: 이 프로젝트(작업 폴더의 AGENTS.md) 또는 모든 프로젝트(~/.pi/agent/AGENTS.md).
  *    jupyter 모드에서 '이 프로젝트' 는 노트북 작업 폴더의 AGENTS.md (중계 서버를 거쳐 씀)
@@ -8,12 +9,37 @@
  *  - 지침 파일은 pi 를 시작할 때 읽으므로, 지금 대화에는 다음 요청 앞에 붙여 바로 알려 준다
  *    (/reload 로 다시 읽으면 Copilot 새 대화가 열려 느리므로 쓰지 않는다)
  *  - 지우거나 고치려면 그 파일을 직접 고친다
+ *
+ * 2) 작업 기록 (/recall, /handoff): 세션을 새로 시작해도 이 프로젝트에서 하던 일을 이어 가게
+ *  - 요청이 끝날 때마다 질문 없이 남긴다: 사용자가 친 요청, 바꾼 파일, 돌린 명령, 위키에 쓴 페이지, 답의 앞부분.
+ *    확장이 보낸 요청은 사용자를 대신한 것(/plan <요청>, 계획대로 진행, /wiki ask)만 (폴더째 반영·/watch 의 로그는 남기지 않음)
+ *  - 같은 프로젝트(작업 폴더. jupyter 모드면 노트북 작업 폴더)에서 세션을 시작하면 지난 기록을 지침의 <recent_work> 부분으로 알린다.
+ *    세션 안에서는 첫 요청 때 정한 같은 글 (지침이 바뀌면 Copilot·사내AI 는 새 대화를 열므로)
+ *  - /handoff: 다음 세션에 넘길 요약을 모델에게 부탁해(질문 1번) 기록에 넣는다. /new·/resume 때 이 세션의 요청이 3개 이상이면 물어본다
+ *  - 기록은 PC 의 ~/.pi/agent/work-log/<프로젝트>.jsonl (프로젝트마다 최근 200개).
+ *    이메일·전화번호·카드·계좌번호 모양 번호는 '…' 로 빼고, 비밀로 보이는 글은 남기지 않는다
+ *  - /recall (보기) · /recall off·on (끄기·켜기) · /recall clear (이 프로젝트 기록 지우기)
  */
 
+import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readTarget, type Target, target, transformInput, workDir, writeTarget } from "./lib/relay.ts";
+import {
+	rawInput,
+	readTarget,
+	scrubText,
+	shown,
+	type Target,
+	target,
+	transformInput,
+	userAsk,
+	userAskOf,
+	type WorkDir,
+	workDir,
+	writeTarget,
+} from "./lib/relay.ts";
 
 const HEAD = "## 기억할 것";
 
@@ -43,14 +69,201 @@ export function addMemory(text: string, item: string): string | null {
 }
 
 const home = homedir().split("\\").join("/");
-const label = (t: Target) => (t.remote ? `노트북 ${t.abs}` : t.abs.toLowerCase().startsWith(home.toLowerCase() + "/") ? "~" + t.abs.slice(home.length) : t.abs);
+const tildePath = (p: string) => {
+	const s = p.split("\\").join("/");
+	return s.toLowerCase() === home.toLowerCase() || s.toLowerCase().startsWith(home.toLowerCase() + "/") ? "~" + s.slice(home.length) : s;
+};
+const label = (t: Target) => (t.remote ? `노트북 ${t.abs}` : tildePath(t.abs));
 const cut = (s: string, n = 60) => (s.length > n ? s.slice(0, n) + "…" : s);
+const one = (s: string) => s.replace(/\s+/g, " ").trim();
+const agentDirOf = () => process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+
+// ── 작업 기록 ─────────────────────────────────────────────────
+
+export type WorkRec = {
+	t: string; // "2026-10-21 14:03" (이 PC 의 시각)
+	req?: string; // 사용자의 요청
+	files?: string[]; // 바꾼 파일 (write·edit, 작업 폴더 기준)
+	cmds?: string[]; // 돌린 명령 (보기만 하는 명령은 뺌)
+	wiki?: string[]; // 위키에 쓴 페이지
+	ans?: string; // 답의 앞부분
+	end?: string; // 끝까지 답하지 못했으면 aborted·error 등
+	handoff?: string; // /handoff 로 남긴 요약
+};
+export const LOG_KEEP = 200; // 프로젝트마다 남기는 기록 수
+export const DIGEST_MAX = 1200; // 지침에 알리는 글의 길이 (사내AI 는 입력 한 번에 만 자라 지침·도구 설명과 나눠 씀)
+export const DIGEST_ITEMS = 6; // 알리는 최근 요청 수
+export const DIGEST_DAYS = 30; // 이보다 오래된 기록은 알리지 않음
+export const HANDOFF_MIN = 3; // /new·/resume 때 요약을 남길지 묻는 요청 수
+export const HANDOFF_PROMPT =
+	"다음 세션에서 이 작업을 이어 갈 수 있게 지금까지 한 일을 정리해 줘. 도구는 쓰지 말고 이 대화만 보고, " +
+	"목표 / 한 일 / 바꾼 파일 / 남은 일·다음에 할 일 / 주의할 점(안 된 방법, 정한 것) 을 한두 줄씩 모두 12줄 안에 적어 줘. 비밀번호·개인정보는 적지 마.";
+
+export const logDir = () => join(agentDirOf(), "work-log");
+export const logFile = (key: string, dir = logDir()) => join(dir, `${key}.jsonl`);
+const settingsFile = () => join(logDir(), "settings.json");
+
+/** 작업 기록을 쓰는지 (/recall off 로 끔. 설정이 없으면 켜짐) */
+export function recallOn(): boolean {
+	try {
+		return JSON.parse(readFileSync(settingsFile(), "utf8")).enabled !== false;
+	} catch {
+		return true;
+	}
+}
+function setRecall(on: boolean) {
+	mkdirSync(logDir(), { recursive: true });
+	writeFileSync(settingsFile(), `${JSON.stringify({ enabled: on }, null, 2)}\n`);
+}
+const isBridge = () => {
+	try {
+		return /127\.0\.0\.1:876[56]/.test(readFileSync(join(agentDirOf(), "models.json"), "utf8"));
+	} catch {
+		return false;
+	}
+};
+
+/** 프로젝트 = 작업 폴더 (jupyter 모드면 노트북 작업 폴더). key 는 기록 파일 이름, label 은 보여 줄 이름. 노트북에 아직 연결되지 않았으면 null */
+export function projectOf(wd: WorkDir): { key: string; label: string } | null {
+	const p = wd.cwd.split("\\").join("/").replace(/\/+$/, "");
+	if (wd.remote && !p) return null; // jupyter.ts 는 연결 전에 '/' 로 알림
+	// Windows PC 의 경로는 대소문자를 가리지 않음 (파일 이름도). 노트북(Linux)은 가림
+	const ci = !wd.remote && process.platform === "win32";
+	const id = wd.remote ? `nb:${p}` : `pc:${ci ? p.toLowerCase() : p}`;
+	const base =
+		(ci ? p.toLowerCase() : p)
+			.split("/")
+			.filter((s) => s && !/^[A-Za-z]:$/.test(s))
+			.slice(-2)
+			.join("-")
+			.replace(/[^\p{L}\p{N}._-]+/gu, "_")
+			.slice(0, 40) || "root";
+	return { key: `${base}-${createHash("sha1").update(id).digest("hex").slice(0, 8)}`, label: wd.remote ? `노트북 ${p}` : tildePath(p || "/") };
+}
+
+export function readLog(file: string): WorkRec[] {
+	let text = "";
+	try {
+		text = readFileSync(file, "utf8");
+	} catch {
+		return [];
+	}
+	const out: WorkRec[] = [];
+	for (const line of text.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		try {
+			const r = JSON.parse(line);
+			if (r && typeof r.t === "string") out.push(r);
+		} catch {}
+	}
+	return out;
+}
+
+/** 기록 더하기 (keep 보다 50개 넘게 쌓이면 최근 keep 개만 남김) */
+export function appendLog(file: string, rec: WorkRec, keep = LOG_KEEP) {
+	mkdirSync(dirname(file), { recursive: true });
+	appendFileSync(file, `${JSON.stringify(rec)}\n`);
+	const all = readLog(file);
+	if (all.length > keep + 50) writeFileSync(file, `${all.slice(-keep).map((r) => JSON.stringify(r)).join("\n")}\n`);
+}
+
+const p2 = (n: number) => String(n).padStart(2, "0");
+export const stamp = (d = new Date()) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+const shortT = (t: string) => t.slice(5); // "10-21 14:03"
+/** 경로는 끝이 중요하므로 앞을 줄임 */
+const tailCut = (s: string, n = 40) => (s.length > n ? `…${s.slice(s.length - n + 1)}` : s);
+
+/** 기록 한 줄: - 10-21 14:03 "요청" → 바꾼 파일 a.py · 명령 python a.py · 답: ... */
+export function turnLine(r: WorkRec): string {
+	const more: string[] = [];
+	if (r.files?.length) more.push(`바꾼 파일 ${r.files.slice(0, 4).map((f) => tailCut(f)).join(", ")}${r.files.length > 4 ? ` 외 ${r.files.length - 4}개` : ""}`);
+	if (r.wiki?.length) more.push(`위키 ${r.wiki.slice(0, 2).map((n) => `[[${n}]]`).join(", ")}`);
+	if (r.cmds?.length) more.push(`명령 ${cut(r.cmds[r.cmds.length - 1], 50)}`);
+	if (r.end === "aborted") more.push("Esc 로 멈춤");
+	else if (r.end) more.push("끝까지 답하지 못함");
+	if (r.ans) more.push(`답: ${cut(r.ans, 70)}`);
+	return `- ${shortT(r.t)} "${cut(r.req || "", 70)}"${more.length ? ` → ${more.join(" · ")}` : ""}`;
+}
+
+/** 새 세션에 알릴 글: 마지막 요약(/handoff)과 최근 요청들 (오래된 것부터). 알릴 것이 없으면 "" */
+export function digestOf(recs: WorkRec[], where: string, now = new Date(), max = DIGEST_MAX): string {
+	const since = now.getTime() - DIGEST_DAYS * 86_400_000;
+	const recent = recs.filter((r) => {
+		const d = Date.parse(r.t.replace(" ", "T"));
+		return Number.isFinite(d) && d >= since;
+	});
+	const parts = [
+		`이 프로젝트(${where})에서 지난 세션들에 한 일입니다 (pi 가 자동으로 남긴 기록). 오래되었거나 틀릴 수 있으니 파일은 지금 내용을 다시 확인하고, 사용자가 이어서 하자고 하면 이것을 참고한다.`,
+	];
+	const ho = [...recent].reverse().find((r) => r.handoff);
+	if (ho?.handoff) {
+		const text = ho.handoff.length > 500 ? `${ho.handoff.slice(0, 499)}…` : ho.handoff;
+		parts.push(`넘겨받은 요약 (${shortT(ho.t)}):\n${text}`);
+	}
+	const title = "최근 요청 (오래된 것부터):";
+	let room = max - parts.join("\n").length - title.length - 2;
+	const lines: string[] = [];
+	for (const r of [...recent].reverse()) {
+		if (r.handoff || !r.req) continue;
+		const l = turnLine(r);
+		if (lines.length >= DIGEST_ITEMS || l.length + 1 > room) break;
+		lines.unshift(l);
+		room -= l.length + 1;
+	}
+	if (lines.length) parts.push(`${title}\n${lines.join("\n")}`);
+	return parts.length > 1 ? parts.join("\n") : "";
+}
+
+// 기록하지 않는 명령: 보기만 하는 것 (앞의 'cd 폴더 &&' 는 떼고 봄)
+const LOOK_ONLY =
+	/^(?:ls|ll|cat|head|tail|less|more|grep|egrep|rg|find|fd|pwd|cd|echo|printf|wc|which|type|command|tree|du|df|stat|file|sort|uniq|diff|cmp|date|whoami|hostname|env|printenv|ps|top|free|nproc|nvidia-smi|sed -n|awk|jq|yq|true|git (?:status|log|diff|show|branch|remote|config|rev-parse|ls-files)|pip3? (?:list|show|freeze)|conda (?:list|env list|info)|python3? (?:-V|--version)|kubectl (?:get|describe|logs|top))(?:\s|$)/;
+export function doing(command: string): string {
+	const c = one(command.split("\n")[0]).replace(/^(?:cd\s+[^;&|]+?\s*(?:&&|;)\s*)+/, "");
+	return c && !LOOK_ONLY.test(c) ? c : "";
+}
+/** 답의 앞부분 (코드 블록·마크다운 표시는 빼고) */
+const ansHead = (s: string) =>
+	one(
+		s
+			.replace(/```[\s\S]*?(```|$)/g, " ")
+			.replace(/^#{1,6}\s+/gm, "")
+			.replace(/[*_`>|]/g, ""),
+	).slice(0, 200);
+const textOf = (m: any): string =>
+	typeof m?.content === "string" ? m.content : (m?.content || []).filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n");
+
+type Turn = { t: string; req: string; files: string[]; cmds: string[]; wiki: string[]; ans: string; end: string; handoff: boolean };
 
 export default function (pi: ExtensionAPI) {
 	// 다음 요청에 붙여 알릴 것 (확장을 다시 불러와도(/kit share, /reload) 남김)
 	const S: { notes: string[] } = ((globalThis as any).__piRemember ||= { notes: [] });
+	// 작업 기록: 이번 세션에 알린 글(첫 요청 때 정함, null 은 아직), 지금 요청, 이번 세션에 남긴 요청 수, 요약 단계 (다시 불러와도 남김)
+	const W: { digest: string | null; cur: Turn | null; turns: number; handoff: "" | "asked" | "pending" | "done"; again: string } = ((globalThis as any).__piWorkLog ||= {
+		digest: null,
+		cur: null,
+		turns: 0,
+		handoff: "",
+		again: "",
+	});
+	let widget = false;
+	const say = (ctx: any, text: string, level = "info") => {
+		try {
+			ctx?.ui?.notify(text, level);
+		} catch {}
+	};
+	const startHandoff = () => {
+		W.handoff = "pending";
+		pi.sendUserMessage(userAsk(HANDOFF_PROMPT, "(다음 세션에 넘길 요약)"));
+	};
+
 	pi.on("session_start", async (event: any) => {
-		if (event?.reason !== "reload") S.notes = []; // 새 세션은 지침 파일을 새로 읽으므로 알릴 필요 없음
+		if (event?.reason === "reload") return;
+		S.notes = []; // 새 세션은 지침 파일을 새로 읽으므로 알릴 필요 없음
+		W.digest = null;
+		W.cur = null;
+		W.turns = 0;
+		W.handoff = "";
+		W.again = "";
 	});
 
 	pi.on("input", async (event: any) => {
@@ -60,6 +273,207 @@ export default function (pi: ExtensionAPI) {
 		return transformInput(event.text, text);
 	});
 
+	// 작업 기록: 요청 (요청 중에 더 친 글은 같은 요청에 이어 붙임)
+	pi.on("input", async (event: any) => {
+		if (!recallOn()) return;
+		const text = String(event.text || "");
+		const handoff = rawInput(text) === HANDOFF_PROMPT;
+		const ask = event.source === "extension" ? userAskOf(text) : rawInput(text);
+		if (!ask?.trim()) return;
+		if (W.cur && !handoff) W.cur.req = cut(`${W.cur.req} / ${one(ask)}`, 300);
+		else W.cur = { t: stamp(), req: cut(one(ask), 300), files: [], cmds: [], wiki: [], ans: "", end: "", handoff };
+	});
+
+	pi.on("tool_result", async (event: any) => {
+		const c = W.cur;
+		if (!c || event.isError) return;
+		const input = event.input || {};
+		if ((event.toolName === "write" || event.toolName === "edit") && typeof input.path === "string") {
+			let f = input.path;
+			try {
+				f = shown(target(input.path));
+			} catch {}
+			if (!c.files.includes(f) && c.files.length < 12) c.files.push(f);
+		} else if (event.toolName === "bash" && typeof input.command === "string") {
+			const d = cut(doing(input.command), 100);
+			if (d && !c.cmds.includes(d) && c.cmds.length < 3) c.cmds.push(d);
+		} else if (event.toolName === "wiki_write") {
+			const text = (event.content || []).map((x: any) => x?.text || "").join("\n");
+			for (const m of text.matchAll(/\[\[([^\]\n]+)\]\]/g)) if (!c.wiki.includes(m[1]) && c.wiki.length < 5) c.wiki.push(m[1]);
+		}
+	});
+
+	pi.on("message_end", async (event: any) => {
+		const m = event.message;
+		if (!W.cur || m?.role !== "assistant" || m.stopReason === "error" || m.stopReason === "aborted") return;
+		const t = textOf(m);
+		if (t.trim()) W.cur.ans = t;
+	});
+
+	// 끝난 모습: 오류 뒤에는 pi 가 알아서 다시 할 수 있어 끝날 때마다 덮어쓰고, 다 끝난 뒤(agent_settled)에 남김
+	pi.on("agent_end", async (event: any) => {
+		if (!W.cur) return;
+		const msgs: any[] = event.messages || [];
+		const last = msgs[msgs.length - 1];
+		W.cur.end = last?.role === "assistant" ? String(last.stopReason || "") : "unfinished";
+	});
+
+	pi.on("agent_settled", async (_event: unknown, ctx: any) => {
+		const c = W.cur;
+		W.cur = null;
+		if (!c || !recallOn()) return;
+		const p = projectOf(workDir());
+		if (!p) return;
+		const file = logFile(p.key);
+		try {
+			if (c.handoff) {
+				const text = c.end === "stop" ? c.ans.split(/\r?\n/).map(scrubText).filter((l) => l.trim()).join("\n").trim() : "";
+				if (!text) {
+					W.handoff = "";
+					return say(ctx, "다음 세션에 넘길 요약을 남기지 못했습니다 (답이 끝나지 않음). 다시: /handoff", "warning");
+				}
+				appendLog(file, { t: c.t, handoff: cut(text, 1500) });
+				W.handoff = "done";
+				const again = W.again ? `. 이제 /${W.again} 을 다시 입력하세요` : "";
+				W.again = "";
+				return say(ctx, `다음 세션에 넘길 요약을 남겼습니다 → ${tildePath(file)} (보기 /recall)${again}`);
+			}
+			const files = c.files.map(scrubText).filter(Boolean);
+			const cmds = c.cmds.map(scrubText).filter(Boolean);
+			const wiki = c.wiki.map(scrubText).filter(Boolean);
+			const ans = scrubText(ansHead(c.ans));
+			if (!files.length && !cmds.length && !wiki.length && !ans) return; // 아무것도 하지 못하고 끝남 (오류 등)
+			appendLog(file, {
+				t: c.t,
+				req: scrubText(c.req) || "(비밀로 보여 뺀 요청)",
+				...(files.length ? { files } : {}),
+				...(cmds.length ? { cmds } : {}),
+				...(wiki.length ? { wiki } : {}),
+				...(ans ? { ans } : {}),
+				...(c.end && c.end !== "stop" ? { end: c.end } : {}),
+			});
+			W.turns++;
+		} catch {}
+	});
+
+	// 새 세션의 첫 요청 때 지난 기록을 정하고, 세션 안에서는 같은 글을 지침에 (바뀌면 Copilot·사내AI 가 새 대화를 열므로)
+	pi.on("before_agent_start", async (event: any) => {
+		if (!recallOn()) return;
+		if (W.digest === null) {
+			const p = projectOf(workDir());
+			if (!p) return;
+			W.digest = digestOf(readLog(logFile(p.key)), p.label);
+		}
+		const sections = event.systemPromptOptions?.sections;
+		if (W.digest && sections && typeof sections === "object") sections.recent_work = W.digest;
+	});
+
+	// /new·/resume: 이 세션에 요청이 여럿이면 다음 세션에 넘길 요약을 남길지 한 번 묻는다 (모델에게 한 번 묻는 것이라)
+	pi.on("session_before_switch", async (event: any, ctx: any) => {
+		if (!recallOn() || W.handoff || W.turns < HANDOFF_MIN || (globalThis as any).__piMode === "plan") return;
+		try {
+			if (!ctx?.hasUI || !ctx.isIdle()) return;
+		} catch {
+			return;
+		}
+		W.handoff = "asked";
+		const again = event?.reason === "resume" ? "resume" : "new";
+		const ok = await ctx.ui.confirm(
+			"다음 세션에 넘길 요약",
+			`이 세션에서 요청 ${W.turns}개를 했습니다. 새 세션이 이어 갈 수 있게 지금까지의 요약을 남길까요?\n` +
+				`모델에게 한 번 묻습니다${isBridge() ? " (사내AI 는 하루 질문 수에 들어감)" : ""}. 요약이 끝나면 /${again} 을 다시 입력하세요.\n` +
+				"아니요: 바로 넘어갑니다 (요청마다 남긴 기록은 요약 없이도 다음 세션에 알려 줌)",
+		);
+		if (!ok) return;
+		W.again = again;
+		setTimeout(() => {
+			try {
+				startHandoff();
+			} catch {
+				W.handoff = "";
+			}
+		}, 0);
+		return { cancel: true };
+	});
+
+	pi.on("agent_start", async (_event: unknown, ctx: any) => {
+		if (!widget) return;
+		widget = false;
+		try {
+			ctx.ui.setWidget("pi-recall", undefined);
+		} catch {}
+	});
+
+	pi.registerCommand("recall", {
+		description: "작업 기록: 지난 세션들에서 한 일 보기 (새 세션에 지침으로 알려 줌). off·on (끄기·켜기), clear (이 프로젝트 기록 지우기)",
+		handler: async (args, ctx) => {
+			const sub = String(args || "").trim().toLowerCase();
+			const notify = (m: string, level = "info") => ctx.ui.notify(m, level);
+			const p = projectOf(workDir());
+			const fresh = W.digest && isBridge() ? " (지침이 바뀌어 Copilot·사내AI 는 다음 요청부터 새 대화)" : "";
+			if (sub === "off" || sub === "끄기") {
+				setRecall(false);
+				return notify(`작업 기록을 껐습니다: 남기지도 알리지도 않습니다${fresh}. 켜기: /recall on`);
+			}
+			if (sub === "on" || sub === "켜기") {
+				setRecall(true);
+				return notify("작업 기록을 켰습니다: 요청이 끝날 때마다 남기고, 새 세션을 시작하면 알려 줍니다");
+			}
+			if (!p) return notify("작업 폴더를 아직 모릅니다 (노트북에 연결된 뒤 다시)", "warning");
+			const file = logFile(p.key);
+			if (sub === "clear" || sub === "지우기") {
+				const n = readLog(file).length;
+				if (!n) return notify(`이 프로젝트(${p.label})의 작업 기록이 없습니다`);
+				if (ctx.hasUI && !(await ctx.ui.confirm("작업 기록 지우기", `${p.label} 의 작업 기록 ${n}개를 지울까요? 되돌릴 수 없습니다.`))) return;
+				try {
+					unlinkSync(file);
+				} catch (e) {
+					return notify(`지우지 못했습니다: ${(e as Error).message}`, "error");
+				}
+				W.digest = ""; // 이번 세션에도 더 알리지 않음
+				return notify(`작업 기록 ${n}개를 지웠습니다 (${tildePath(file)})${fresh}`);
+			}
+			if (sub) return notify("사용법: /recall (보기) · off · on · clear (이 프로젝트 기록 지우기) · /handoff (다음 세션에 넘길 요약)", "warning");
+			if (widget) {
+				widget = false;
+				return ctx.ui.setWidget("pi-recall", undefined);
+			}
+			const recs = readLog(file);
+			const on = recallOn();
+			const shownNow = W.digest !== null;
+			const digest = shownNow ? W.digest || "" : digestOf(recs, p.label);
+			const body = digest
+				? digest
+						.split("\n")
+						.slice(1)
+						.map((l) => `   ${l}`)
+				: ["   (알릴 기록 없음)"];
+			const lines = [
+				`── 작업 기록: ${p.label} (${on ? "켜짐" : "꺼짐"} · 닫기: /recall) ──`,
+				` 기록 ${recs.length}개 · ${tildePath(file)}`,
+				shownNow ? " 이번 세션에 알린 것:" : " 다음 요청 때 알릴 것:",
+				...body,
+				" 명령  /recall off·on · clear (이 프로젝트 기록 지우기) · /handoff (다음 세션에 넘길 요약)",
+			];
+			if (!ctx.hasUI) return notify(lines.join("\n"));
+			ctx.ui.setWidget("pi-recall", [lines.join("\n")]);
+			widget = true;
+		},
+	});
+
+	pi.registerCommand("handoff", {
+		description: "다음 세션에 넘길 작업 요약을 남김 (모델에게 한 번 물음). 같은 프로젝트에서 새 세션을 시작하면 지침으로 알려 줌",
+		handler: async (_args, ctx) => {
+			const notify = (m: string, level = "info") => ctx.ui.notify(m, level);
+			if (!recallOn()) return notify("작업 기록이 꺼져 있습니다 (켜기: /recall on)", "warning");
+			if ((globalThis as any).__piMode === "plan") return notify("계획 모드에서는 요약을 남기지 않습니다 (/plan 으로 끈 뒤 다시)", "warning");
+			if (!projectOf(workDir())) return notify("작업 폴더를 아직 모릅니다 (노트북에 연결된 뒤 다시)", "warning");
+			if (!ctx.isIdle()) return notify("지금 하는 작업이 끝난 뒤 다시 입력해 주세요", "warning");
+			W.again = "";
+			startHandoff();
+		},
+	});
+
 	pi.registerCommand("remember", {
 		description: "앞으로도 지킬 내용을 지침(AGENTS.md)에 적어 둠. 예: /remember 커밋 메시지는 한국어로",
 		handler: async (args, ctx) => {
@@ -67,8 +481,7 @@ export default function (pi: ExtensionAPI) {
 			if (!item) return ctx.ui.notify("사용법: /remember <기억할 내용>   예) /remember 테스트는 pytest -q 로 돌린다", "info");
 			const wd = workDir();
 			const project = target("AGENTS.md", wd);
-			const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
-			const global = target(join(agentDir, "AGENTS.md"), { remote: false, cwd: process.cwd() });
+			const global = target(join(agentDirOf(), "AGENTS.md"), { remote: false, cwd: process.cwd() });
 			let t = project;
 			if (ctx.hasUI) {
 				const opts: [string, Target][] = [
