@@ -5,6 +5,7 @@ tests/test_relay.py
 tests/test_noise.py
 tests/test_unmangle.py
 tests/test_config.py
+tests/test_copilot_session.mjs
 docs/vLLM-연결.md
 docs/LLM-위키-설계.md
 # Windows PC 용 (API 키트는 Kubeflow 노트북 전용): PC 설정, cmd 실행기, VS Code(Code.exe) 내장 Node 로 돌릴 때의 터미널 중계

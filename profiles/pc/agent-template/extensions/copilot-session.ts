@@ -16,10 +16,25 @@
  *    전에는 메모리를 거의 돌려주지 않으므로, 세션이 끝나면(/new) 중계 서버가 큰 탭을 새로 읽는다 (tab_reload_mb).
  * 5) 오늘 보낸 질문 수: 같은 /memory 의 questions_today 를 상태 줄에 ("사내AI 오늘 152/~200", 한도를 모르면 "Copilot 오늘 87번").
  *    요청이 끝날 때마다 고친다. 한도는 중계 서버가 한도에 닿은 때의 질문 수로 어림한 값(~). 그 90% 를 넘으면 경고 색과 하루에 한 번 알림.
+ * 6) Copilot 사용량 제한(429)에 걸려 요청이 끝나면, 시간을 두고 같은 Copilot 대화에 '이어서' 를 다시 보낸다:
+ *    10분, 20분, 30분 뒤, 그다음은 60분마다 모두 8번까지 (약 6시간). 상태 줄에 다음 시도 시각을 보여 준다.
+ *    그 전에 사용자가 요청을 보내면(다른 요청이 시작되면) 취소. '하루 질문 한도' 문구면 다시 시도하지 않는다.
+ *    (실사용 시험: 한 번 걸리면 10분·37분 뒤에도 풀리지 않았고 82분 뒤에 풀림. 그동안 사용자가 직접 다시 보내야 했음)
  * 사내AI 모델(provider inhouse)은 두 번째 중계 서버(8766)를 쓰므로, 상태는 지금 모델의 중계 서버에 묻고 세션 끝은 둘 다에 알린다.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { userAsk } from "./lib/relay.ts";
+
+export const THROTTLE_RE = /Copilot 사용량 제한에 걸렸습니다/;
+export const RETRY_MINUTES = [10, 20, 30, 60, 60, 60, 60, 60];
+export const RETRY_TEXT = "(Copilot 사용량 제한이 풀렸는지 다시 시도합니다) 하던 작업을 이어서 해 주세요.";
+/** 요청이 Copilot 사용량 제한으로 끝났는지 (마지막 답이 그 오류). 하루 한도는 아님 */
+export function throttled(messages: any[]): boolean {
+	const last = [...(messages || [])].reverse().find((m) => m?.role === "assistant");
+	const err = last?.stopReason === "error" ? String(last.errorMessage || "") : "";
+	return THROTTLE_RE.test(err) && !/하루 질문 한도/.test(err);
+}
 
 const SERVER = (process.env.PI_COPILOT_URL || "http://127.0.0.1:8765").replace(/\/+$/, "");
 const INHOUSE_SERVER = (process.env.PI_INHOUSE_URL || "http://127.0.0.1:8766").replace(/\/+$/, "");
@@ -141,8 +156,62 @@ export default function (pi: ExtensionAPI) {
 			show(undefined, "usage");
 		}
 	};
+	// 사용량 제한 뒤 다시 시도 (6): waitCtx 는 기다리기 시작한 세션의 ctx (세션이 끝나면 비우고 타이머도 지움)
+	let waitCtx: any = null;
+	let waitTimer: ReturnType<typeof setTimeout> | null = null;
+	let waitTries = 0;
+	let retrying = false; // 이 확장이 보낸 다시 시도로 요청이 시작됨 (그 요청은 기다림을 취소하지 않음)
+	const waitStop = () => {
+		if (waitTimer) clearTimeout(waitTimer);
+		waitTimer = null;
+		try {
+			if (waitCtx?.hasUI) waitCtx.ui.setStatus("copilot-wait", undefined);
+		} catch {}
+		waitCtx = null;
+		waitTries = 0;
+	};
+	const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+	const waitStart = (ctx: any) => {
+		if (!ctx?.hasUI) return;
+		if (waitTimer) clearTimeout(waitTimer);
+		waitTimer = null;
+		if (waitTries >= RETRY_MINUTES.length) {
+			waitStop();
+			try {
+				ctx.ui.notify("Copilot 사용량 제한이 오래 풀리지 않아 자동으로 다시 시도하기를 멈췄습니다. 나중에 '이어서 해 줘' 로 다시 보내세요.", "warning");
+			} catch {}
+			return;
+		}
+		const min = RETRY_MINUTES[waitTries++];
+		const at = hhmm(new Date(Date.now() + min * 60_000));
+		waitCtx = ctx;
+		try {
+			const fg = (t: string) => (ctx.ui.theme?.fg ? ctx.ui.theme.fg("warning", t) : t);
+			ctx.ui.setStatus("copilot-wait", fg(`Copilot 사용량 제한: ${at} 에 다시 시도 (${waitTries}/${RETRY_MINUTES.length}번째, 요청을 보내면 취소)`));
+			ctx.ui.notify(`Copilot 사용량 제한에 걸렸습니다. ${at} 에 같은 대화로 자동으로 이어서 다시 시도합니다 (그 전에 요청을 보내면 취소).`, "warning");
+		} catch {}
+		waitTimer = setTimeout(() => {
+			waitTimer = null;
+			const c = waitCtx;
+			if (!c) return;
+			try {
+				if (typeof c.isIdle === "function" && !c.isIdle()) return waitStop(); // 다른 일을 하는 중
+				c.ui.setStatus("copilot-wait", undefined);
+			} catch {
+				return;
+			}
+			retrying = true;
+			try {
+				pi.sendUserMessage(userAsk(RETRY_TEXT, "이어서 (Copilot 사용량 제한 뒤 자동 다시 시도)"));
+			} catch {
+				retrying = false;
+			}
+		}, min * 60_000);
+	};
+
 	pi.on("session_start", async (_event: unknown, ctx: any) => {
 		memStop();
+		waitStop();
 		if (!ctx?.hasUI) return;
 		memCtx = ctx;
 		memTimer = setInterval(memTick, 30000);
@@ -155,11 +224,15 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", async (_event: unknown, ctx: any) => {
 		running = true;
 		sync(ctx);
+		if (retrying) retrying = false;
+		else waitStop(); // 사용자가 보낸 요청: 기다리던 다시 시도는 취소
 	});
-	pi.on("agent_end", async (_event: unknown, ctx: any) => {
+	pi.on("agent_end", async (event: any, ctx: any) => {
 		running = false;
 		sync(ctx);
 		if (memCtx) void memTick(); // 요청이 끝나면 오늘 질문 수를 바로 고침
+		if (throttled(event?.messages)) waitStart(ctx);
+		else waitStop();
 	});
 	// 요약이 끝나면(성공·실패·Esc 로 멈춤) 멈춘다. '요약할 것이 없음' 처럼 시작 전에 끝나면 failed 만 온다
 	pi.on("session_before_compact", async (_event: unknown, ctx: any) => {
@@ -177,6 +250,7 @@ export default function (pi: ExtensionAPI) {
 		running = compacting = false;
 		stop(ctx);
 		memStop();
+		waitStop();
 		try {
 			if (ctx?.hasUI) ctx.ui.setStatus("memory", undefined);
 			if (ctx?.hasUI) ctx.ui.setStatus("usage", undefined);
