@@ -162,7 +162,7 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 - 위키 폴더도 홈 아래에 두세요 (파드를 다시 시작해도 남게).
 
 <!-- 조각: 6장-앞 -->
-- **보내는 내용:** pi 는 지침, 요청, 읽은 파일 내용, 명령 결과를 `models.json` 에 적은 LLM 서버로 보냅니다.
+- **보내는 내용:** pi 는 지침, 요청, 읽은 파일 내용, 명령 결과를 `models.json` 에 적은 LLM 서버로 보냅니다. 새 세션에서는 작업 기록의 요약([5장 메모리](#메모리))도, 문서 찾기(`/docs`)를 쓰면 그 결과도 함께 갑니다.
   개인정보·중요정보가 든 파일을 다룰 때는 그 서버가 그 정보를 받아도 되는 곳인지 먼저 확인하세요.
 
 <!-- 조각: 6장-끝 -->
@@ -177,7 +177,8 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
    cd ~ && bash ~/tools/pi/update.sh ~/pi-agent-like-agent-api-main.zip
    ```
 - 하는 일: 받은 파일 확인 → 지금 폴더를 `~/tools/pi.old` 로 이름 바꾸기 → 새 버전을 `~/tools/pi` 에 → `install.sh` 로 설정 반영.
-- 끝에 `지금 버전 -> 새 버전` 과 이 버전에서 바뀐 점을 보여 줍니다. 그다음 `pi` 를 실행하면 새 버전으로 시작합니다. `/doctor` 의 버전 번호로 확인합니다.
+- 끝에 `지금 버전 -> 새 버전` 과 이 버전에서 바뀐 점을 보여 주고, 몇 버전을 건너뛰었으면 건너뛴 버전들의 할 일도 보여 줍니다 (2026-10-21.1 의 `update.sh` 부터). 그다음 `pi` 를 실행하면 새 버전으로 시작합니다. `/doctor` 의 버전 번호로 확인합니다.
+- 설정 반영(`install.sh`)이 실패하면 '완료' 대신 이전 버전으로 되돌리는 한 줄을 보여 줍니다 (2026-10-21.1 부터).
 - 받은 파일이 지금과 같은 버전이면 멈춥니다 (이전 버전 폴더를 덮지 않도록). 같은 버전을 다시 깔려면 끝에 `--force`.
 - **가벼운 업데이트 zip:** GitHub 저장소의 **Releases** 에서 그 버전의 `pi-agent-like-agent-api-<버전>-update.zip` 을 받으면 pi 본체(`runtime/`)를 뺀 약 0.2MB 라 반입이 가볍습니다. 같은 명령에 그 파일을 줍니다.
   지금 깔린 pi 본체가 새 버전의 것과 같은지 해시로 확인한 뒤 그대로 쓰고, 다르면(pi 본체가 바뀐 버전. CHANGELOG·Releases 에 적음) 아무것도 바꾸지 않고 전체 zip 이 필요하다고 알려 줍니다. 몇 버전을 건너뛰어도 됩니다.
@@ -217,7 +218,7 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 | `Shift+Enter` 가 줄을 바꾸지 않고 보냄, `Ctrl+P` 로 VS Code 창이 뜸 | [3-3](#3-3-code-server-터미널에서-다르게-쓰는-키) |
 | 일하는 동안 터미널 스크롤이 위로 감겼다 내려옴 | `pi --tui-mode regular` 로 켰을 때입니다. 그냥 `pi` 로 켜면 fullscreen 화면이라 생기지 않습니다 |
 | 시작 화면에 `Warning: fd not found` / `ripgrep not found` | 무시해도 됩니다. 기본 도구(명령 실행, 파일 읽기·쓰기·고치기)는 이 둘 없이 동작하고, 입력창의 `@` 파일 목록도 fd 없이 나옵니다 |
-| 오래 쓰다 보면 느려지거나 엉뚱하게 답함 | 대화가 너무 길어진 탓입니다. `/compact` 로 줄이거나 `/new` 로 새 세션을 시작하세요 (필요한 맥락은 AGENTS.md 나 `/handoff` 메모로) |
+| 오래 쓰다 보면 느려지거나 엉뚱하게 답함 | 대화가 너무 길어진 탓입니다. `/compact` 로 줄이거나 `/new` 로 새 세션을 시작하세요 (새 세션에도 작업 기록이 저절로 이어짐. 더 자세한 맥락은 AGENTS.md 나 `/handoff` 메모로) |
 | 파드를 다시 시작했더니 pi 가 없음 | pi 와 Node 를 홈 아래에 두었는지(`~/tools/pi`, `pip install --user`), 새 터미널에서 `pi --version` |
 | 업데이트가 `이미 같은 버전` 으로 멈춤 | 받은 파일이 새 버전인지 확인 ([7장](#7-새-버전으로-바꾸기)) |
 | pi 설정 파일 오류 (`settings.json`, `models.json`) | JSON 형식 확인 (마지막 항목 뒤 쉼표 빼기, 따옴표). 설치·업데이트 때 남긴 `.bak` 으로 되돌릴 수 있습니다 |
@@ -229,9 +230,9 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 버전으로 바꾸기, Node 진단 스크립트, 버전 번호 |
-| `profiles/` | 설정 템플릿과 기본 지침(`jupyter`: Kubeflow 노트북용), 확장(`common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, LLM 위키 `/wiki`) |
+| `profiles/` | 설정 템플릿과 기본 지침(`jupyter`: Kubeflow 노트북용), 확장(`common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`·작업 기록 `/recall`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, 문서 찾기 `/docs`, LLM 위키 `/wiki`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 8개 (설치할 때 `~/.pi/agent` 에 복사) |
-| `tests/` | 단위 테스트 (`node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`) |
+| `tests/` | 단위 테스트 (`node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `node tests/test_kitenv.mjs`, `node tests/test_watch.mjs`, `node tests/test_docs.mjs`, `node tests/test_changelog_notes.mjs`) |
 | `CHANGELOG.md` | 버전마다 바뀐 점과 바꾼 뒤 할 일 |
 | `docs/` | [한 장 요약](docs/빠른시작.md), [API 연결](docs/API-연결.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
