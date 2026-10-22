@@ -330,6 +330,18 @@ async function doctorLines(): Promise<string[]> {
 // Python 패키지를 직접 불러와 버전·시그니처·설명·하위 이름을 보고, 문서 폴더(~/pi-docs: 받아 둔 문서 .md·.txt·.html 등)에서 맞는 줄을 더한다.
 // Python 은 작업 폴더의 .venv·venv, 켜 둔 가상 환경·conda, pi 가 찾은 Python, PATH 의 python3·python 차례로 실제로 돌아가는 것
 // (Windows 스토어 바로가기는 Python 이 없으면 안내만 하고 실패하므로 돌려 보고 고름). 찾을 이름은 인자로 넘김 (스크립트에 끼워 넣지 않음)
+// ── 끝났다고 하기 전의 확인 (지침에 늘 더하는 줄) ───────────────────────────────────────────
+// 2026-10 실사용 시험: 작업 표시줄에 가려 보이지 않는 창을 '항상 위 적용 완료' 라 하고 끝냄, 원인을 찾는다며 코드를 비운 채 세션이 끝남,
+// 처음 요청의 항목(총 전송량)이 몇 세션 뒤 빠짐. 작업 모드와 관계없이 같은 글 (모드를 바꿀 때마다 지침이 바뀌면 Copilot 이 새 대화를 엶)
+export const DONE_GUIDE =
+	"끝났다고 답하기 전에 사용자의 요구사항을 하나씩 다시 보고, 바꾼 것을 실제로 실행·빌드·테스트한 결과로 확인한다 " +
+	"(화면에 나오는 프로그램이면 실행해서 실제로 보이는지까지). 확인하지 못한 것은 확인하지 못했다고 적는다. " +
+	"원인을 찾는다며 기존 코드를 지우거나 임시 코드로 바꾼 채 끝내지 않는다.";
+/** 지침 목록(systemPromptOptions.promptGuidelines)에 DONE_GUIDE 를 한 번 더함 */
+export function addDoneGuide(g: unknown) {
+	if (Array.isArray(g) && !g.includes(DONE_GUIDE)) g.push(DONE_GUIDE);
+}
+
 export const DOCS_MAX = 5500; // 결과 글 길이 (wiki_read 와 같음. Copilot·사내AI 의 도구 결과 한도 안)
 export const DOCS_GUIDE = "라이브러리의 함수·클래스 사용법(인자, 반환값, 버전 차이)이 확실하지 않으면 추측하지 말고 docs_lookup 으로 지금 설치된 버전의 설명을 먼저 본다";
 export const docsDir = () => process.env.PI_DOCS_DIR || join(homedir(), "pi-docs");
@@ -797,6 +809,8 @@ export default function (pi: ExtensionAPI) {
 			show(ctx, "kit", helpLines());
 		},
 	});
+
+	pi.on("before_agent_start", async (event: any) => addDoneGuide(event?.systemPromptOptions?.promptGuidelines));
 
 	// /kit env 로 지침에 적은 실행 환경은 pi 를 시작할 때 읽으므로, 지금 대화에는 다음 요청 앞에 붙여 바로 알린다
 	// (/reload 는 Copilot 새 대화를 열어 느리므로 쓰지 않음. /remember 와 같은 방식)

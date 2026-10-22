@@ -5,7 +5,7 @@ import { createJiti } from "../runtime/node_modules/jiti/lib/jiti.mjs";
 
 // typebox 는 pi 처럼 runtime 의 것으로 (kit.ts 의 docs_lookup 도구)
 const jiti = createJiti(import.meta.url, { alias: { typebox: fileURLToPath(new URL("../runtime/node_modules/typebox/build/index.mjs", import.meta.url)) } });
-const { parseEnv, putEnv } = await jiti.import("../profiles/common/agent-template/extensions/kit.ts");
+const { parseEnv, putEnv, DONE_GUIDE, addDoneGuide } = await jiti.import("../profiles/common/agent-template/extensions/kit.ts");
 let fails = 0;
 const check = (name, cond, detail = "") => {
 	console.log((cond ? "OK   " : "FAIL ") + name + (cond ? "" : "  -> " + JSON.stringify(detail)));
@@ -29,6 +29,15 @@ check("다른 곳(pc)은 따로 하나 더", (three.match(/<!-- kit env: /g) || 
 const crlf = putEnv("# 지침\r\n- A\r\n", "notebook", "이 노트북", [["OS", "x"]], "2026-10-17");
 check("CRLF 파일은 CRLF 로", crlf.includes("\r\n<!-- kit env: notebook -->\r\n") && !/[^\r]\n/.test(crlf), crlf);
 check("빈 파일이면 그 부분만", putEnv("", "notebook", "이 노트북", [["OS", "x"]], "2026-10-17").startsWith("<!-- kit env: notebook -->\n"));
+
+// 끝났다고 하기 전의 확인: 지침에 늘 더하는 줄 (짧게: 사내AI 는 입력 한 번에 만 자라 지침·도구 설명과 나눠 씀)
+const g = ["기존 줄"];
+addDoneGuide(g);
+addDoneGuide(g);
+check("끝내기 전 확인: 지침 목록에 한 번만 더함 (기존 줄은 그대로)", g.length === 2 && g[0] === "기존 줄" && g[1] === DONE_GUIDE, g);
+check("끝내기 전 확인: 요구사항을 다시 보고 실행·테스트로 확인, 못 한 것은 적기, 코드를 비운 채 끝내지 않기 (300자 안)",
+	DONE_GUIDE.length <= 300 && ["요구사항", "실행", "확인하지 못한 것", "임시 코드"].every((w) => DONE_GUIDE.includes(w)), DONE_GUIDE.length);
+addDoneGuide(undefined); // 지침 목록이 없는 pi 이면 그냥 넘어감
 
 console.log(fails ? `RESULT: FAIL (${fails})` : "RESULT: PASS");
 process.exit(fails ? 1 : 0);
