@@ -68,7 +68,20 @@ u.default({ on: (e, f) => (on[e] ||= []).push(f), registerCommand: () => {} });
 const asked = [];
 const notes = [];
 let answer = true;
-const ctx = { hasUI: true, ui: { notify: (t, l) => notes.push([t, l]), confirm: async (title, msg) => (asked.push([title, msg]), answer) } };
+let lastOpts = null;
+let confirmDelay = 0; // 묻는 창이 저절로 닫히는 것(시간 다 됨)을 흉내
+const ctx = {
+	hasUI: true,
+	ui: {
+		notify: (t, l) => notes.push([t, l]),
+		confirm: async (title, msg, opts) => {
+			asked.push([title, msg]);
+			lastOpts = opts;
+			if (confirmDelay) await new Promise((r) => setTimeout(r, confirmDelay));
+			return answer;
+		},
+	},
+};
 const emit = async (e, ev = {}, c = ctx) => {
 	let r;
 	for (const f of on[e] || []) r = (await f(ev, c)) ?? r;
@@ -122,6 +135,43 @@ if (!hasGit) {
 	await emit("session_start", { reason: "new" });
 	await emit("tool_call", { toolName: "write", input: { path: "/home/jovyan/proj/a.py" } });
 	check("jupyter 모드(노트북 파일)는 묻지 않음", asked.length === 2, asked.length);
+
+	const proj4 = join(tmp, "proj4");
+	mk("proj4/a.txt");
+	const cfgFile = join(tmp, "agent", "git-offer.json");
+	const declinedBefore = JSON.parse(readFileSync(cfgFile, "utf8")).declined;
+	writeFileSync(cfgFile, JSON.stringify({ enabled: false, declined: declinedBefore }));
+	globalThis.__piWorkDir = { remote: false, cwd: proj4 };
+	await emit("session_start", { reason: "new" });
+	await emit("tool_call", { toolName: "write", input: { path: join(proj4, "a.txt") } });
+	check("git-offer.json 에 \"enabled\": false 면 어디서도 묻지 않음 (시험용 HOME 등)", asked.length === 2 && !existsSync(join(proj4, ".git")), asked.length);
+	writeFileSync(cfgFile, JSON.stringify({ declined: declinedBefore }));
+	answer = false;
+	await emit("session_start", { reason: "new" });
+	await emit("tool_call", { toolName: "write", input: { path: join(proj4, "a.txt") } });
+	check("'아니요' 로 더할 때 다른 설정은 그대로", asked.length === 3
+		&& Object.keys(JSON.parse(readFileSync(cfgFile, "utf8")).declined).length === Object.keys(declinedBefore).length + 1);
+	check("묻는 창에는 시간 제한 (아무도 보지 않는 실행이 멈추지 않게)", lastOpts?.timeout === u.GIT_OFFER.timeoutMs && u.GIT_OFFER.timeoutMs === 120000, lastOpts);
+
+	const proj5 = join(tmp, "proj5");
+	mk("proj5/a.txt");
+	globalThis.__piWorkDir = { remote: false, cwd: proj5 };
+	process.env.PI_GIT_OFFER = "0";
+	await emit("session_start", { reason: "new" });
+	await emit("tool_call", { toolName: "write", input: { path: join(proj5, "a.txt") } });
+	check("환경 변수 PI_GIT_OFFER=0 이면 묻지 않음 (release-check 의 시험용 HOME)", asked.length === 3, asked.length);
+	delete process.env.PI_GIT_OFFER;
+	u.GIT_OFFER.timeoutMs = 60;
+	confirmDelay = 80;
+	const nDeclined = Object.keys(JSON.parse(readFileSync(cfgFile, "utf8")).declined).length;
+	await emit("session_start", { reason: "new" });
+	await emit("tool_call", { toolName: "write", input: { path: join(proj5, "a.txt") } });
+	check("시간이 다 돼 저절로 닫히면 '아니요' 로 기억하지 않음 (다음 세션에 다시 물음)",
+		asked.length === 4 && Object.keys(JSON.parse(readFileSync(cfgFile, "utf8")).declined).length === nDeclined && !existsSync(join(proj5, ".git")));
+	confirmDelay = 0;
+	await emit("session_start", { reason: "new" });
+	await emit("tool_call", { toolName: "write", input: { path: join(proj5, "a.txt") } });
+	check("그래서 다음 세션에는 다시 물음", asked.length === 5, asked.length);
 }
 
 if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

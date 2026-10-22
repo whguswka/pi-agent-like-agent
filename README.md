@@ -790,6 +790,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | `default_mode` | `auto` | pi 를 시작할 때의 작업 모드: `plan`(계획) · `ask`(확인) · `auto`(자동) ([3-5](#3-5-작업-모드-plan-mode)) |
 
 - 작업 기록([5장 메모리](#메모리))은 `/recall off` 로 끕니다 (`~/.pi/agent/work-log/settings.json` 에 적힘). 문서 찾기([3-9](#3-9-설치된-라이브러리의-설명-찾기-docs))의 문서 폴더는 환경 변수 `PI_DOCS_DIR` 로 바꿉니다 (기본 `~/pi-docs`).
+- git 기준점 제안([3-6](#3-6-되돌리기-undo))을 어디서도 받지 않으려면 `~/.pi/agent/git-offer.json` 에 `{"enabled": false}` 를 적습니다 ('아니요' 한 폴더 목록 `declined` 도 이 파일에 있음. 환경 변수 `PI_GIT_OFFER=0` 도 됨). 묻는 창은 2분 안에 답이 없으면 그냥 넘어가고 다음 세션에 다시 묻습니다.
 
 <!-- api:바꾸기 8장-끝 -->
 - **설정을 고친 뒤 `pi` 를 다시 실행하면 중계 서버도 새 설정으로 다시 켜집니다** (2026-10-06.4 부터. `/doctor` 의 '내 설정' 줄로 확인). 다른 pi 창이 일하는 중이면 그 일이 끝난 뒤의 실행 때 반영합니다.

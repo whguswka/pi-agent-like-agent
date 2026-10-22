@@ -14,7 +14,7 @@
  *  '예' 면 git init 하고 지금 상태를 첫 커밋(기준점)으로 남긴다 (pi 를 끄거나 새 세션을 열어도 git 으로 되돌릴 수 있게).
  *  커밋 이름(user.email)이 설정되어 있지 않으면 그 저장소에만 'pi <pi@localhost>' 로 적는다.
  *  node_modules·__pycache__·.venv 같은 폴더가 있고 .gitignore 가 없으면 .gitignore 에 넣어 뺀다.
- *  '아니요' 면 그 폴더에서는 다시 묻지 않는다 (~/.pi/agent/git-offer.json). jupyter 모드(노트북 파일)·홈 폴더·드라이브 맨 위·
+ *  '아니요' 면 그 폴더에서는 다시 묻지 않는다 (~/.pi/agent/git-offer.json. 그 파일에 "enabled": false 면 어디서도 묻지 않음). jupyter 모드(노트북 파일)·홈 폴더·드라이브 맨 위·
  *  시스템 폴더·pi 폴더, 파일이 2000개 넘는 폴더, git 이 없을 때, 화면이 없는 실행(pi -p)에서는 묻지 않는다.
  *  (실사용 시험: pi 가 원인을 찾는다며 코드를 비운 채 세션이 끝났는데, git 이 없어 되돌릴 수 없었음)
  *
@@ -56,6 +56,8 @@ export function fixEntityEdits(content: string, edits: EditItem[]): EditItem[] |
 
 // ── git 기준점 제안 ─────────────────────────────────────────────
 export const GIT_MAX_FILES = 2000;
+// 묻는 창은 2분 안에 답이 없으면 '묻지 않은 것' 으로 넘어간다 (아무도 보지 않는 실행이 멈추지 않게. '아니요' 로 기억하지 않음)
+export const GIT_OFFER = { timeoutMs: 120_000 };
 // 세지 않고 .gitignore 에 넣는 폴더 (files.ts 의 @ 목록에서 건너뛰는 것과 같은 종류)
 export const HEAVY_DIRS = ["node_modules", "__pycache__", ".venv", "venv", ".ipynb_checkpoints", ".mypy_cache", ".pytest_cache", ".tox", ".cache"];
 const winLike = process.platform === "win32";
@@ -104,18 +106,20 @@ const git = (cwd: string, args: string[], timeout = 30_000) =>
 			fail(Object.assign(new Error(String(errOut || err.message).trim()), { code: (err as any).code }));
 		}),
 	);
+// ~/.pi/agent/git-offer.json: {"declined": {폴더: 날짜}} ('아니요' 한 폴더), {"enabled": false} 면 아예 묻지 않음
 const offerFile = () => join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "git-offer.json");
-function declinedDirs(): Record<string, string> {
+function offerConfig(): { enabled?: boolean; declined?: Record<string, string> } {
 	try {
-		return JSON.parse(readFileSync(offerFile(), "utf8")).declined || {};
+		return JSON.parse(readFileSync(offerFile(), "utf8")) || {};
 	} catch {
 		return {};
 	}
 }
 function decline(dir: string) {
-	const declined = { ...declinedDirs(), [norm(dir)]: new Date().toISOString().slice(0, 10) };
+	const cfg = offerConfig();
+	cfg.declined = { ...(cfg.declined || {}), [norm(dir)]: new Date().toISOString().slice(0, 10) };
 	mkdirSync(dirname(offerFile()), { recursive: true });
-	writeFileSync(offerFile(), `${JSON.stringify({ declined }, null, 2)}\n`);
+	writeFileSync(offerFile(), `${JSON.stringify(cfg, null, 2)}\n`);
 }
 type Snap = Target & { label: string; before?: Buffer | null; after?: Buffer | null; skip?: string };
 type Checkpoint = { id: number; files: Map<string, Snap> };
@@ -178,7 +182,9 @@ export default function (pi: ExtensionAPI) {
 		const rel = relative(dir, resolve(t.abs));
 		if (!rel || rel.startsWith("..") || resolve(rel) === rel) return; // 작업 폴더 밖의 파일: 안의 파일을 고칠 때 다시 봄
 		checked.add(key);
-		if (gitOfferBlocked(dir) || declinedDirs()[key]) return;
+		const cfg = offerConfig();
+		if (cfg.enabled === false || /^(0|off|false|no)$/i.test(process.env.PI_GIT_OFFER || "")) return; // 끔 (시험용 HOME 은 환경 변수로)
+		if (cfg.declined?.[key] || gitOfferBlocked(dir)) return;
 		try {
 			if ((await git(dir, ["rev-parse", "--is-inside-work-tree"], 5000)).trim() === "true") return;
 		} catch (e) {
@@ -191,6 +197,7 @@ export default function (pi: ExtensionAPI) {
 			email = (await git(dir, ["config", "user.email"], 5000)).trim();
 		} catch {}
 		const ignore = files.heavy.length && !existsSync(join(dir, ".gitignore")) ? files.heavy : [];
+		const asked = Date.now();
 		const ok = await ctx.ui.confirm(
 			"이 폴더를 git 으로 관리할까요?",
 			[
@@ -201,11 +208,15 @@ export default function (pi: ExtensionAPI) {
 				...(email ? [] : ["커밋 이름이 설정되어 있지 않아 이 저장소에만 'pi <pi@localhost>' 로 적습니다."]),
 				"'아니요' 면 이 폴더에서는 다시 묻지 않습니다.",
 			].join("\n"),
+			{ timeout: GIT_OFFER.timeoutMs },
 		);
 		if (!ok) {
-			try {
-				decline(dir);
-			} catch {}
+			// 시간이 다 돼 저절로 닫힌 것은 '아니요' 가 아님 (다음 세션에 다시 물음)
+			if (Date.now() - asked < GIT_OFFER.timeoutMs - 1000) {
+				try {
+					decline(dir);
+				} catch {}
+			}
 			return;
 		}
 		try {
