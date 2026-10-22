@@ -316,11 +316,12 @@ export default function (pi: ExtensionAPI) {
 		return box;
 	});
 
-	/** 이력 파일: 있는 것 (맨 위 HISTORY.md, 목록 문서 옆 HISTORY.md 차례), 없으면 목록 문서 옆 (기본 docs/HISTORY.md) */
-	const historyFile = async (fs: Fs, cfg: DocCfg) => {
+	/** 이력 파일: 있는 것 (맨 위 HISTORY.md, 목록 문서 옆 HISTORY.md 차례). 둘 다 없으면 지금 만들려는 것이 그 둘 중 하나면 그것
+	 *  (지침대로 맨 위 HISTORY.md 를 처음 만들 때 묻지 않게), 아니면 목록 문서 옆 (기본 docs/HISTORY.md) */
+	const historyFile = async (fs: Fs, cfg: DocCfg, rel = "") => {
 		const near = posix.join(posix.dirname(cfg.index), "HISTORY.md");
 		for (const c of ["HISTORY.md", near]) if (await fs.exists(fs.abs(c)).catch(() => false)) return c;
-		return near;
+		return ["history.md", near.toLowerCase()].includes(rel.toLowerCase()) ? rel : near;
 	};
 
 	/** 새 문서 하나에 대한 규칙: 막을 이유(모델에게), 결과에 붙일 안내, 대화창 항목 */
@@ -450,7 +451,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				if (exists) continue;
 				const kind = docKind(rel);
-				const hist = kind === "history" ? await historyFile(fs, cfg) : "";
+				const hist = kind === "history" ? await historyFile(fs, cfg, rel) : "";
 				// 이력 파일 자신(HISTORY.md 를 처음 만듦)은 규칙 밖. 다른 곳의 HISTORY.md 는 이력 문서로 봄 (이력 파일이 둘이 되지 않게)
 				const counted = !ruleFree(rel, cfg.index) && !(kind === "history" && rel.toLowerCase() === hist.toLowerCase());
 				if (counted) {

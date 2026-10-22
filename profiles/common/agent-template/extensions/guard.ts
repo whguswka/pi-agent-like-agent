@@ -127,7 +127,7 @@ function repoWrite(args: string[]): boolean {
 /** curl·wget·http 로 GitLab(/api/v4/)·GitHub API 에 쓰기 (POST·PUT·PATCH·DELETE, 데이터를 보내면 POST).
  *  다른 주소의 POST(모델 서빙 /v1/models/...:predict 등)는 보지 않음 */
 function apiWrite(name: string, args: string[]): boolean {
-	if (!args.some((a) => /\/api\/v[34]\/|api\.github\.com/.test(a))) return false;
+	if (!args.some((a) => /\/api\/v4\/|api\.github\.com/.test(a))) return false;
 	const m = httpMethod(args);
 	if (m) return WRITE_METHOD.test(m);
 	if (name === "http" || name === "https") return WRITE_METHOD.test((args.find((a) => !a.startsWith("-")) || "").toUpperCase()); // httpie: http POST 주소

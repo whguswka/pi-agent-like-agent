@@ -161,6 +161,21 @@ await request();
 r = await writeDoc(ctx, "plan-b.md");
 check("같은 세션의 두 번째 계획 문서: 묻고, 아니요면 막고 첫 계획 문서를 고치게", r.blocked?.includes("plan-a.md") && ctx.log.join() === "계획 문서", [r, ctx.log]);
 
+// 새 프로젝트에서 지침대로 맨 위 HISTORY.md 를 처음 만들 때: 묻지 않고 그것을 이력 파일로 (없는 docs/HISTORY.md 로 돌리지 않음)
+{
+	const W3 = join(tmp, "work3");
+	mkdirSync(W3, { recursive: true });
+	globalThis.__piWorkDir = { remote: false, cwd: W3 };
+	await request();
+	ctx = fakeCtx([true]);
+	r = await writeDoc(ctx, "HISTORY.md", "# 작업 이력\n", W3);
+	check("새 프로젝트의 맨 위 HISTORY.md: 이력 질문 없이 만들고 목록에 링크 (개수에 넣지 않음)",
+		!r.blocked && !ctx.log.includes("이력 문서") && read(join(W3, "docs/INDEX.md")).includes("- [작업 이력](../HISTORY.md)"), [ctx.log, r]);
+	r = await writeDoc(ctx, "docs/작업이력.md", "# x\n", W3);
+	check("그다음 이력 문서는 맨 위 HISTORY.md 로 돌림", r.blocked?.includes("HISTORY.md 하나에") && !r.blocked.includes("docs/HISTORY.md") && ctx.log.includes("이력 문서"), [r, ctx.log]);
+	globalThis.__piWorkDir = local;
+}
+
 // 동시에 (한 답의 도구 호출 여럿): 묻는 것은 한 번
 await request();
 ctx = fakeCtx([false]);

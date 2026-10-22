@@ -264,6 +264,7 @@ function helpLines(): string[] {
 		` 스킬  /skill:이름 → ${skills.join(", ") || "(없음)"}`,
 		`       내 스킬: ${A}/skills/<이름>/SKILL.md (skill-creator 에게 "○○ 스킬 만들어줘")`,
 		`       내 hook: ${A}/extensions/my-<이름>.ts (hook-creator 에게 "○○할 때 △△하는 hook 만들어줘")`,
+		" 훅    /hooks 목록 · /hooks off mine 내 훅만 끄기 (위험 명령 확인은 그대로) · /hooks off docs 문서 규칙 끄기",
 		` 지침  ${A}/AGENTS.md (공통), 프로젝트 폴더의 AGENTS.md (/init 으로 초안) · /remember <내용> 한 줄 더하기`,
 		" 기억  /recall 지난 세션들의 작업 기록 (새 세션에 자동으로 알려 줌) · /recall save 다음 세션에 넘길 요약 · /recall off 끄기",
 		" 설명  /docs <모듈[.이름]> [찾을 말] 설치된 버전의 시그니처·설명 (pi 도 docs_lookup 으로 찾음) · 받은 문서는 ~/pi-docs 에",
