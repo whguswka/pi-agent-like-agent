@@ -40,7 +40,7 @@ check("끝내기 전 확인: 요구사항을 다시 보고 실행·테스트로 
 	DONE_GUIDE.length <= 300 && ["요구사항", "실행", "확인하지 못한 것", "임시 코드", "이미 써 본 방법"].every((w) => DONE_GUIDE.includes(w)), DONE_GUIDE.length);
 check("작업 습관 줄: 코드는 파일로·자리 표시 없이, 지침이 가리킨 문서 먼저, 기다릴 때는 한도와 상태 출력 (각 200자 안)",
 	CODE_FILE_GUIDE.includes(".py 파일") && CODE_FILE_GUIDE.includes("placeholder") && READ_DOCS_GUIDE.includes("AGENTS.md") && READ_DOCS_GUIDE.includes("먼저 물을 것")
-	&& WAIT_GUIDE.includes("30초마다") && WAIT_GUIDE.includes("-u") && [CODE_FILE_GUIDE, READ_DOCS_GUIDE, WAIT_GUIDE].every((s) => s.length <= 200),
+	&& WAIT_GUIDE.includes("30초마다") && WAIT_GUIDE.includes("-u") && [CODE_FILE_GUIDE, READ_DOCS_GUIDE, WAIT_GUIDE].every((s) => s.length <= 220) && WAIT_GUIDE.includes("wait_for_run_completion"),
 	[CODE_FILE_GUIDE.length, READ_DOCS_GUIDE.length, WAIT_GUIDE.length]);
 addKitGuides(undefined); // 지침 목록이 없는 pi 이면 그냥 넘어감
 

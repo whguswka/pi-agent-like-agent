@@ -90,10 +90,11 @@ export type WorkRec = {
 	wiki?: string[]; // 위키에 쓴 페이지
 	ans?: string; // 답의 앞부분
 	end?: string; // 끝까지 답하지 못했으면 aborted·error 등
+	talk?: boolean; // 도구를 하나도 쓰지 않고 답만 함 (답은 실행해서 확인한 말이 아님)
 	handoff?: string; // /recall save 로 남긴 요약
 };
 export const LOG_KEEP = 200; // 프로젝트마다 남기는 기록 수
-export const DIGEST_MAX = 1600; // 지침에 알리는 글의 길이 (새 대화의 첫 메시지에만 들어감. 사내AI 는 입력 한 번에 만 자라 지침·도구 설명과 나눠 씀)
+export const DIGEST_MAX = 1700; // 지침에 알리는 글의 길이 (끝의 안내 줄 포함. 새 대화의 첫 메시지에만 들어감. 사내AI 는 입력 한 번에 만 자라 지침·도구 설명과 나눠 씀)
 export const DIGEST_ITEMS = 6; // 알리는 최근 요청 수
 export const DIGEST_DAYS = 30; // 이보다 오래된 기록은 알리지 않음
 export const HANDOFF_MAX = 900; // 알리는 넘겨받은 요약의 길이 (줄 단위로 줄이고 '요구사항'·'정한 것' 줄은 남김)
@@ -217,9 +218,17 @@ export function turnLine(r: WorkRec): string {
 	if (r.cmds?.length) more.push(`명령 ${cut(r.cmds[r.cmds.length - 1], 50)}`);
 	if (r.end === "aborted") more.push("Esc 로 멈춤");
 	else if (r.end) more.push("끝까지 답하지 못함");
-	if (r.ans) more.push(`답: ${cut(r.ans, 70)}`);
+	if (r.ans) more.push(`${r.talk ? "실행 없이 답" : "답"}: ${cut(r.ans, 70)}`);
 	return `- ${shortT(r.t)} "${cut(r.req || "", 70)}"${more.length ? ` → ${more.join(" · ")}` : ""}`;
 }
+
+// 끝에 붙이는 줄: 시험(2026-10-23, 실제 Copilot)에서 새 세션에 지난 세션과 같은 요청을 하자 기록만 보고 아무것도 실행하지 않은 채
+//  '이미 끝났습니다' 라고 답했다. 맨 앞의 안내 글에 적었을 때도 그대로여서, 사용자 요청 바로 앞(지침의 끝)에 둔다.
+//  '기록의 파일은 다시 써도 된다' 를 붙였을 때는 '새 파일로' 라는 요청에도 지난 파일을 다시 써서 뺐다
+export const DIGEST_TAIL =
+	"위 기록은 지난 세션의 일이다. 지금 요청이 위의 요청과 같거나 비슷하면 사용자는 지금 다시 하기를 바라는 것이므로, " +
+	"'이미 했다'고 답하지 말고 지금 실행해서 결과로 확인한다.";
+const TALK_NOTE = " '실행 없이 답' 은 확인하지 않은 말이다.";
 
 /** 새 세션에 알릴 글: 마지막 요약(/recall save)과 최근 요청들 (오래된 것부터). notes: 작업 폴더에 NOTES.md(/handoff 로 정리한 메모)가 있음.
  *  알릴 것이 없으면 "" */
@@ -238,17 +247,21 @@ export function digestOf(recs: WorkRec[], where: string, now = new Date(), max =
 		parts.push(`넘겨받은 요약 (${shortT(ho.t)}):\n${handoffCut(ho.handoff)}`);
 	}
 	const title = "최근 요청 (오래된 것부터):";
-	let room = max - parts.join("\n").length - title.length - 2;
+	let room = max - parts.join("\n").length - title.length - DIGEST_TAIL.length - TALK_NOTE.length - 3;
 	const lines: string[] = [];
+	let talk = false;
 	for (const r of [...recent].reverse()) {
 		if (r.handoff || !r.req) continue;
 		const l = turnLine(r);
 		if (lines.length >= DIGEST_ITEMS || l.length + 1 > room) break;
 		lines.unshift(l);
 		room -= l.length + 1;
+		talk ||= !!(r.talk && r.ans);
 	}
 	if (lines.length) parts.push(`${title}\n${lines.join("\n")}`);
-	return parts.length > 1 ? parts.join("\n") : "";
+	if (parts.length < 2) return "";
+	parts.push(DIGEST_TAIL + (talk ? TALK_NOTE : ""));
+	return parts.join("\n");
 }
 
 // 기록하지 않는 명령: 보기만 하는 것 (앞의 'cd 폴더 &&' 는 떼고 봄)
@@ -264,12 +277,12 @@ const ansHead = (s: string) =>
 		s
 			.replace(/```[\s\S]*?(```|$)/g, " ")
 			.replace(/^#{1,6}\s+/gm, "")
-			.replace(/[*_`>|]/g, ""),
+			.replace(/[*`>|]/g, ""), // 밑줄은 남김 (파일 이름 kfp_smoke_test.py 가 kfpsmoketest.py 로 바뀌었음)
 	).slice(0, 200);
 const textOf = (m: any): string =>
 	typeof m?.content === "string" ? m.content : (m?.content || []).filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n");
 
-type Turn = { t: string; req: string; files: string[]; cmds: string[]; wiki: string[]; ans: string; end: string; handoff: boolean };
+type Turn = { t: string; req: string; files: string[]; cmds: string[]; wiki: string[]; ans: string; end: string; handoff: boolean; used: number };
 
 export default function (pi: ExtensionAPI) {
 	// 다음 요청에 붙여 알릴 것 (확장을 다시 불러와도(/kit share, /reload) 남김)
@@ -318,12 +331,14 @@ export default function (pi: ExtensionAPI) {
 		const ask = event.source === "extension" ? userAskOf(text) : rawInput(text);
 		if (!ask?.trim()) return;
 		if (W.cur && !handoff) W.cur.req = cut(`${W.cur.req} / ${one(scrubText(ask))}`, 300); // 자르기 전에 빼기 (잘린 이메일은 알아보지 못함)
-		else W.cur = { t: stamp(), req: cut(one(scrubText(ask)), 300), files: [], cmds: [], wiki: [], ans: "", end: "", handoff };
+		else W.cur = { t: stamp(), req: cut(one(scrubText(ask)), 300), files: [], cmds: [], wiki: [], ans: "", end: "", handoff, used: 0 };
 	});
 
 	pi.on("tool_result", async (event: any) => {
 		const c = W.cur;
-		if (!c || event.isError) return;
+		if (!c) return;
+		c.used++; // 읽기·보기만 한 것도 셈 (하나도 없으면 '실행 없이 답')
+		if (event.isError) return;
 		const input = event.input || {};
 		if ((event.toolName === "write" || event.toolName === "edit") && typeof input.path === "string") {
 			let f = input.path;
@@ -388,6 +403,7 @@ export default function (pi: ExtensionAPI) {
 				...(wiki.length ? { wiki } : {}),
 				...(ans ? { ans } : {}),
 				...(c.end && c.end !== "stop" ? { end: c.end } : {}),
+				...(c.used ? {} : { talk: true }),
 			});
 			W.turns++;
 		} catch {}

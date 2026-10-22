@@ -351,8 +351,8 @@ export const READ_DOCS_GUIDE =
 	"프로젝트 지침(AGENTS.md)이 가리키는 문서가 지금 하는 일(데이터·DB·파이프라인 등)을 다루면 그 부분을 먼저 읽고, " +
 	"그 문서의 규칙(사용자에게 먼저 물을 것, 하지 말 것)을 지킨다.";
 export const WAIT_GUIDE =
-	"오래 걸리는 외부 작업(파이프라인 실행, 배포, 긴 학습)을 기다릴 때는 한도 없이 기다리지 말고 한 명령 안에서 30초마다 상태를 찍으며 " +
-	"10분 안쪽으로 기다린다 (python 은 -u). 그래도 그대로면 같은 조회를 되풀이하지 말고 막힌 원인을 살펴 사용자에게 알린다.";
+	"오래 걸리는 외부 작업(파이프라인 실행, 배포, 긴 학습)을 기다릴 때는 끝날 때까지 아무것도 찍지 않는 대기(wait_for_run_completion 등)를 쓰지 말고, " +
+	"한 명령 안에서 30초마다 상태를 찍으며 10분 안쪽으로 기다린다 (python 은 -u). 그래도 그대로면 막힌 원인을 살펴 사용자에게 알린다.";
 /** 지침에 늘 더하는 줄 (작업 모드와 관계없이 같은 글) */
 export const KIT_GUIDES = [DONE_GUIDE, CODE_FILE_GUIDE, READ_DOCS_GUIDE, WAIT_GUIDE];
 /** 지침 목록(systemPromptOptions.promptGuidelines)에 KIT_GUIDES 를 한 번씩 더함 */

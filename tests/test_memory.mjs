@@ -67,8 +67,10 @@ const recs = [
 	{ t: "2026-10-20 18:00", req: "검증 손실도 남겨 줘", files: ["train.py", "utils/tb.py"], cmds: ["python train.py --epochs 1"], end: "aborted" },
 ];
 const dg = m.digestOf(recs, "~/tb", now);
-check("알릴 글: 30일 넘은 기록은 빼고, 마지막 요약, 최근 요청은 오래된 것부터 (바꾼 파일·명령·멈춤·답)",
-	dg.startsWith("이 프로젝트(~/tb)에서 지난 세션들에 한 일입니다") && !dg.includes("아주 오래된") && dg.includes("넘겨받은 요약 (10-20 17:40):\n목표: 학습 손실")
+// 끝의 안내 줄: 시험(2026-10-23)에서 새 세션에 지난 세션과 같은 요청을 하자 기록만 보고 실행 없이 '이미 끝났습니다' (맨 앞에 적었을 때도 그대로)
+check("알릴 글: 30일 넘은 기록은 빼고, 마지막 요약, 최근 요청은 오래된 것부터 (바꾼 파일·명령·멈춤·답), 끝에 '같은 요청이면 지금 다시' 안내",
+	dg.startsWith("이 프로젝트(~/tb)에서 지난 세션들에 한 일입니다") && dg.endsWith(`\n${m.DIGEST_TAIL}`) && m.DIGEST_TAIL.includes("'이미 했다'고 답하지 말고 지금 실행해서")
+	&& !dg.includes("아주 오래된") && dg.includes("넘겨받은 요약 (10-20 17:40):\n목표: 학습 손실")
 	&& dg.indexOf("텐서보드 로그 폴더 정리") < dg.indexOf("검증 손실도") && dg.includes("→ 바꾼 파일 train.py, utils/tb.py · 명령 python train.py --epochs 1 · Esc 로 멈춤"), dg);
 const many = Array.from({ length: 30 }, (_, i) => ({ t: `2026-10-20 ${String(i % 24).padStart(2, "0")}:00`, req: `요청 ${i} ${"가".repeat(60)}`, ans: "나".repeat(100), files: [`f${i}.py`] }));
 const dm = m.digestOf(many, "~/tb", now);
@@ -183,10 +185,17 @@ check("확장이 보낸 요청은 사용자를 대신한 것만 (userAsk 표시,
 	lg.length === 2 && lg[1].req === "검증 손실도 남겨 줘" && lg[1].end === "aborted" && lg[1].files[0] === "train.py", lg);
 await turn("아무것도 하지 못한 요청", { answer: "", stop: "error" });
 check("아무것도 하지 못하고 끝난 요청은 남기지 않음", log().length === 2);
+// 시험(2026-10-23): 도구 없이 '이미 끝났습니다' 라고만 한 답이 기록에 남아 다음 세션도 그대로 따라 함 -> 실행 없이 한 답이라고 표시
+await turn("시험 파이프라인을 새 파일로 만들어 제출해 줘", { answer: "이미 끝났습니다. `kfp_smoke_test.py` 로 제출했습니다" });
+lg = log();
+check("도구를 하나도 쓰지 않은 답은 talk 표시 (도구를 쓴 요청에는 없음), 답의 밑줄은 그대로 (파일 이름)",
+	lg.length === 3 && lg[2].talk === true && lg[2].ans === "이미 끝났습니다. kfp_smoke_test.py 로 제출했습니다" && !lg[0].talk && !lg[1].talk, lg);
 
 await emit("session_start", { reason: "new" });
 const d1 = await prompt();
 check("새 세션: 지난 기록을 지침의 recent_work 부분으로", typeof d1 === "string" && d1.includes(`이 프로젝트(${m.projectOf(globalThis.__piWorkDir).label})`) && d1.includes("텐서보드에 학습 손실") && d1.includes('"검증 손실도 남겨 줘"') && d1.includes("Esc 로 멈춤"), d1);
+check("새 세션: 실행 없이 한 답은 그렇게 적고, 끝에 '확인하지 않은 말' 안내",
+	d1.includes("→ 실행 없이 답: 이미 끝났습니다. kfp_smoke_test.py") && d1.endsWith(`${m.DIGEST_TAIL} '실행 없이 답' 은 확인하지 않은 말이다.`), d1);
 await turn("세 번째 요청", { tools: [["edit", { path: "a.py" }]] });
 await turn("네 번째 요청", { tools: [["edit", { path: "b.py" }]] });
 check("새 세션 안에서도 첫 요청 때 정한 글 그대로 (그 뒤 기록은 다음 세션에)", (await prompt()) === d1 && !d1.includes("세 번째"), await prompt());
