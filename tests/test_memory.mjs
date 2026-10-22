@@ -98,8 +98,32 @@ check("넘겨받은 요약 줄이기: 한도 안이면 그대로, 줄바꿈 없�
 	m.handoffCut(H1) === H1 && m.handoffCut("가".repeat(1000), 100) === `${"가".repeat(99)}…`, H1.length);
 const dh = m.digestOf([{ t: "2026-10-21 20:45", handoff: H1 }, { t: "2026-10-21 20:46", req: "위치 고쳐 줘" }], "~/work/resmon", now);
 check("알릴 글: 세션 1 요약이 통째로 들어가 정한 것이 남음 (한도 안)", dh.includes(H1) && dh.length <= m.DIGEST_MAX, dh.length);
-check("요약 부탁 글: 정한 것을 맨 앞에, 넘겨받은 결정도 옮겨 적게",
-	m.HANDOFF_PROMPT.includes("맨 앞에 '정한 것:'") && m.HANDOFF_PROMPT.includes("넘겨받은 것 중 아직 유효한 것도 빠짐없이 옮겨"), m.HANDOFF_PROMPT);
+check("요약 부탁 글: 요구사항·정한 것을 맨 앞에, 넘겨받은 것도 옮겨 적게",
+	m.HANDOFF_PROMPT.includes("맨 앞에 '요구사항:'") && m.HANDOFF_PROMPT.indexOf("'요구사항:'") < m.HANDOFF_PROMPT.indexOf("'정한 것:'")
+	&& m.HANDOFF_PROMPT.includes("둘 다 앞 세션에서 넘겨받은 것 중 아직 유효한 것도 빠짐없이 옮겨"), m.HANDOFF_PROMPT);
+// 실사용 시험의 세션 7 요약(1002자, 정한 것 줄 없음): 목표가 'CPU/메모리 사용량 낮추기' 로만 남아 처음 요청의 항목이 빠졌다.
+// 요구사항 줄이 있으면 (모델이 끝에 적어도) 900자로 줄일 때 남는다
+const H7 = [
+	"목표: 작업표시줄 AI 위젯과 비슷한 WinForms 리소스 모니터 오버레이를 만들고 CPU/메모리 사용량을 낮추기.",
+	"한 일: `resmon.cs` UI를 Label 중심에서 직접 그리기(OnPaint) 방식으로 변경, 둥근 반투명 배경·상태색·CPU/RAM/GPU/RX/TX 표시 추가.",
+	"한 일: DPI 인식(`SetProcessDPIAware`) 추가, 글자 크기/폭/높이 조정, 위치를 트레이 영역 기준으로 정렬.",
+	"한 일: RX/TX 누적량을 헤더 줄(`RX 3.9 KB` 형태)로 이동, 속도는 아래 줄에 유지.",
+	"한 일: RAM 수집을 WMI → `GlobalMemoryStatusEx(dwMemoryLoad)` 로 변경.",
+	"한 일: 네트워크 속도를 단순 1초 가정이 아니라 실제 경과 시간(`elapsed`) 기준으로 계산하도록 변경.",
+	"바꾼 파일: `resmon.cs` 만 수정. 빌드는 `build.ps1` 사용.",
+	"커밋: `b458bbe`, `6ad8e50`, `7f05eb1`, `6778737` 까지는 정상 완료.",
+	"커밋 전 미완료 최적화: GPU 측정을 줄이려다 코드가 여러 번 바뀜. 현재는 `gpuCounters` 캐시 버전이 들어가 있으나 사용자가 원한 `PerformanceCounterCategory.ReadCategory()` 기반 최적화는 아직 안 끝남.",
+	"측정 결과(최적화 전후 검증용으로 확보): 10초 대기 후 20초 측정 시 `CpuSecondsIncrease=7.969`, `WorkingSetMB=83.6`. 원래 관측치는 대략 \"한 코어 35%, 97MB\".",
+	"남은 일: GPU 코드를 `ReadCategory()` 기반으로 다시 작성 → 빌드 → 10초 대기 + 20초 측정 1회 → 최초값(35%, 97MB)과 비교 → 개선되면 최종 커밋.",
+	"주의: 매초마다 `new PerformanceCounter(...)` 생성하는 방식은 오히려 CPU가 높았고 실패. 사용자는 \"나중에 뜬 GPU 프로세스/네트워크 어댑터도 자동 반영\"을 반드시 유지하라고 명시함.",
+	"요구사항: 작업 표시줄 오른쪽에 CPU %, RAM %, GPU %(엔진 가운데 최대), 네트워크 업·다운 속도와 시작 이후 총 전송량을 1초마다, 관리자 권한·추가 설치 없이.",
+].join("\n");
+const c7 = m.handoffCut(H7);
+check("넘겨받은 요약 줄이기: 요구사항 줄은 맨 끝에 있어도 남김 (세션 7 요약)",
+	c7.length <= m.HANDOFF_MAX && c7.includes("요구사항: 작업 표시줄 오른쪽에 CPU %") && c7.includes("총 전송량") && /\n\(… \d+줄 줄임\)$/.test(c7), [c7.length, c7]);
+const long = m.handoffCut(`요구사항: ${"항목, ".repeat(200)}\n정한 것: GPU 는 최대\n한 일: 이것저것`, 300);
+check("넘겨받은 요약 줄이기: 너무 긴 요구사항 줄은 다른 정한 것 줄을 남긴 자리에 앞부분만",
+	long.length <= 300 && long.startsWith("요구사항: 항목, ") && long.includes("…\n정한 것: GPU 는 최대\n(… 1줄 줄임)") && !long.includes("한 일"), [long.length, long]);
 
 // 가짜 pi 로: 요청 -> 기록 -> 새 세션에 알림 (세션 안에서는 같은 글), 확장이 보낸 요청, /handoff, /recall
 const tmp = mkdtempSync(join(tmpdir(), "memory-test-"));

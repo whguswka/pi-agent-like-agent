@@ -96,28 +96,37 @@ export const LOG_KEEP = 200; // 프로젝트마다 남기는 기록 수
 export const DIGEST_MAX = 1600; // 지침에 알리는 글의 길이 (새 대화의 첫 메시지에만 들어감. 사내AI 는 입력 한 번에 만 자라 지침·도구 설명과 나눠 씀)
 export const DIGEST_ITEMS = 6; // 알리는 최근 요청 수
 export const DIGEST_DAYS = 30; // 이보다 오래된 기록은 알리지 않음
-export const HANDOFF_MAX = 900; // 알리는 넘겨받은 요약의 길이 (줄 단위로 줄이고 '정한 것' 줄은 남김)
+export const HANDOFF_MAX = 900; // 알리는 넘겨받은 요약의 길이 (줄 단위로 줄이고 '요구사항'·'정한 것' 줄은 남김)
 export const HANDOFF_MIN = 3; // /new·/resume 때 요약을 남길지 묻는 요청 수
-// 정한 것을 맨 앞에: 예전에는 끝(주의할 점)에 적게 해서, 요약이 잘릴 때 먼저 빠졌다
+// 요구사항·정한 것을 맨 앞에: 예전에는 정한 것을 끝(주의할 점)에 적게 해서, 요약이 잘릴 때 먼저 빠졌다
 //  (시험: 세션 1 에서 정한 'GPU 는 엔진 가운데 최대값' 이 잘려 세션 4 가 묻지 않고 합계로 바꿈).
-//  앞 세션에서 넘겨받은 결정도 옮겨 적게 해서 세션을 몇 번 거쳐도 남게
+//  요구사항(만들 것과 꼭 들어갈 내용·조건)도 따로 적게 한다: 세션 7 의 요약은 목표를 'CPU/메모리 사용량 낮추기' 로만 적고
+//  정한 것 줄도 없어, 처음 요청의 GPU·네트워크 속도·총 전송량이 넘겨지지 않았다.
+//  앞 세션에서 넘겨받은 것도 옮겨 적게 해서 세션을 몇 번 거쳐도 남게
 export const HANDOFF_PROMPT =
 	"다음 세션에서 이 작업을 이어 갈 수 있게 지금까지 한 일을 정리해 줘. 도구는 쓰지 말고 이 대화(지침의 지난 작업 기록 포함)만 보고 적어 줘. " +
-	"맨 앞에 '정한 것:' 으로 시작하는 줄에 사용자가 정한 결정·규칙을 적되, 앞 세션에서 넘겨받은 것 중 아직 유효한 것도 빠짐없이 옮겨 적어 줘. " +
+	"맨 앞에 '요구사항:' 으로 시작하는 줄에 사용자가 요구한 결과물과 꼭 들어갈 내용·조건(보여 줄 항목, 지킬 제약 등)을, " +
+	"그다음 '정한 것:' 으로 시작하는 줄에 사용자가 정한 결정·규칙을 적되, 둘 다 앞 세션에서 넘겨받은 것 중 아직 유효한 것도 빠짐없이 옮겨 적어 줘. " +
 	"그다음 목표 / 한 일 / 바꾼 파일 / 남은 일·다음에 할 일 / 주의할 점(안 된 방법) 을 한두 줄씩, 모두 14줄 안에. 비밀번호·개인정보는 적지 마.";
 
-/** 넘겨받은 요약을 max 자 안으로: 줄 단위로 줄이고, '정한 것' 줄은 먼저 남긴다 (원래 차례는 그대로) */
+/** 넘겨받은 요약을 max 자 안으로: 줄 단위로 줄이고, '요구사항'·'정한 것' 줄은 먼저 남긴다 (원래 차례는 그대로).
+ *  그 줄이 너무 길어 통째로 들어가지 않으면 앞부분만이라도 남긴다 */
 export function handoffCut(text: string, max = HANDOFF_MAX): string {
 	if (text.length <= max) return text;
 	const lines = text.split(/\r?\n/).filter((l) => l.trim());
-	const decided = (l: string) => /^[\s\-*•]*(정한 ?것|결정|규칙)/.test(l);
+	const decided = (l: string) => /^[\s\-*•]*(요구 ?사항|정한 ?것|결정|규칙)/.test(l);
 	const keep = new Set<number>();
 	let room = max - 12; // "(… n줄 줄임)" 자리
-	for (const pass of [true, false]) {
+	// 차례: 통째로 들어가는 요구사항·정한 것 줄 -> 남은 자리에 긴 요구사항·정한 것 줄의 앞부분 -> 다른 줄
+	for (const [want, cut] of [[true, false], [true, true], [false, false]]) {
 		lines.forEach((l, i) => {
-			if (decided(l) !== pass || keep.has(i) || l.length + 1 > room) return;
+			if (decided(l) !== want || keep.has(i)) return;
+			if (l.length + 1 > room) {
+				if (!cut || room < 60) return;
+				lines[i] = `${l.slice(0, room - 2)}…`;
+			}
 			keep.add(i);
-			room -= l.length + 1;
+			room -= lines[i].length + 1;
 		});
 	}
 	if (!keep.size) return `${text.slice(0, max - 1)}…`; // 줄바꿈 없는 긴 글
