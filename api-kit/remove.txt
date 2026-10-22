@@ -14,5 +14,6 @@ bin/pi.cmd
 bin/tty-relay.sh
 bin/ps1
 tests/test_ps1.py
+tests/test_pc_screen.py
 compat/electron.mjs
 compat/tty-relay.mjs

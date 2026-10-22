@@ -2,7 +2,8 @@
 //  - 사용자가 고친 값은 그대로 둔다 (없는 항목만 추가)
 //  - 사용자가 지운 항목은 다시 넣지 않는다: 지난번에 설치한 템플릿(.pi-agent-kit-template.json)과 비교해 새로 생긴 것만 추가
 //  - 바꾸기 전 파일은 <이름>.bak 으로 남긴다
-//  - 기본 명령·스킬(<저장소>/prompts/*.md, <저장소>/skills/<이름>/)을 사용자 설정 폴더의 prompts·skills 에 복사한다
+//  - 기본 명령·스킬(<저장소>/prompts/*.md, <저장소>/skills/<이름>/, 그 설정에만 있는 profiles/<설정>/skills/<이름>/)을
+//    사용자 설정 폴더의 prompts·skills 에 복사한다
 //    처음이면 복사, 고치지 않았으면 새 버전으로 바꿈, 고쳤으면 그대로 둠(알림), 지웠으면 다시 넣지 않음
 //    (고쳤는지는 지난번에 설치한 내용의 해시와 비교. 상태 파일의 kitFiles)
 // 사용법: node merge-config.mjs <템플릿 폴더> <사용자 설정 폴더> [저장소 폴더]
@@ -146,9 +147,11 @@ function syncKitFiles() {
 	const items = [];
 	const pdir = path.join(kitHome, "prompts");
 	if (fs.existsSync(pdir)) for (const n of fs.readdirSync(pdir).sort()) if (n.endsWith(".md")) items.push([`prompts/${n}`, path.join(pdir, n), "명령", `/${n.slice(0, -3)}`]);
-	const sdir = path.join(kitHome, "skills");
-	if (fs.existsSync(sdir))
-		for (const n of fs.readdirSync(sdir).sort()) if (fs.existsSync(path.join(sdir, n, "SKILL.md"))) items.push([`skills/${n}`, path.join(sdir, n), "스킬", n]);
+	// 스킬: 키트 공통(<저장소>/skills)과 그 설정에만 있는 것(profiles/<설정>/skills, 예: pc 의 pc-screen). 이름이 같으면 설정의 것
+	const skills = new Map();
+	for (const sdir of [path.join(kitHome, "skills"), path.join(tplDir, "..", "skills")])
+		if (fs.existsSync(sdir)) for (const n of fs.readdirSync(sdir)) if (fs.existsSync(path.join(sdir, n, "SKILL.md"))) skills.set(n, path.join(sdir, n));
+	for (const n of [...skills.keys()].sort()) items.push([`skills/${n}`, skills.get(n), "스킬", n]);
 	const added = [];
 	const updated = [];
 	const kept = [];

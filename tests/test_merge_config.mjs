@@ -59,6 +59,21 @@ check("새 버전에 생긴 스킬은 추가", read(A("skills/new-skill/SKILL.md
 out = run();
 check("고친 것은 다음에도 그대로 (알림만)", read(A("prompts/review.md")) === "내가 고친 review" && !/추가|새 버전으로/.test(out), out);
 
+// 그 설정에만 있는 스킬 (profiles/<설정>/skills: 템플릿 폴더 옆의 skills). 스크립트가 든 하위 폴더째, 고치지 않았으면 새 버전으로
+put(path.join(tmp, "skills", "pc-screen", "SKILL.md"), "screen v1");
+put(path.join(tmp, "skills", "pc-screen", "scripts", "shot.ps1"), "﻿shot v1");
+out = run();
+check("설정의 스킬도 복사 (하위 폴더째)", read(A("skills/pc-screen/SKILL.md")) === "screen v1" && read(A("skills/pc-screen/scripts/shot.ps1")) === "﻿shot v1"
+	&& out.includes("pc-screen"), out);
+put(path.join(tmp, "skills", "pc-screen", "scripts", "shot.ps1"), "﻿shot v2");
+out = run();
+check("설정의 스킬: 고치지 않았으면 새 버전으로", read(A("skills/pc-screen/scripts/shot.ps1")) === "﻿shot v2" && out.includes("새 버전으로: pc-screen"), out);
+const agent3 = path.join(tmp, "agent3");
+writeJson(path.join(agent3, "settings.json"), {});
+fs.mkdirSync(path.join(tmp, "other", "agent-template"), { recursive: true });
+execFileSync(process.execPath, [script, path.join(tmp, "other", "agent-template"), agent3, kit], { encoding: "utf8" });
+check("다른 설정(템플릿 옆에 skills 가 없음)에는 들어가지 않음", !fs.existsSync(path.join(agent3, "skills", "pc-screen")) && fs.existsSync(path.join(agent3, "skills", "new-skill")));
+
 // 원래 사용자가 만든 같은 이름의 명령은 덮어쓰지 않음
 const agent2 = path.join(tmp, "agent2");
 writeJson(path.join(agent2, "settings.json"), {});
