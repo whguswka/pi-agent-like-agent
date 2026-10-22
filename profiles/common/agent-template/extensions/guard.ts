@@ -3,7 +3,9 @@
  *
  * pi 는 LLM 이 정한 명령을 묻지 않고 실행한다. 되돌리기 어려운 작업만 실행 전에 사용자에게 묻는다.
  *  - bash: 폴더 지우기(rm -r 등), git push·reset --hard·clean·branch -D, 권한 일괄 변경, 디스크·시스템 명령,
- *          쿠버네티스 리소스 삭제(kubectl delete), 받은 스크립트 바로 실행(curl | sh), 패키지 제거, sudo, 데이터베이스 삭제
+ *          쿠버네티스 리소스 삭제(kubectl delete), 받은 스크립트 바로 실행(curl | sh), 패키지 제거, sudo, 데이터베이스 삭제,
+ *          원격 저장소 바꾸기(glab·gh 의 mr merge 등, GitLab API 로 보내는 POST·PUT·DELETE),
+ *          실행하는 셸 스크립트(bash x.sh, ./x.sh) 안의 git push·kubectl delete·glab 같은 원격 작업
  *  - write/edit: 작업 폴더 밖의 파일 (임시 폴더는 제외). jupyter 모드에서는 노트북의 작업 폴더 기준
  *  - 사용자가 직접 치는 !명령은 묻지 않는다 (이 확인은 LLM 이 요청한 도구 실행에만 걸림)
  *  - 거부하면 실행하지 않고 작업을 멈춘다. 물을 수 없는 실행 방식(pi -p)이면 막고 LLM 에게 이유를 알린다
@@ -40,6 +42,11 @@ const RULES: Rule[] = [
 	{ label: "패키지 제거", re: /\bpip3?\s+uninstall\b|\bpython3?\s+-m\s+pip\s+uninstall\b|\bconda\s+(?:remove|uninstall|env\s+remove)\b|\bnpm\s+(?:uninstall|rm)\s+-g\b/ },
 	{ label: "관리자 권한 (sudo)", re: /(?:^|[;&|(\s])sudo\s/ },
 	{ label: "데이터베이스 삭제", re: /\bdrop\s+(?:table|database|schema)\b|\btruncate\s+table\b/i },
+	// 글자 패턴 (인라인 코드·PowerShell·분석 실패 때). 명령 자리의 glab·gh·curl 은 checkSimple 이 낱말로 더 정확히 봄
+	{
+		label: "원격 저장소 바꾸기 (glab·gh, GitLab API)",
+		re: /\b(?:glab|gh)\s+(?:mr|pr|issue|release|repo|label|variable|secret|workflow|run|ci)\s+(?!(?:list|ls|view|show|diff|status|checkout|co|clone|browse|search|trace|lint|help|checks|watch|get|download)\b)[a-z]|\b(?:glab|gh)\s+api\b[^;\n]*(?:-X\s*|--method[\s=])(?:POST|PUT|PATCH|DELETE)\b|\b(?:curl|wget)\b(?=[^;\n]*\/api\/v4\/)(?=[^;\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request[\s=](?:POST|PUT|PATCH|DELETE)\b|--method[\s=](?:POST|PUT|PATCH|DELETE)\b|\s(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form|--json|--post-data|--post-file)[\s=]))/i,
+	},
 ];
 
 const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
@@ -93,7 +100,39 @@ const LABEL = {
 	pipe: RULES[10].label,
 	pkg: RULES[11].label,
 	sudo: RULES[12].label,
+	remote: RULES[14].label,
 };
+
+/** glab·gh 의 하위 명령 가운데 보기만 하는 것 (나머지 mr merge, pr create, release create, repo delete, ci run 등은 원격 저장소를 바꿈) */
+const READ_VERBS = new Set(["list", "ls", "view", "show", "diff", "status", "checkout", "co", "clone", "browse", "search", "trace", "lint", "help", "checks", "watch", "get", "download"]);
+const WRITE_METHOD = /^(POST|PUT|PATCH|DELETE)$/;
+/** -X POST, -XPOST, --request=PUT, --method DELETE 의 HTTP 방법 (대문자). 없으면 null */
+function httpMethod(args: string[]): string | null {
+	for (let i = 0; i < args.length; i++) {
+		const m = args[i].match(/^(?:-X|--request|--method)(?:=?(.+))?$/);
+		if (m) return (m[1] || args[i + 1] || "").toUpperCase();
+	}
+	return null;
+}
+/** glab·gh 로 원격 저장소를 바꾸는지 (api 는 쓰는 방법이거나 -f 같은 필드가 있으면: 그때 기본 방법이 POST) */
+function repoWrite(args: string[]): boolean {
+	const w = args.filter((a) => !a.startsWith("-"));
+	if (!w.length || ["auth", "config", "alias", "completion", "version", "help", "extension"].includes(w[0])) return false;
+	if (w[0] === "api") {
+		const m = httpMethod(args);
+		return m ? WRITE_METHOD.test(m) : args.some((a) => /^(-f|-F|--field|--raw-field|--input)(=|$)/.test(a));
+	}
+	return w.length > 1 && !READ_VERBS.has(w[1]);
+}
+/** curl·wget·http 로 GitLab(/api/v4/)·GitHub API 에 쓰기 (POST·PUT·PATCH·DELETE, 데이터를 보내면 POST).
+ *  다른 주소의 POST(모델 서빙 /v1/models/...:predict 등)는 보지 않음 */
+function apiWrite(name: string, args: string[]): boolean {
+	if (!args.some((a) => /\/api\/v[34]\/|api\.github\.com/.test(a))) return false;
+	const m = httpMethod(args);
+	if (m) return WRITE_METHOD.test(m);
+	if (name === "http" || name === "https") return WRITE_METHOD.test((args.find((a) => !a.startsWith("-")) || "").toUpperCase()); // httpie: http POST 주소
+	return args.some((a) => /^(-d|--data(-raw|-binary|-urlencode)?|-F|--form|--json|-T|--upload-file|--post-data|--post-file)(=|$)/.test(a) || /^-d./.test(a));
+}
 
 /** PowerShell 을 실행하는 명령: 인자(-Command, ps1 -c)와 heredoc 본문(ps1 <<'EOF', powershell -Command - <<EOF)을 글자 패턴으로 본다.
  *  ps1 은 키트의 bin/ps1 (Git Bash 에서 PowerShell 스크립트를 깨짐 없이 실행) */
@@ -146,6 +185,8 @@ function checkSimple(words: string[], depth: number, allow: RegExp[]): string | 
 	else if ((name === "python" || name === "py") && args[0] === "-m" && /^pip/.test(args[1] || "") && args.includes("uninstall")) why = LABEL.pkg;
 	else if (["conda", "mamba", "micromamba"].includes(name) && (flag(/^(remove|uninstall)$/) || (args.includes("env") && args.includes("remove")))) why = LABEL.pkg;
 	else if (name === "npm" && flag(/^(uninstall|un|rm|remove|r)$/) && flag(/^(-g|--global)$/)) why = LABEL.pkg;
+	else if ((name === "glab" || name === "gh") && repoWrite(args)) why = LABEL.remote;
+	else if (["curl", "wget", "http", "https"].includes(name) && apiWrite(name, args)) why = LABEL.remote;
 	if (why) return why;
 	// 안에서 실행되는 글
 	if (SHELLS.has(name)) {
@@ -285,6 +326,92 @@ export function outsidePath(path: string, wd: WorkDir): string | null {
 
 const workDir = (): WorkDir => (globalThis as any).__piWorkDir || { remote: false, cwd: process.cwd() };
 
+// ---------------------------------------------------------------------------------------------------------------
+// 실행하는 셸 스크립트 안: 명령 글에는 bash deploy.sh 만 보이므로 그 파일을 읽어, 되돌릴 수 없는 원격 작업만 본다
+// (git push, kubectl delete·helm uninstall, glab·gh·GitLab API 로 바꾸기). 폴더 지우기 같은 것은 보지 않는다:
+// build/ 를 비우는 빌드 스크립트를 돌릴 때마다 묻게 되면 결국 끄게 된다. 읽을 수 없거나 256KB 넘는 파일은 보지 않음
+// ---------------------------------------------------------------------------------------------------------------
+
+/** bash 명령이 실행하는 셸 스크립트 파일 (bash x.sh, sh -e x.sh, source x.sh, . x.sh, ./x.sh, 경로/x.sh). bash -c 는 analyze 가 봄 */
+export function scriptFiles(command: string): string[] {
+	const out: string[] = [];
+	try {
+		for (const pl of parseShell(command).pipelines)
+			for (const cmd of pl) {
+				const { rest } = strip(cmd.words);
+				if (!rest.length) continue;
+				let f: string | undefined;
+				if (SHELLS.has(base(rest[0]))) {
+					if (rest.slice(1).some((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a))) continue;
+					f = rest.slice(1).find((a) => !a.startsWith("-"));
+				} else if (rest[0] === "source" || rest[0] === ".") f = rest[1];
+				else if (/[\\/]/.test(rest[0]) && /\.(sh|bash)$/i.test(rest[0])) f = rest[0];
+				if (f && !out.includes(f)) out.push(f);
+			}
+	} catch {}
+	return out;
+}
+
+const REMOTE_LABELS = new Set([LABEL.push, LABEL.kube, LABEL.remote]);
+/** 스크립트 글에서 되돌릴 수 없는 원격 작업 (명령 자리의 낱말로. 주석·따옴표 안은 보지 않음). 없으면 null */
+export function remoteRisk(src: string, depth = 0): string | null {
+	try {
+		const p = parseShell(src);
+		for (const pl of p.pipelines)
+			for (const cmd of pl) {
+				const r = checkSimple(cmd.words, depth + 1, []);
+				if (r && REMOTE_LABELS.has(r)) return r;
+			}
+		if (depth < 3) for (const s of p.nested) {
+			const r = remoteRisk(s, depth + 1);
+			if (r) return r;
+		}
+		return null;
+	} catch {
+		const body = src.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join("\n");
+		return RULES.find((r) => REMOTE_LABELS.has(r.label) && r.re.test(body))?.label || null;
+	}
+}
+
+/** 스크립트 경로 -> 읽을 절대 경로 (jupyter 모드는 노트북 경로). 변수가 든 경로는 모르므로 null */
+function scriptPath(f: string, wd: WorkDir): string | null {
+	let s = cleanPath(f).trim().replace(/\\/g, "/");
+	if (!s || /[$`]/.test(s)) return null;
+	if (wd.remote) {
+		if (isPcAbsolute(s)) return null;
+		if (s === "~" || s.startsWith("~/")) s = (wd.home || "/home/jovyan") + s.slice(1);
+		return posix.resolve(wd.cwd, s);
+	}
+	s = windowsDrivePath(s);
+	if (s === "~" || s.startsWith("~/")) s = slash(homedir()) + s.slice(1);
+	return resolve(wd.cwd, s);
+}
+
+/** 명령이 실행하는 셸 스크립트 안에 원격 작업이 있으면 그 이유. read 는 절대 경로 -> 글 (없거나 못 읽으면 null) */
+export async function scriptRisk(command: string, wd: WorkDir, read: (abs: string) => Promise<string | null>): Promise<string | null> {
+	for (const f of scriptFiles(command)) {
+		const abs = scriptPath(f, wd);
+		if (!abs) continue;
+		let text: string | null = null;
+		try {
+			text = await read(abs);
+		} catch {}
+		if (!text || text.length > 256 * 1024) continue;
+		const r = remoteRisk(text);
+		if (r) return `스크립트 ${f} 안의 명령: ${r}`;
+	}
+	return null;
+}
+
+const readScript = (wd: WorkDir) => async (abs: string): Promise<string | null> => {
+	if (wd.remote) {
+		const r = (globalThis as any).__piRemoteFs;
+		return r ? await r.read(abs) : null;
+	}
+	const st = statSync(abs);
+	return st.isFile() && st.size <= 256 * 1024 ? readFileSync(abs, "utf8") : null;
+};
+
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event: any, ctx: any) => {
 		const cfg = settings();
@@ -295,6 +422,11 @@ export default function (pi: ExtensionAPI) {
 		if (event.toolName === "bash") {
 			what = String(input.command || "");
 			why = checkCommand(what, cfg);
+			if (!why && !regexps(cfg.guard_allow).some((re) => re.test(what))) {
+				try {
+					why = await scriptRisk(what, workDir(), readScript(workDir()));
+				} catch {}
+			}
 		} else if ((event.toolName === "write" || event.toolName === "edit") && cfg.guard_outside_writes !== false) {
 			const abs = outsidePath(input.path, workDir());
 			if (abs) {
@@ -314,7 +446,7 @@ export default function (pi: ExtensionAPI) {
 				block: true,
 				reason:
 					`이 작업은 사용자 확인이 필요한데(${why}), 물어볼 수 없는 실행 방식이라 실행하지 않았습니다: ${what.slice(0, 300)}\n` +
-					"사용자에게 직접 실행을 부탁하거나 다른 방법을 쓰세요. (끄려면 내 설정 파일 ~/.pi/agent/bridge.json 에 \"guard\": false)",
+					"사용자에게 직접 실행을 부탁하거나 다른 방법을 쓰세요. 이 확인을 끄거나 피하는 방법(설정 바꾸기, 스크립트로 돌리기 등)은 쓰지 마세요.",
 			};
 		}
 		const ok = await ctx.ui.confirm("확인이 필요한 작업", `${what.slice(0, 1200)}\n\n이유: ${why}\n실행할까요?`);

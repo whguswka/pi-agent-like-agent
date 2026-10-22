@@ -19,6 +19,13 @@ URL_BASE="file://$PI_HOME"
 # code-server·VS Code 터미널에서는 fullscreen 화면으로 (kit-config.sh 의 pi_tui_args: 직접 --tui-mode 를 줬거나 settings.json 에 tuiMode 가 있으면 그대로)
 if [ -t 0 ] && [ -t 1 ]; then _tui="$(pi_tui_args "$@")"; [ -n "$_tui" ] && set -- "$@" $_tui; fi
 ARGS=()
+# 위험 명령 확인(guard.ts)이 꺼져 있으면 알림 (확장을 모두 .off 로 끄다가 함께 꺼져, git push 같은 작업이 묻지 않고 실행된 일이 있음)
+case " $* " in *" -v "*|*" --version "*|*" -h "*|*" --help "*) ;; *)
+  _pi_ext="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions"
+  if [ -d "$_pi_ext" ] && [ ! -f "$_pi_ext/guard.ts" ]; then
+    echo "[pi] 위험 명령 확인(guard.ts)이 꺼져 있습니다. git push 같은 작업도 묻지 않고 실행됩니다. 켜기: pi 안에서 /hooks on guard" >&2
+  fi ;;
+esac
 # Node 22.19 미만(code-server 4.93 에 든 20.15 등)이면 호환 레이어를 먼저 로드
 if ! pi_node_ok "$NODE"; then
   ARGS+=(--import "$URL_BASE/compat/node20.mjs")

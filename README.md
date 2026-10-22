@@ -730,6 +730,8 @@ pi 에는 hook 설정 파일이 따로 없고, `~/.pi/agent/extensions/` 의 Typ
 - **위험할 수 있는 작업은 실행 전에 묻습니다.** pi 는 보통 도구를 쓸 때 허락을 묻지 않지만, 되돌리기 어려운 작업은 확인 창을 띄웁니다.
   - 대상: 폴더 지우기(`rm -r` 등), `git push`·`git reset --hard`·`git clean`·`git branch -D`, 권한 일괄 변경, `kubectl delete`,
     패키지 제거, `sudo`, 받은 스크립트 바로 실행(`curl ... | sh`), 데이터베이스 삭제, 작업 폴더 밖 파일 쓰기 (jupyter 모드는 노트북 작업 폴더 기준) <!-- api=     패키지 제거, `sudo`, 받은 스크립트 바로 실행(`curl ... | sh`), 데이터베이스 삭제, 작업 폴더 밖 파일 쓰기 -->
+  - 원격 저장소 바꾸기: `glab`·`gh` 의 `mr merge`·`pr create`·`release create` 같은 하위 명령, GitLab API(`/api/v4/`)로 보내는 POST·PUT·DELETE (보기만 하는 `list`·`view`·`diff`, 다른 주소의 POST 는 묻지 않음).
+  - 실행하는 셸 스크립트(`bash deploy.sh`, `./deploy.sh`, `source x.sh`) 안의 `git push`·`kubectl delete`·`glab` 같은 원격 작업도 그 파일을 읽어 봅니다 (빌드 스크립트의 `rm -rf build` 는 묻지 않음).
   - 거부하면 실행하지 않고 작업을 멈춥니다. 직접 치는 `!명령` 은 묻지 않습니다. `pi -p` 처럼 물을 수 없을 때는 실행하지 않고 LLM 에게 이유를 알립니다.
   - 명령 자리의 낱말만 봅니다. `echo "rm -rf ..."` 같은 따옴표 안의 글, 주석, `cat <<'EOF' > 파일` 로 쓰는 본문은 묻지 않습니다.
     대신 실제로 실행되는 글(`bash -c "..."`, `eval`, `ssh 호스트 '...'`, `$(...)`, `xargs rm`, `python -c` 코드, PowerShell 에 넘긴 스크립트 등)은 안까지 봅니다. <!-- api=     대신 실제로 실행되는 글(`bash -c "..."`, `eval`, `ssh 호스트 '...'`, `$(...)`, `xargs rm`, `python -c` 코드 등)은 안까지 봅니다. -->
