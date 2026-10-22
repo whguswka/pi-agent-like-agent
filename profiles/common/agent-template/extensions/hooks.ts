@@ -140,6 +140,17 @@ export function silentWait(text: unknown): string {
 export const waitNote = (name: string) =>
 	`(${name} 은 끝날 때까지 아무것도 찍지 않아, 기다리는 동안 사용자가 진행을 볼 수 없습니다. ` +
 	"30초마다 상태를 찍는 반복(10분 안쪽, print 는 flush=True)으로 바꾸세요. KFP 는 client.get_run(run_id).state)";
+
+/** 파이프라인 단계 안에서 DB 에 접속하는 코드인지 (KFP 단계·파이프라인 표시와 DB 접속이 한 글에 있음). 2026-10-23 ML 시험:
+ *  프로젝트 안내 문서를 먼저 읽고도 그 규칙('단계 안에서 DB 를 쓰려면 먼저 사용자에게')을 지나쳐, DB 를 읽는 단계를 만들어 바로 제출함 */
+export function stepDb(text: unknown): boolean {
+	if (typeof text !== "string") return false;
+	const step = /@(?:dsl\.)?(?:component|pipeline)\b|\bdsl\.(?:component|pipeline)\s*\(|\bcreate_component_from_func\b/.test(text);
+	return step && /\bcreate_engine\s*\(|\bpsycopg2?\.connect\s*\(|\bpymysql\.connect\s*\(|\bPG(?:HOST|USER|PASSWORD)\b/.test(text);
+}
+export const STEP_DB_NOTE =
+	"(이 코드는 파이프라인 단계 안에서 DB 에 접속합니다. 단계 파드에는 노트북의 DB 접속 정보(환경 변수)가 없어 Secret 설정이 따로 필요합니다. " +
+	"제출하기 전에 사용자에게 알리고 어떻게 할지 정하세요. 비밀번호는 코드·파이프라인 인자에 넣지 마세요)";
 /** write·edit·bash 로 새로 들어가는 글 (edit 는 바꿀 글만) */
 export function writtenText(toolName: string, input: any): string {
 	if (toolName === "write") return typeof input?.content === "string" ? input.content : "";
@@ -319,14 +330,14 @@ type Doc = { rel: string; title: string; kind: DocKind; counted: boolean };
 type Pending = { docs: Doc[]; notes: string[] };
 
 export default function (pi: ExtensionAPI) {
-	// 요청마다: 새로 만든 문서, '새 문서를 더 만들까요?'·'이력은 HISTORY 로?'·'계획 문서를 또?' 의 답. 세션마다: 만든 계획 문서, 기다리는 코드를 알린 파일
-	const S: { newDocs: string[]; more?: boolean; history?: boolean; plan?: boolean; plans: string[]; warned: boolean; waits: string[] } = ((globalThis as any).__piDocRules ||= {
+	// 요청마다: 새로 만든 문서, '새 문서를 더 만들까요?'·'이력은 HISTORY 로?'·'계획 문서를 또?' 의 답. 세션마다: 만든 계획 문서, 안내를 붙인 파일 ('wait:경로'·'db:경로')
+	const S: { newDocs: string[]; more?: boolean; history?: boolean; plan?: boolean; plans: string[]; warned: boolean; noted: string[] } = ((globalThis as any).__piDocRules ||= {
 		newDocs: [],
 		plans: [],
 		warned: false,
-		waits: [],
+		noted: [],
 	});
-	S.waits ||= []; // 예전 버전이 만든 상태를 /reload 로 이어받았을 때
+	S.noted ||= []; // 예전 버전이 만든 상태를 /reload 로 이어받았을 때
 	const pending = new Map<string, Pending>();
 	let queue: Promise<unknown> = Promise.resolve();
 	/** 한 번에 하나씩 (한 답의 도구 호출이 동시에 돌 때 개수 세기·묻기·목록 고치기가 섞이지 않게) */
@@ -454,7 +465,7 @@ export default function (pi: ExtensionAPI) {
 		if (event?.reason !== "reload") {
 			S.plans = [];
 			S.warned = false;
-			S.waits = [];
+			S.noted = [];
 		}
 		showGuard(ctx);
 	});
@@ -551,18 +562,22 @@ export default function (pi: ExtensionAPI) {
 		return { content: [...(Array.isArray(event.content) ? event.content : []), { type: "text", text: notes.join("\n") }] };
 	});
 
-	// 자리 표시 파일, 아무것도 찍지 않고 기다리는 코드 알림: 막지 않고 결과에 안내만 (문서 규칙 결과 뒤에 이어 붙음).
-	//  기다리는 코드는 세션마다 파일(bash 는 한 번)마다 한 번만
+	// 자리 표시 파일, 아무것도 찍지 않고 기다리는 코드, 단계 안의 DB 접속 알림: 막지 않고 결과에 안내만 (문서 규칙 결과 뒤에 이어 붙음).
+	//  기다리는 코드·DB 접속은 세션마다 파일(bash 는 한 번)마다 한 번만
 	pi.on("tool_result", async (event: any) => {
 		if (event.isError) return;
 		const notes: string[] = [];
 		if (event.toolName === "write" && placeholderOnly(event.input?.content)) notes.push(PLACEHOLDER_NOTE);
-		const wait = silentWait(writtenText(event.toolName, event.input));
+		const text = writtenText(event.toolName, event.input);
 		const key = event.toolName === "bash" ? "(bash)" : String(event.input?.path ?? "");
-		if (wait && !S.waits.includes(key)) {
-			S.waits.push(key);
-			notes.push(waitNote(wait));
-		}
+		const once = (kind: string, note: string) => {
+			if (S.noted.includes(`${kind}:${key}`)) return;
+			S.noted.push(`${kind}:${key}`);
+			notes.push(note);
+		};
+		const wait = silentWait(text);
+		if (wait) once("wait", waitNote(wait));
+		if (stepDb(text)) once("db", STEP_DB_NOTE);
 		if (!notes.length) return;
 		return { content: [...(Array.isArray(event.content) ? event.content : []), { type: "text", text: notes.join("\n") }] };
 	});

@@ -59,6 +59,11 @@ check("아무것도 찍지 않고 기다리는 코드: KFP wait_for_run_completi
 	&& h.silentWait("run.wait_for_run_completion (3600)") === "wait_for_run_completion" && h.silentWait("kubectl wait --for=condition=Ready pod/x --timeout=600s") === "kubectl wait"
 	&& h.silentWait("for _ in range(20):\n    print(client.get_run(run_id).state, flush=True)\n    time.sleep(30)\n") === ""
 	&& h.silentWait("# wait_for_run_completion 은 쓰지 않는다") === "" && h.silentWait(undefined) === "");
+// 2026-10-23 ML 시험: 안내 문서를 먼저 읽고도 '단계 안에서 DB 를 쓰려면 먼저 사용자에게' 를 지나쳐 DB 를 읽는 단계를 바로 제출함
+check("단계 안의 DB 접속: KFP 단계·파이프라인 표시와 DB 접속이 함께 있을 때만",
+	h.stepDb('@dsl.component(base_image="python:3.11-slim")\ndef load():\n    from sqlalchemy import create_engine\n    e = create_engine("postgresql+psycopg2:///stock_analytics")\n')
+	&& h.stepDb("@component\ndef f():\n    import psycopg2\n    c = psycopg2.connect()\n") && h.stepDb("@dsl.pipeline(name='p')\ndef p():\n    os.environ['PGPASSWORD']\n")
+	&& !h.stepDb('e = create_engine("postgresql+psycopg2://")\npd.read_sql(q, e)\n') && !h.stepDb("@dsl.component\ndef add(a: int, b: int) -> int:\n    return a + b\n") && !h.stepDb(undefined));
 check("새로 들어가는 글: write 는 내용, edit 는 바꿀 글만 (예전 형식도), bash 는 명령",
 	h.writtenText("write", { content: "a" }) === "a" && h.writtenText("edit", { edits: [{ oldText: "x", newText: "b" }, { oldText: "y", newText: "c" }] }) === "b\nc"
 	&& h.writtenText("edit", { oldText: "wait_for_run_completion(r)", newText: "d" }) === "d" && h.writtenText("bash", { command: "e" }) === "e" && h.writtenText("read", { path: "f" }) === "");
@@ -275,6 +280,12 @@ r = await tool(ctx, "bash", { command: "python -u - <<'EOF'\nclient.wait_for_run
 check("bash 의 heredoc 도 한 번 알림", r.note === h.waitNote("wait_for_run_completion"), r);
 r = await tool(ctx, "write", { path: "other.py", content: "import time\nprint(1, flush=True)\n" });
 check("기다리는 코드가 없으면 안내 없음", !r.note, r);
+const DBSTEP = "@dsl.component\ndef load(out: Output[Dataset]):\n    e = create_engine('postgresql+psycopg2:///stock_analytics')\n";
+r = await tool(ctx, "write", { path: "kfp_kr_lgbm_pipeline.py", content: DBSTEP + KFP });
+check("단계 안에서 DB 에 접속하는 파이프라인 파일: 사용자에게 먼저 알리라는 안내 (기다리는 코드 안내와 함께, 막지 않음)",
+	!r.blocked && r.note === `${h.waitNote("wait_for_run_completion")}\n${h.STEP_DB_NOTE}` && r.note.includes("사용자에게 알리고"), r);
+r = await tool(ctx, "edit", { path: "kfp_kr_lgbm_pipeline.py", edits: [{ oldText: "x", newText: DBSTEP }] });
+check("같은 파일은 DB 안내도 다시 하지 않음", !r.note, r);
 await F.emit("session_start", { reason: "new" }, fakeCtx());
 r = await tool(fakeCtx(), "write", { path: "kfp_two_step_test.py", content: KFP });
 check("새 세션에서는 다시 알림", r.note === h.waitNote("wait_for_run_completion"), r);
