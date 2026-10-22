@@ -15,6 +15,13 @@
   - `/jupyter dir` 로 노트북 홈의 폴더 가운데 하나를 고르면 그 아래의 `pi-bridge` 를 씁니다 (예: `tools/pi-bridge`). `/jupyter dir <폴더>` 로 바로 적어도 됩니다.
   - 고른 폴더는 내 설정 파일 `~/.pi/agent/bridge.json` 의 `jupyter_dir` 에 남습니다. 예전 폴더에 pi 가 만든 것(`run`, `xfer`)만 있으면 지울지 묻습니다.
   - 점으로 시작하는 숨김 폴더는 쓸 수 없습니다 (Jupyter 파일 기능으로 읽을 수 없음). 이름이 `dir` 인 노트북 폴더로 가려면 `/jupyter ./dir`.
+- [Copilot] **PowerShell 도우미 `ps1`** ([README 6장](README.md#6-주의할-점)):
+  - 리소스 모니터 시험에서 pi 의 명령 실패 36번 가운데 약 20번이 PowerShell 을 부르는 방법 때문이었습니다.
+    bash 의 `"..."` 안에서 `$변수`·`.\` 가 바뀌어 구문 오류가 났고, `taskkill /F` 가 `F:/` 로 바뀌었고, 한글 오류 문구가 CP949 로 깨져 pi 가 읽지 못했습니다.
+  - `ps1 <<'EOF'` … `EOF` 로 여러 줄을, `ps1 build.ps1 인자` 로 .ps1 파일을 실행합니다. 출력은 UTF-8 이고, 스크립트 실행 정책은 이 실행에서만 넘깁니다 (시스템 설정은 그대로).
+    마지막 명령이 실패하면 종료 코드가 1(외부 프로그램이면 그 값)입니다. `powershell -File` 은 실패해도 0 으로 끝났습니다.
+  - pi 가 이 PC 에서 일할 때 지침에 쓰는 법을 한 줄 더합니다. BOM 없이 한글이 든 .ps1 파일은 맨 앞에 BOM 을 붙입니다 (Windows PowerShell 5.1 이 깨뜨려 읽지 않게).
+- [공통] 위험 명령 확인: PowerShell 에 heredoc 으로 넘긴 스크립트(`powershell -Command - <<EOF`)도 안까지 보고, PowerShell 의 시스템 명령(`Stop-Computer`, `Restart-Computer`, `Format-Volume`, `Clear-Disk` 등)도 묻습니다.
 
 ## 2026-10-22.1 (중계 서버 2026-10-22.1)
 실제로 pi(Copilot)로 작은 프로그램(작업 표시줄 리소스 모니터)을 세션 8개에 걸쳐 만들어 보며 걸린 곳들을 고쳤습니다.

@@ -34,7 +34,7 @@ const RULES: Rule[] = [
 	{ label: "git 변경 내용 버리기", re: /\bgit\s+(?:-[Cc]\s+\S+\s+)*(?:reset\s+(?:\S+\s+)*--hard|clean\s+(?:\S+\s+)*-[a-zA-Z]*f|checkout\s+(?:-f\s+|--\s+)?\.(?:\s|$)|restore\s+(?:--\S+\s+)*\.(?:\s|$)|stash\s+(?:drop|clear))/ },
 	{ label: "git 브랜치 지우기", re: /\bgit\s+(?:-[Cc]\s+\S+\s+)*branch\s+(?:\S+\s+)*-D\b/ },
 	{ label: "권한·소유자 일괄 변경", re: /\b(?:chmod|chown)\s+(?:\S+\s+)*(?:-[a-zA-Z]*R|--recursive)\b/ },
-	{ label: "디스크·시스템 명령", re: /\bmkfs(?:\.\w+)?\b|\bdd\s+[^;\n]*\bof=\/dev\/|(?:^|[;&|(]|\s)(?:shutdown|reboot|poweroff|halt)(?:\s|$)|\bformat\s+[a-zA-Z]:|\bdiskpart\b/i },
+	{ label: "디스크·시스템 명령", re: /\bmkfs(?:\.\w+)?\b|\bdd\s+[^;\n]*\bof=\/dev\/|(?:^|[;&|(]|\s)(?:shutdown|reboot|poweroff|halt)(?:\s|$)|\bformat\s+[a-zA-Z]:|\bdiskpart\b|\b(?:Stop|Restart)-Computer\b|\b(?:Format-Volume|Clear-Disk|Initialize-Disk|Remove-Partition)\b/i },
 	{ label: "쿠버네티스 리소스 삭제", re: /\bkubectl\s+(?:\S+\s+)*delete\b|\bhelm\s+(?:uninstall|delete)\b/ },
 	{ label: "받은 스크립트 바로 실행", re: /\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:ba|z)?sh\b/ },
 	{ label: "패키지 제거", re: /\bpip3?\s+uninstall\b|\bpython3?\s+-m\s+pip\s+uninstall\b|\bconda\s+(?:remove|uninstall|env\s+remove)\b|\bnpm\s+(?:uninstall|rm)\s+-g\b/ },
@@ -94,6 +94,10 @@ const LABEL = {
 	pkg: RULES[11].label,
 	sudo: RULES[12].label,
 };
+
+/** PowerShell 을 실행하는 명령: 인자(-Command, ps1 -c)와 heredoc 본문(ps1 <<'EOF', powershell -Command - <<EOF)을 글자 패턴으로 본다.
+ *  ps1 은 키트의 bin/ps1 (Git Bash 에서 PowerShell 스크립트를 깨짐 없이 실행) */
+const POWERSHELLS = new Set(["powershell", "pwsh", "ps1"]);
 
 /** 인라인 코드(python -c 등)·powershell 명령: 글자 패턴으로 */
 const legacy = (code: string): string | null => {
@@ -169,7 +173,7 @@ function checkSimple(words: string[], depth: number, allow: RegExp[]): string | 
 			if (r) return r;
 		}
 	}
-	if (name === "powershell" || name === "pwsh") {
+	if (POWERSHELLS.has(name)) {
 		const r = legacy(args.join(" "));
 		if (r) return r;
 	}
@@ -217,7 +221,7 @@ function analyze(src: string, depth = 0, allow: RegExp[] = []): string | null {
 		if (names.some((n) => SHELLS.has(n) || n === "ssh")) {
 			const r = analyze(h.body, depth + 1, allow);
 			if (r) return r;
-		} else if (names.some((n) => INTERP[n.replace(/[0-9.]+$/, "")] || ["psql", "mysql", "sqlite3"].includes(n))) {
+		} else if (names.some((n) => INTERP[n.replace(/[0-9.]+$/, "")] || POWERSHELLS.has(n) || ["psql", "mysql", "sqlite3"].includes(n))) {
 			const r = legacy(h.body);
 			if (r) return r;
 		}

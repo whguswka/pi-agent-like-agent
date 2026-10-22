@@ -5,6 +5,8 @@ rem Node search: PI_NODE > pip packages (nodejs-wheel-binaries, playwright's bun
 rem             > Node built into VS Code-like editors. Below 20.15 is skipped; below 22.19 uses the compat layer.
 setlocal
 set "PI_HOME=%~dp0.."
+rem Kit helpers (bin\ps1 etc.) on PATH so pi's bash tool can run them by name
+set "PATH=%~dp0;%PATH%"
 if not defined PI_NODE goto search
 rem PI_NODE may only be node.exe or an editor executable (so a launcher like VSCodePortable.exe never opens a window)
 for %%f in ("%PI_NODE%") do set "PI_NODE_NAME=%%~nxf"

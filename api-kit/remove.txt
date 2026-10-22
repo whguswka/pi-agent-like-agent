@@ -12,5 +12,7 @@ docs/LLM-위키-설계.md
 profiles/pc/
 bin/pi.cmd
 bin/tty-relay.sh
+bin/ps1
+tests/test_ps1.py
 compat/electron.mjs
 compat/tty-relay.mjs

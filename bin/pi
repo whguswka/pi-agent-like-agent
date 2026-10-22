@@ -2,6 +2,8 @@
 # pi launcher (Linux: JupyterLab / code-server 터미널, Windows: Git Bash 공용)
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 PI_HOME="$(cd "$(dirname "$SELF")/.." && pwd)"
+# 키트의 도우미(ps1 등)를 pi 의 bash 도구에서 이름만으로 쓰게 (~/.bashrc 의 PATH 를 읽지 않은 창에서 실행해도)
+case ":$PATH:" in *":$PI_HOME/bin:"*) ;; *) export PATH="$PI_HOME/bin:$PATH" ;; esac
 . "$PI_HOME/bin/find-node.sh"
 . "$PI_HOME/bin/kit-config.sh"
 NODE="$(pi_find_node)" || {

@@ -39,6 +39,11 @@ const SESSION: string = ((globalThis as any).__piSession ||=
 // read 로 연 그림은 줄이지 않고 그대로 (키트의 pi 에는 그림을 줄이는 도구가 없어, 줄이기를 켜 두면 그림이 모두 빠짐.
 // settings.json 의 images.autoResize 도 꺼 둠. 너무 큰 그림은 중계 서버가 붙이지 않고 알림)
 const READ_OPTS = { autoResizeImages: false };
+// 이 PC(Git Bash)에서 실행할 때 지침에 더하는 줄: PowerShell 은 키트의 bin/ps1 로
+// (2026-10 시험: PowerShell 실패의 대부분이 bash 의 "..." 안에서 $변수·\ 가 바뀐 것, taskkill /F 가 F:/ 로 바뀐 것)
+export const PS_GUIDE =
+	"Windows PowerShell 은 `ps1 <<'EOF'` 와 `EOF` 사이에 여러 줄로 적어 실행한다 (.ps1 파일은 `ps1 파일.ps1 인자`). " +
+	"bash 의 \"...\" 에 넣은 powershell -Command 는 bash 가 $변수·\\ 를 바꿔 깨진다. taskkill 같은 Windows 명령의 /옵션은 //F 처럼 두 번 쓴다.";
 
 type Remote = { arg: string; cwd: string; home: string; root: string };
 
@@ -789,6 +794,8 @@ export default function (pi: ExtensionAPI) {
 		const o = event.systemPromptOptions;
 		pcDirs = [agentDir, ...((o as any).skills || []).map((s: { filePath: string }) => slash(dirname(s.filePath)))];
 		if (!remote) {
+			const g = (o as any).promptGuidelines;
+			if (process.platform === "win32" && Array.isArray(g) && !g.includes(PS_GUIDE)) g.push(PS_GUIDE);
 			if (slash(localDir) !== slash(startDir)) {
 				o.cwd = slash(localDir);
 				const p = slash(join(localDir, "AGENTS.md"));

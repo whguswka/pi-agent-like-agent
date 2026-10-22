@@ -40,6 +40,10 @@ ask.push(
 	"git clean -f -d", "git branch --delete --force feat", "psql -c \"DROP TABLE users\"",
 	"cat <<'EOF' | bash\nrm -rf x\nEOF", "cat <<EOF | sudo sh\ngit push\nEOF", "cat <<'EOF' | python3 -\nimport shutil; shutil.rmtree('x')\nEOF",
 	"echo $(( $(rm -rf x) + 1 ))", 'echo "$(( $(git push) ))"', "echo $((git push) && echo ok)",
+	// PowerShell: 키트의 ps1 (heredoc·-c), powershell 에 넘긴 heredoc, PowerShell 의 시스템 명령
+	"ps1 <<'EOF'\n$d = 'build'\nRemove-Item $d -Recurse -Force\nEOF", "ps1 -c 'Remove-Item C:/x -Recurse'", "~/tools/pi/bin/ps1 <<'EOF'\ngit push\nEOF",
+	"powershell -NoProfile -Command - <<'EOF'\nRemove-Item -Recurse x\nEOF", "ps1 <<'EOF'\nStop-Computer -Force\nEOF",
+	"ps1 -c 'Restart-Computer'", "pwsh -c 'Format-Volume -DriveLetter D'", "powershell.exe -Command \"Clear-Disk -Number 1\"",
 );
 // 실행되지 않는 글: 따옴표 안의 글, 주석, heredoc 으로 파일 쓰기, 다른 명령의 인자
 pass.push(
@@ -50,6 +54,8 @@ pass.push(
 	"echo \"sudo 는 쓰지 마세요\"",
 	"cat <<'EOF' > s.sh\nrm -rf x\nEOF", "cat <<'EOF' | tee s.sh\nrm -rf x\nEOF",
 	"echo $((1+2))", "n=$((n + 1)); echo \"$((n * 2))\"",
+	"ps1 <<'EOF'\nGet-ChildItem -Recurse | Select-Object -First 5\nEOF", "ps1 build.ps1 -Config Release", "ps1 -c 'Get-Process resmon'",
+	"cat <<'EOF' > clean.ps1\nRemove-Item -Recurse x\nEOF", "grep -n Stop-Computer notes.md",
 );
 for (const c of ask) check(`묻기: ${JSON.stringify(c)}`, !!g.checkCommand(c), g.checkCommand(c));
 for (const c of pass) check(`그냥 실행: ${JSON.stringify(c)}`, g.checkCommand(c) === null, g.checkCommand(c));
