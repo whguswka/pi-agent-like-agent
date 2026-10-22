@@ -8,6 +8,8 @@
   "copilot_url_contains": "m365.cloud.microsoft/chat",
   "copilot_new_chat_url": "https://m365.cloud.microsoft/chat",
   "jupyter_url_contains": "",
+  "_노트북 폴더": "jupyter 모드에서 노트북에 실행 기록·옮기는 파일을 둘 폴더 (Jupyter 루트 기준). 공용 노트북이면 이미 있는 폴더 아래로 (예: tools/pi-bridge). pi 의 /jupyter dir 로도 바꿈",
+  "jupyter_dir": "pi-bridge",
   "input_selector": "",
   "send_button_selector": "",
   "new_chat_selector": "",

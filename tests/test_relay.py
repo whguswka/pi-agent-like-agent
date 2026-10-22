@@ -1850,5 +1850,32 @@ for _ in range(20):
 check("그 대화를 쓰던 pi(세션 A)가 끝나면 다음 요청은 새 대화", _r19.fresh is True)
 _srv5.shutdown()
 
+# 노트북에서 pi 가 쓰는 폴더 (bridge.json 의 jupyter_dir, pi 의 /jupyter dir): 공용 노트북에서 홈의 pi-bridge 문의가 많아 바꿀 수 있게
+import jupyter as _jup  # noqa: E402
+check("노트북 폴더 값: Jupyter 루트 기준 상대 경로 (앞의 ~/ 와 끝의 / 는 뗌, 한글·빈칸 됨)",
+      _jup.bridge_dir_of("tools/pi-bridge") == "tools/pi-bridge" and _jup.bridge_dir_of("~/tools/pi-bridge/") == "tools/pi-bridge"
+      and _jup.bridge_dir_of("모델 정보/pi-bridge") == "모델 정보/pi-bridge" and _jup.bridge_dir_of("pi-bridge") == "pi-bridge")
+check("노트북 폴더 값: 절대 경로·..·점으로 시작하는 폴더(파일 기능이 못 읽음)·셸에서 뜻이 있는 글자는 안 됨",
+      all(_jup.bridge_dir_of(v) is None for v in ["/tmp/x", "../x", "a/../b", ".pi-bridge", "tools/.x", "a$b", 'a"b', "a`b", "", "~/", "a;b"]))
+_j = _jup.Jupyter({"jupyter_dir": "tools/pi-bridge"})
+_jbad = _jup.Jupyter({"jupyter_dir": "../x"})
+check("설정한 폴더 아래 run/ 을 실행 폴더로, 쓸 수 없는 값이면 pi-bridge",
+      _j.bridge_dir == "tools/pi-bridge" and _j.run_dir == "tools/pi-bridge/run" and _jbad.bridge_dir == "pi-bridge" and _jbad.run_dir == "pi-bridge/run")
+_j.ready.add("pibridge")
+_out = _j.set_bridge_dir("shared/pi-bridge")
+check("실행 중에 바꾸기: 새 폴더, 터미널은 다음 명령 때 다시 준비 (새 폴더를 만듦)",
+      _out["bridge_dir"] == "shared/pi-bridge" and _out["old"] == "tools/pi-bridge" and _j.run_dir == "shared/pi-bridge/run" and not _j.ready)
+_j.runs["r1"] = {"done": False, "aborted": False, "term": "pibridge"}
+try:
+    _j.set_bridge_dir("tools/pi-bridge")
+    check("실행 중인 명령이 있으면 바꾸지 않음", False, "예외 없음")
+except relay.bridge.BridgeError as e:
+    check("실행 중인 명령이 있으면 바꾸지 않음", "실행 중인 명령" in str(e) and _j.bridge_dir == "shared/pi-bridge", e)
+try:
+    _jup.Jupyter({}).set_bridge_dir(".hidden")
+    check("쓸 수 없는 값으로는 바꾸지 않음", False, "예외 없음")
+except relay.bridge.BridgeError as e:
+    check("쓸 수 없는 값으로는 바꾸지 않음", "쓸 수 없는 값" in str(e), e)
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

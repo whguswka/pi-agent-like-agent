@@ -4,12 +4,15 @@
 - 명령: JupyterLab 터미널 세션 'pibridge' 에서 실행한다. 출력과 종료 코드는 화면이 아니라 파일
   (Jupyter 루트/pi-bridge/run)로 정확히 받는다. JupyterLab 의 '실행 중인 터미널' 목록에서 pibridge 를 열면
   실행되는 모습을 볼 수 있다 (안 열어도 실행됨).
+  폴더(pi-bridge)는 bridge.json 의 jupyter_dir 로 바꾼다 (공용 노트북에서 홈의 pi-bridge 가 무엇이냐는 문의가 많아,
+  이미 있는 폴더 아래로 옮길 수 있게. 예: tools/pi-bridge). 실행 중에는 pi 의 /jupyter dir (POST /jupyter/config)
 - 파일: Jupyter 파일 API(Contents API). 숨김 파일·Jupyter 루트 밖 경로는 터미널 명령으로 처리한다.
 - Jupyter 쪽에는 아무것도 설치하지 않는다.
 """
 import base64
 import json
 import posixpath
+import re
 import threading
 import time
 import uuid
@@ -17,7 +20,21 @@ import uuid
 from bridge import BridgeError, SessionExpired, Tab, list_tabs, log
 
 TERM_NAME = "pibridge"  # 터미널 연결 주소는 이름에 영문·숫자·밑줄만 허용 (하이픈 불가)
-RUN_DIR = "pi-bridge/run"  # Jupyter 루트 기준 (숨김 폴더는 파일 API 로 읽을 수 없어서 점 없는 이름)
+DEFAULT_DIR = "pi-bridge"  # Jupyter 루트 기준 (숨김 폴더는 파일 API 로 읽을 수 없어서 점 없는 이름). 실행 파일은 그 아래 run/
+
+
+def bridge_dir_of(value):
+    """jupyter_dir 값 -> Jupyter 루트 기준 폴더. 쓸 수 없는 값이면 None
+    (절대 경로, .. , 점으로 시작하는 폴더(파일 API 가 못 읽음), 셸에서 뜻이 있는 글자). 앞의 ~/ 는 뗌 (Jupyter 루트는 보통 홈)"""
+    v = str(value or "").strip().replace("\\", "/")
+    if v.startswith("~/"):
+        v = v[2:]
+    v = v.strip("/")
+    if not v or str(value).strip().startswith("/") or not re.fullmatch(r"[\w .\-/]+", v):
+        return None
+    if any(not s or s.startswith(".") for s in v.split("/")):
+        return None
+    return v
 RANGE_CHUNK = 4 * 1024 * 1024  # 실행 중인 명령의 출력을 한 번에 읽는 최대 크기 (남으면 다음 확인 때)
 
 PAGE_JS = r"""
@@ -149,6 +166,12 @@ class Jupyter:
         self.ready = set()  # 준비(셸 설정)를 마친 터미널
         self.root = None   # Jupyter 루트 절대 경로 (터미널에서 확인)
         self.home = None
+        want = cfg.get("jupyter_dir") or DEFAULT_DIR
+        self.bridge_dir = bridge_dir_of(want) or DEFAULT_DIR  # 노트북에서 pi 가 쓰는 폴더 (Jupyter 루트 기준)
+        if bridge_dir_of(want) is None:
+            log("jupyter_dir 값을 쓸 수 없어 {} 를 씁니다: {!r} (Jupyter 루트 기준 상대 경로, 점으로 시작하는 폴더·.. 은 안 됨)".format(
+                DEFAULT_DIR, want))
+        self.run_dir = self.bridge_dir + "/run"
         self.runs = {}
         self.current = {}  # 터미널 -> 실행 중인 명령 번호
         self.stale = []    # 다 읽은 실행 파일 (다음 명령 때 지움. 파일 API 의 DELETE 는 휴지통으로 가므로 안 씀)
@@ -254,13 +277,14 @@ class Jupyter:
         busy_elsewhere = any(r.get("term", name) != name and not r["done"] and not r["aborted"] for r in self.runs.values())
         wipe = " && rm -f \"$PIB\"/run/*" if name == (self.term or TERM_NAME) and not busy_elsewhere else ""
         token = uuid.uuid4().hex[:8]
-        self.send(" unset HISTFILE; set +o history 2>/dev/null; PIB=\"${JUPYTER_SERVER_ROOT:-$PWD}/pi-bridge\"; "
+        # bridge_dir 은 bridge_dir_of 로 확인한 글자(문자·숫자·밑줄·빈칸·점·하이픈·/)만 있어 큰따옴표 안에 그대로 넣어도 됨
+        self.send(" unset HISTFILE; set +o history 2>/dev/null; PIB=\"${JUPYTER_SERVER_ROOT:-$PWD}/" + self.bridge_dir + "\"; "
                   "mkdir -p \"$PIB/run\"" + wipe + "; "
                   "printf '%s\\n%s\\n' \"${JUPYTER_SERVER_ROOT:-$PWD}\" \"$HOME\" > \"$PIB/run/env-" + token + ".txt\"; "
                   "clear; echo '[pi-bridge] PC 의 pi 가 이 터미널에서 명령을 실행합니다.'\r", name)
         deadline = time.time() + 40
         while time.time() < deadline:
-            r = self.call("readFile", RUN_DIR + "/env-" + token + ".txt")
+            r = self.call("readFile", self.run_dir + "/env-" + token + ".txt")
             if r["status"] == 200:
                 lines = base64.b64decode(r["b64"]).decode("utf-8", "replace").splitlines()
                 self.root, self.home = lines[0].rstrip("/") or "/", lines[1].rstrip("/") or "/"
@@ -280,8 +304,26 @@ class Jupyter:
 
     def info(self):
         self.ensure_terminal()
-        return {"root": self.root, "home": self.home, "terminal": self.term,
+        return {"root": self.root, "home": self.home, "terminal": self.term, "bridge_dir": self.bridge_dir,
                 "url": (self.tab.info.get("url", "") if self.tab else "")}
+
+    def set_bridge_dir(self, value):
+        """노트북 폴더 바꾸기 (pi 의 /jupyter dir). 실행 중인 명령이 있으면 거절.
+        다음 명령 때 터미널을 다시 준비해 새 폴더를 만든다. 예전 폴더의 파일은 지우지 않음 (pi 쪽에서 물어보고 지움)"""
+        d = bridge_dir_of(value)
+        if not d:
+            raise BridgeError("노트북 폴더로 쓸 수 없는 값입니다: {} (Jupyter 루트 기준 상대 경로. 점으로 시작하는 폴더, .., "
+                              "따옴표·$ 같은 글자는 안 됨)".format(value))
+        with self.init_lock:
+            if any(not r["done"] and not r["aborted"] for r in self.runs.values()):
+                raise BridgeError("노트북에서 실행 중인 명령이 있어 지금은 바꿀 수 없습니다. 끝난 뒤 다시 하세요")
+            old = self.bridge_dir
+            self.bridge_dir, self.run_dir = d, d + "/run"
+            self.ready.clear()
+            self.runs, self.stale = {}, []
+            self.current = {}
+        log("노트북 폴더: {} -> {}".format(old, d))
+        return {"bridge_dir": d, "old": old, "root": self.root}
 
     # ------------------------------------------------------------------ 명령 실행
     def start(self, cwd, command, timeout=0, title=None, term=None):
@@ -296,13 +338,13 @@ class Jupyter:
                     time.sleep(0.5)
             name = self.ensure_terminal(want)
             rid = uuid.uuid4().hex[:10]
-            R = self.root.rstrip("/") + "/" + RUN_DIR
-            self.write_rel(RUN_DIR + "/" + rid + ".sh", command.encode("utf-8"))
+            R = self.root.rstrip("/") + "/" + self.run_dir
+            self.write_rel(self.run_dir + "/" + rid + ".sh", command.encode("utf-8"))
             first = (title or command).strip().split("\n", 1)[0]
             if len(first) > 120:
                 first = first[:117] + "..."
             wrapper = WRAPPER.format(R=shq(R), I=rid, cwd=shq(cwd), title=shq(first))
-            self.write_rel(RUN_DIR + "/" + rid + ".run", wrapper.encode("utf-8"))
+            self.write_rel(self.run_dir + "/" + rid + ".run", wrapper.encode("utf-8"))
             rm = ("rm -f " + " ".join(shq(R + "/" + s) + ".*" for s in self.stale) + "; ") if self.stale else ""
             self.stale = []
             self.send(" {}bash {}\r".format(rm, shq(R + "/" + rid + ".run")), name)
@@ -323,11 +365,11 @@ class Jupyter:
             first = False
             if done is None and time.time() - run["last_list"] > 3:  # 신호를 놓쳤을 때 대비: 폴더 목록으로 확인
                 run["last_list"] = time.time()
-                lst = self.call("list", RUN_DIR)
+                lst = self.call("list", self.run_dir)
                 if rid + ".rc" in (lst.get("names") or []):
                     done = -999
             if done is not None:
-                r = self.call("readFile", RUN_DIR + "/" + rid + ".rc")
+                r = self.call("readFile", self.run_dir + "/" + rid + ".rc")
                 if r["status"] == 200:
                     try:
                         run["rc"] = int(base64.b64decode(r["b64"]).decode().strip() or "0")
@@ -352,7 +394,7 @@ class Jupyter:
         out = {"done": run["done"], "exitCode": run["rc"], "aborted": run["aborted"] and not run["timed_out"],
                "timedOut": run["timed_out"]}
         if offset is not None:
-            rel = RUN_DIR + "/" + rid + ".out"
+            rel = self.run_dir + "/" + rid + ".out"
             if offset and not (run["done"] or run["aborted"]):
                 # 실행 중에는 새로 생긴 부분만 읽는다 (매번 통째로 읽으면 출력이 긴 명령에서 점점 느려짐: 학습 로그 등).
                 # 끝난 뒤에는 남은 것을 한 번에 (아래). 나눠 읽기가 안 되는 답이면 예전처럼 통째로
@@ -388,7 +430,7 @@ class Jupyter:
         while True:
             st = self.status(rid, None, wait=2)
             if st["done"] or st["aborted"] or st["timedOut"]:
-                data = self.read_rel(RUN_DIR + "/" + rid + ".out") or b""
+                data = self.read_rel(self.run_dir + "/" + rid + ".out") or b""
                 if st["timedOut"]:
                     raise BridgeError("Jupyter 터미널 명령 시간 초과: " + (title or command)[:80])
                 return st["exitCode"], data
@@ -423,7 +465,7 @@ class Jupyter:
         return rel
 
     def fs_run(self, script, path, title):
-        R = self.root.rstrip("/") + "/" + RUN_DIR
+        R = self.root.rstrip("/") + "/" + self.run_dir
         rc, out = self.run(self.home, script.replace("@R@", shq(R)), 120, title)
         msg = out.decode("utf-8", "replace").strip()
         if rc == 0:
@@ -457,7 +499,7 @@ class Jupyter:
                 raise FsError("ENOENT", "ENOENT: no such file or directory, open '{}'".format(path))
             if r["status"] == 400 and "directory" in (r.get("text") or "").lower():
                 raise FsError("EISDIR", "EISDIR: illegal operation on a directory, read '{}'".format(path))
-        bin_rel = RUN_DIR + "/" + uuid.uuid4().hex[:10] + ".bin"
+        bin_rel = self.run_dir + "/" + uuid.uuid4().hex[:10] + ".bin"
         self.fs_run('if [ -d {p} ]; then echo "is a directory"; exit 21; fi; [ -e {p} ] || {{ echo "no such file or directory"; exit 2; }}; '
                     '[ -r {p} ] || {{ echo "permission denied"; exit 13; }}; cat -- {p} > @R@/{b}'.format(
                         p=shq(path), b=shq(posixpath.basename(bin_rel))), path, "(파일 읽기) " + path)
@@ -508,7 +550,7 @@ class Jupyter:
                 if r["status"] in (200, 201):
                     return
         name = uuid.uuid4().hex[:10]
-        self.write_rel(RUN_DIR + "/" + name + ".bin", data)
+        self.write_rel(self.run_dir + "/" + name + ".bin", data)
         self.fs_run('mkdir -p -- "$(dirname -- {p})" && cat -- @R@/{b} > {p} || exit 13'.format(
             p=shq(path), b=shq(name + ".bin")), path, "(파일 쓰기) " + path)
         self.stale.append(name)

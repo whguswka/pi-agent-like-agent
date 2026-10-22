@@ -215,6 +215,7 @@ pi --jupyter work/myproject -c       # 그 프로젝트의 지난 대화를 이�
 |---|---|
 | `/jupyter work/mlproj` (또는 `/web work/mlproj`) | 이후 명령·파일 작업을 노트북의 `~/work/mlproj` 에서 (없으면 만듦) |
 | `/jupyter` | 마지막으로 쓴 노트북 폴더로 다시 |
+| `/jupyter dir` | 노트북에서 pi 가 쓰는 폴더(실행 기록·옮기는 파일, 기본 `pi-bridge`)를 바꿈. 값 없이 쓰면 노트북 홈의 폴더 가운데서 고름 (아래) |
 | `/local` | 다시 이 PC 에서 (pi 를 실행한 폴더) |
 | `/local ~/work/프로젝트` | 다시 이 PC 에서, 그 폴더를 작업 폴더로 |
 
@@ -227,7 +228,10 @@ pi --jupyter work/myproject -c       # 그 프로젝트의 지난 대화를 이�
 - 노트북 쪽 명령은 JupyterLab 터미널 `pibridge` 에서 실행됩니다. JupyterLab 왼쪽 '실행 중인 터미널과 커널' 에서 열면 실시간으로 보입니다.
   pi 여러 개 동시 실행(`max_tabs`)을 켜면 두 번째 pi 부터는 `pibridge2`, `pibridge3` … 에서 실행됩니다.
 - 명령은 입력 없이 실행됩니다. 입력을 기다리는 명령(vi, less, 인자 없는 python 등)은 쓰지 마세요. `Esc` 로 멈추면 노트북 명령에도 Ctrl+C 가 전달됩니다.
-- 노트북 홈에 생기는 `pi-bridge` 폴더는 실행 기록용입니다. pi 를 쓰지 않을 때 지워도 됩니다.
+- 노트북 홈(Jupyter 루트)에 생기는 `pi-bridge` 폴더는 실행 기록·옮기는 파일용입니다. pi 를 쓰지 않을 때 지워도 됩니다.
+  여러 사람이 함께 쓰는 노트북이라 홈에 낯선 폴더가 생기는 게 곤란하면 `/jupyter dir` 로 이미 있는 폴더 아래(예: `tools/pi-bridge`)로 옮기세요.
+  고른 폴더는 내 설정 파일 `~/.pi/agent/bridge.json` 의 `jupyter_dir` 에 적히고, 예전 폴더에 pi 가 만든 것만 있으면 지울지 묻습니다.
+  `/jupyter dir tools/pi-bridge` 처럼 바로 적어도 됩니다 (점으로 시작하는 숨김 폴더는 안 됨). 이름이 `dir` 인 노트북 폴더로 가려면 `/jupyter ./dir`.
 
 **PC ↔ 노트북 파일 옮기기:**
 
@@ -768,6 +772,7 @@ unzip -o -j -q "$Z" '*/update.sh' -d ~/tools && bash ~/tools/update.sh "$Z"
 | `browser` | `chrome` | 전용 창 브라우저. `edge` 도 됩니다 (지정한 쪽이 없으면 다른 쪽으로 띄움) | <!-- api= -->
 | `auto_start_browser` | `true` | `pi` 를 실행할 때 전용 창이 꺼져 있으면 띄움 | <!-- api= -->
 | `jupyter_url` | (빈 값) | 전용 창을 띄울 때 함께 열 JupyterLab 주소 | <!-- api= -->
+| `jupyter_dir` | `pi-bridge` | jupyter 모드에서 노트북에 실행 기록·옮기는 파일을 둘 폴더 (Jupyter 루트 기준, 예: `tools/pi-bridge`). `/jupyter dir` 로 고르면 여기에 적힘 ([3-3](#3-3-실행-위치-바꾸기-pc-와-jupyter-노트북)) | <!-- api= -->
 | `delete_finished_chats` | `true` | 끝난 세션의 Copilot 대화 삭제 | <!-- api= -->
 | `max_questions_per_minute` | `0` | 분당 질문 수 제한 (0 이면 끔) | <!-- api= -->
 | `max_questions_per_chat` | `100` | 이만큼 질문하면 새 대화로 넘어감 | <!-- api= -->

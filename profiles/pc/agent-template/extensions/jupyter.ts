@@ -16,7 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, promises as fsp, readFileSync, statSync } from "node:fs";
+import { existsSync, promises as fsp, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -137,6 +137,20 @@ const MAX_TRANSFER = 1024 * MB; // 한 번에 옮기는 최대 크기 (폴더는
 const MAX_SINGLE = 50 * MB; // 나눠 받을 수 없는 경로(노트북 홈 밖·숨김)는 한 번에
 const CHUNK = 4 * MB;
 const shq = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
+
+/** 내 설정 파일(~/.pi/agent/bridge.json, 없으면 만듦)에 항목 하나를 적는다. 중계 서버는 다음에 켤 때 읽음 (pi 를 다시 시작하면 bin/pi 가 다시 켬) */
+export function saveUserSetting(key: string, value: unknown, file = process.env.PI_COPILOT_USER_CONFIG || join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "bridge.json")) {
+	let cfg: Record<string, unknown> = {};
+	try {
+		const t = readFileSync(file, "utf8").replace(/^﻿/, "");
+		if (t.trim()) cfg = JSON.parse(t);
+	} catch (e: any) {
+		if (e?.code !== "ENOENT") throw new Error(`내 설정 파일을 읽지 못했습니다 (${file}): ${e.message}`);
+	}
+	cfg[key] = value;
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, `${JSON.stringify(cfg, null, 2)}\n`);
+}
 /** PC 의 Python 실행 (폴더 묶기·풀기: python -m tarfile). 셸을 거치지 않음 */
 function runPython(py: string, args: string[], cwd: string): Promise<{ code: number | null; out: string }> {
 	return new Promise((ok) => {
@@ -442,8 +456,63 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// 실행 중 전환: /jupyter <노트북 폴더> (= /web), /local [PC 폴더]
+	// /jupyter dir [폴더]: 노트북에서 pi 가 쓰는 폴더(실행 기록·옮기는 파일) 바꾸기. 공용 노트북에서 홈의 pi-bridge 가 무엇이냐는
+	//  문의가 많아, 이미 있는 폴더 아래로 옮길 수 있게. 값이 없으면 노트북 루트의 (숨김이 아닌) 폴더 가운데 고름
+	const setBridgeDir = async (value: string, ctx: any) => {
+		let info: any;
+		try {
+			info = await call("/jupyter/info");
+		} catch (e) {
+			return ctx.ui.notify(`노트북에 연결하지 못했습니다: ${(e as Error).message}`, "error");
+		}
+		const root = String(info.root || info.home || "").replace(/\/+$/, "");
+		const cur = String(info.bridge_dir || "pi-bridge");
+		let want = value.trim();
+		if (!want) {
+			if (!ctx.hasUI) return ctx.ui.notify(`지금 노트북 폴더: ${root}/${cur} (바꾸려면 /jupyter dir <폴더>)`, "info");
+			const r = await nbRun(`find ${shq(root || "/")} -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\\n' 2>/dev/null | sort | head -40`, info.home).catch(() => ({ code: 1, out: "" }));
+			const dirs = r.code === 0 ? r.out.split("\n").map((s) => s.trim()).filter((s) => s && s !== "pi-bridge") : [];
+			const HOME_OPT = "pi-bridge (노트북 루트에 그대로)";
+			const TYPE_OPT = "직접 입력";
+			const pick = await ctx.ui.select(`노트북에서 pi 가 쓸 폴더 (실행 기록·옮기는 파일). 지금: ${root}/${cur}`, [
+				...dirs.map((d) => `${d}/pi-bridge`),
+				HOME_OPT,
+				TYPE_OPT,
+			]);
+			if (!pick) return;
+			if (pick === TYPE_OPT) want = String((await ctx.ui.input("폴더 (Jupyter 루트 기준, 예: tools/pi-bridge)", cur)) || "").trim();
+			else want = pick === HOME_OPT ? "pi-bridge" : pick;
+			if (!want) return;
+		}
+		want = want.replace(/^~\//, "").replace(/\/+$/, "");
+		if (want === cur) return ctx.ui.notify(`이미 그 폴더입니다: ${root}/${cur}`, "info");
+		let res: any;
+		try {
+			res = await call("/jupyter/config", { jupyter_dir: want });
+		} catch (e) {
+			return ctx.ui.notify(`바꾸지 못했습니다: ${(e as Error).message}`, "error");
+		}
+		try {
+			saveUserSetting("jupyter_dir", res.bridge_dir);
+		} catch (e) {
+			ctx.ui.notify(`${(e as Error).message}. 이번 실행에만 적용됩니다`, "warning");
+		}
+		ctx.ui.notify(`노트북 폴더를 바꿨습니다: ${root}/${cur} -> ${root}/${res.bridge_dir} (내 설정 파일에도 적음)`, "info");
+		// 예전 폴더: pi 가 만든 것(run·xfer 만 있음)이면 지울지 묻는다. 다른 것이 있으면 그대로
+		const old = `${root}/${cur}`;
+		if (!root || !cur) return;
+		const chk = await nbRun(`[ -d ${shq(old)} ] || exit 3; cd ${shq(old)} && ls -A | grep -vxE 'run|xfer' | head -3`, info.home).catch(() => ({ code: 1, out: "" }));
+		if (chk.code === 3) return;
+		if (chk.out.trim()) return ctx.ui.notify(`예전 폴더 ${old} 에 다른 파일이 있어 그대로 뒀습니다`, "info");
+		if (ctx.hasUI && (await ctx.ui.confirm("예전 폴더를 지울까요?", `${old}\npi 의 실행 기록과 옮기던 파일만 들어 있습니다.`))) {
+			const rm = await nbRun(`rm -rf -- ${shq(old)}`, info.home).catch((e) => ({ code: 1, out: String(e) }));
+			ctx.ui.notify(rm.code === 0 ? `지웠습니다: ${old}` : `지우지 못했습니다: ${rm.out.slice(-200)}`, rm.code === 0 ? "info" : "warning");
+		}
+	};
 	const toJupyter = async (args: string | undefined, ctx: any) => {
-		const arg = (args || "").trim() || lastArg || remote?.arg || "";
+		const a = (args || "").trim();
+		if (/^dir(\s|$)/.test(a)) return setBridgeDir(a.slice(3), ctx); // 폴더 이름이 정말 dir 이면 ./dir
+		const arg = a || lastArg || remote?.arg || "";
 		if (!arg) {
 			ctx.ui.notify("노트북 폴더를 적어 주세요. 예) /jupyter work/프로젝트", "warning");
 			return;
@@ -454,7 +523,8 @@ export default function (pi: ExtensionAPI) {
 			publish();
 		}
 	};
-	const jupyterHelp = "명령·파일 작업을 Kubeflow 노트북 안에서 실행 (값: 노트북 폴더, 예: work/mlproj. 생략하면 마지막 폴더)";
+	const jupyterHelp =
+		"명령·파일 작업을 Kubeflow 노트북 안에서 실행 (값: 노트북 폴더, 예: work/mlproj. 생략하면 마지막 폴더). /jupyter dir: 노트북에서 pi 가 쓰는 폴더(기본 pi-bridge) 바꾸기";
 	pi.registerCommand("jupyter", { description: jupyterHelp, handler: toJupyter });
 	pi.registerCommand("web", { description: `/jupyter 와 같음: ${jupyterHelp}`, handler: toJupyter });
 	pi.registerCommand("local", {
@@ -480,14 +550,16 @@ export default function (pi: ExtensionAPI) {
 
 	// PC <-> 노트북 파일·폴더 옮기기. 노트북 쪽 상대 경로는 jupyter 모드면 노트북 작업 폴더, 아니면 노트북 홈 기준
 	//  - 4MB 넘는 파일은 나눠서 보냄 (올리기: Jupyter 파일 API chunk, 받기: files/ 주소의 Range). 화면 아래 상태 줄에 진행률
-	//  - 폴더는 묶어서 옮기고 받은 쪽에서 풂 (PC: python -m tarfile, 노트북: tar). 묶은 파일은 pi-bridge/xfer 에 잠시 둠
-	const notebook = async (): Promise<{ home: string; cwd: string; root: string }> => {
+	//  - 폴더는 묶어서 옮기고 받은 쪽에서 풂 (PC: python -m tarfile, 노트북: tar). 묶은 파일은 노트북 폴더(기본 pi-bridge)/xfer 에 잠시 둠
+	// dir: 노트북에서 pi 가 쓰는 폴더 (Jupyter 루트 기준, bridge.json 의 jupyter_dir·/jupyter dir). 옮기는 동안 묶은 파일을 그 아래 xfer/ 에
+	const notebook = async (): Promise<{ home: string; cwd: string; root: string; dir: string }> => {
+		const info = await call("/jupyter/info");
+		const dir = String(info.bridge_dir || "pi-bridge");
 		if (remote) {
 			const r = await ready();
-			return { home: r.home, cwd: r.cwd, root: r.root || r.home };
+			return { home: r.home, cwd: r.cwd, root: r.root || r.home, dir };
 		}
-		const info = await call("/jupyter/info");
-		return { home: info.home, cwd: info.home, root: info.root || info.home };
+		return { home: info.home, cwd: info.home, root: info.root || info.home, dir };
 	};
 	const remoteKind = async (p: string): Promise<string | null> => {
 		try {
@@ -606,7 +678,7 @@ export default function (pi: ExtensionAPI) {
 						if (r.code !== 0) throw new Error(`묶기 실패: ${r.out.slice(-300)}`);
 						const size = statSync(tmp).size;
 						if (size > MAX_TRANSFER) throw new Error(`묶은 크기가 ${sizeText(size)} 입니다. ${sizeText(MAX_TRANSFER)} 까지만 옮길 수 있습니다`);
-						const staging = `${nb.root}/pi-bridge/xfer/${xferName("up")}`;
+						const staging = `${nb.root}/${nb.dir}/xfer/${xferName("up")}`;
 						ctx.ui.notify(`올리는 중: 폴더 ${local} -> 노트북 ${dest} (묶어서 ${sizeText(size)})`, "info");
 						await putFile(ctx, tmp, staging, size);
 						const x = await nbRun(`mkdir -p ${shq(parent)} && tar -xzf ${shq(staging)} -C ${shq(parent)}; rc=$?; rm -f ${shq(staging)}; exit $rc`, nb.home);
@@ -663,7 +735,7 @@ export default function (pi: ExtensionAPI) {
 					if (dst2 && !dst2.isDirectory()) return ctx.ui.notify(`PC 에 같은 이름의 파일이 있습니다: ${dest}`, "error");
 					if (dst2 && !(await ctx.ui.confirm("폴더를 합칠까요?", `PC 에 이미 있는 폴더입니다: ${dest}\n안의 같은 이름 파일은 덮어씁니다.`))) return;
 					ctx.ui.notify(`노트북에서 폴더를 묶는 중: ${from}`, "info");
-					const staging = `${nb.root}/pi-bridge/xfer/${xferName("down")}`;
+					const staging = `${nb.root}/${nb.dir}/xfer/${xferName("down")}`;
 					const tmp = join(tmpdir(), xferName("pi-download"));
 					try {
 						const x = await nbRun(`mkdir -p ${shq(posix.dirname(staging))} && tar --format=pax -czf ${shq(staging)} -C ${shq(posix.dirname(from))} ${shq(posix.basename(from))}`, nb.home);

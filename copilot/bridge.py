@@ -1775,7 +1775,7 @@ SHIPPED_OLD_VALUES = {
     "copilot_models.gpt-5.6-sol-think": ["GPT 5.6 Sol 깊이 생각하기"],
     "copilot_models.gpt-5.6-sol-fast": ["GPT 5.6 Sol 빠른 응답"],
 }
-BRIDGE_JSON_SHA256 = "530a8a1ed74df4300482e0b2de6cba187384733f56c8e6ecb16a45fd5c753e73"
+BRIDGE_JSON_SHA256 = "07e5422b8c8ed1598d19e1de6f309fa98b34e804b0c22b7dd4e192686d3da72a"
 
 
 def edited_keys(old_path, new_path):

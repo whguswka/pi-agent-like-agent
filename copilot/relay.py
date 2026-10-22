@@ -2344,12 +2344,13 @@ def make_handler(relay, jup, cfg, lanes=None):
             out = {"server": "ok", "version": RELAY_VERSION, "started": STARTED, "busy": busy, "thread_messages": len(relay.sent),
                    "copilot_turns_left": relay.link.turns_left,
                    "copilot_throttled_at": time.strftime("%H:%M:%S", time.localtime(thr)) if thr else None,
-                   "jupyter": {"root": jup.root, "home": jup.home, "terminal": jup.term}}
+                   "jupyter": {"root": jup.root, "home": jup.home, "terminal": jup.term, "bridge_dir": getattr(jup, "bridge_dir", None)}}
             if lanes:
                 out["windows"] = lanes.summary()
             try:
                 tabs = bridge.list_tabs(cfg["cdp_port"])
-                out["copilot_tab"] = any(cfg["copilot_url_contains"] in t.get("url", "") for t in tabs)
+                # 주소를 적지 않은 사내AI 는 탭 없음으로 (빈 글자는 모든 주소에 들어 있음. connect() 도 그때는 거절)
+                out["copilot_tab"] = bool(cfg["copilot_url_contains"]) and any(cfg["copilot_url_contains"] in t.get("url", "") for t in tabs)
                 want = cfg.get("jupyter_url_contains") or "/lab"
                 out["jupyter_tab"] = any(want in t.get("url", "") for t in tabs)
             except bridge.BridgeError as e:
@@ -2430,6 +2431,8 @@ def make_handler(relay, jup, cfg, lanes=None):
             m = re.match(r"^/jupyter/exec/([0-9a-f]+)/abort$", u.path)
             if m:
                 return self.jupyter(lambda: jup.abort(m.group(1)))
+            if u.path == "/jupyter/config":  # 노트북 폴더 바꾸기 (pi 의 /jupyter dir. 내 설정 파일에는 pi 쪽에서 적음)
+                return self.jupyter(lambda: jup.set_bridge_dir(body.get("jupyter_dir")))
             if u.path == "/jupyter/fs":
                 return self.jupyter(lambda: fs_op(jup, body))
             if not u.path.rstrip("/").endswith("/chat/completions"):

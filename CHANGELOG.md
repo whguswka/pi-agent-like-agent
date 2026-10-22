@@ -9,6 +9,13 @@
 - 2026-10-14.2 뒤의 버전부터 항목 앞에 `[공통]` 또는 `[Copilot]` 을 붙입니다. `[공통]` 은 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))에도 들어가는 것,
   `[Copilot]` 은 이 키트(업무 PC·Copilot)에만 있는 것입니다.
 
+## 다음 버전 (작업 중)
+- [Copilot] **노트북에서 pi 가 쓰는 폴더 바꾸기** ([README 3-3](README.md#3-3-실행-위치-바꾸기-pc-와-jupyter-노트북)):
+  - jupyter 모드는 노트북 홈에 `pi-bridge` 폴더(실행 기록·옮기는 파일)를 만듭니다. 여러 사람이 함께 쓰는 노트북에서는 이 폴더가 무엇이냐는 문의가 많았습니다.
+  - `/jupyter dir` 로 노트북 홈의 폴더 가운데 하나를 고르면 그 아래의 `pi-bridge` 를 씁니다 (예: `tools/pi-bridge`). `/jupyter dir <폴더>` 로 바로 적어도 됩니다.
+  - 고른 폴더는 내 설정 파일 `~/.pi/agent/bridge.json` 의 `jupyter_dir` 에 남습니다. 예전 폴더에 pi 가 만든 것(`run`, `xfer`)만 있으면 지울지 묻습니다.
+  - 점으로 시작하는 숨김 폴더는 쓸 수 없습니다 (Jupyter 파일 기능으로 읽을 수 없음). 이름이 `dir` 인 노트북 폴더로 가려면 `/jupyter ./dir`.
+
 ## 2026-10-22.1 (중계 서버 2026-10-22.1)
 실제로 pi(Copilot)로 작은 프로그램(작업 표시줄 리소스 모니터)을 세션 8개에 걸쳐 만들어 보며 걸린 곳들을 고쳤습니다.
 - [공통] **작업 기록: 넘겨받는 요약에서 결정이 빠지지 않게** ([README 5장 '메모리'](README.md#메모리)):

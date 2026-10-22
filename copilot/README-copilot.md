@@ -38,7 +38,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 - **jupyter 모드:** pi 확장(`~/.pi/agent/extensions/jupyter.ts`)이 bash·read·write·edit 도구를 노트북 안에서 실행합니다. 실행 중에 `/jupyter`·`/local` 로 바꿀 수 있습니다 ([README 3-3](../README.md#3-3-실행-위치-바꾸기-pc-와-jupyter-노트북)).
   - 명령은 JupyterLab 터미널 세션 `pibridge` 에서 실행됩니다. 화면에 띄워 둘 필요는 없습니다.
   - 보고 싶으면 JupyterLab 왼쪽 '실행 중인 터미널과 커널' 목록에서 `pibridge` 를 열면, 실행되는 명령과 출력이 실시간으로 보입니다.
-  - 출력과 종료 코드는 화면이 아니라 파일(노트북 `~/pi-bridge/run/`)로 정확히 받습니다. 다 읽은 파일은 다음 명령 때 지워집니다.
+  - 출력과 종료 코드는 화면이 아니라 파일(노트북 `~/pi-bridge/run/`. 폴더는 `jupyter_dir`·`/jupyter dir` 로 바꿈)로 정확히 받습니다. 다 읽은 파일은 다음 명령 때 지워집니다.
   - 파일 읽기·쓰기는 Jupyter 파일 기능을 씁니다. 숨김 파일(`.bashrc` 등)이나 홈 밖 경로는 터미널 명령으로 처리합니다.
 
 ## 1. 처음 한 번
@@ -76,6 +76,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | `cdp_port` | 전용 브라우저 창의 원격 디버깅 포트 (기본 9222. 자동으로 띄울 때 이 포트로 띄움) |
 | `copilot_url_contains` / `copilot_new_chat_url` | Copilot 탭을 찾을 주소 / 새 채팅 주소 |
 | `jupyter_url_contains` | JupyterLab 탭이 여러 개일 때 고를 주소 일부 (예: `/notebook/내네임스페이스/내노트북/`) |
+| `jupyter_dir` | jupyter 모드에서 노트북에 실행 기록(`run/`)·옮기는 파일(`xfer/`)을 둘 폴더. Jupyter 루트 기준 (기본 `pi-bridge`, 공용 노트북이면 이미 있는 폴더 아래로, 예: `tools/pi-bridge`). pi 의 `/jupyter dir` 로 고르면 내 설정 파일에 적힘. 점으로 시작하는 폴더·`..` 은 안 됨 (Jupyter 파일 기능으로 읽을 수 없음) |
 | `input_selector`, `send_button_selector`, `new_chat_selector`, `reply_selector` | 자동 인식이 안 될 때 CSS 선택자를 직접 지정. diag.py 가 후보를 보여줌 |
 | `use_stream` | Copilot WebSocket 원문으로 답 읽기 (기본 true) |
 | `first_reply_timeout_seconds` / `reply_timeout_seconds` | Copilot 답이 시작될 때까지 / 끝날 때까지 기다리는 최대 초 (기본 300 / 900). 응답이 느린 환경이면 늘리세요. 늘릴 때는 `~/.pi/agent/settings.json` 의 `retry.provider.timeoutMs`(밀리초)도 함께 |
@@ -127,7 +128,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | pi 에 `Copilot 이 새 대화에서도 도구가 없다고 답했습니다` | 진행 방식을 다시 알리고 새 대화로도 보냈는데 도구 블록을 주지 않은 것입니다. 같은 요청을 다시 보내거나 `/new` 로 새로 시작하세요 |
 | 오래 쓰다 보면 Copilot 이 중간에 멈추거나 형식을 틀림 | 대화가 아주 길어진 탓입니다. pi 에서 새 세션(`/new`)을 시작하면 Copilot 도 새 채팅으로 시작합니다 |
 | 답이 잘리거나 이상함 | pi 가 일하지 않을 때 `python ~/tools/pi/copilot/diag.py --send` 로 확인 (시험 대화는 직접 지움). `use_stream` 이 true 인지 |
-| 노트북에 `pi-bridge` 폴더가 생김 | jupyter 모드의 실행 기록 폴더입니다. pi 를 쓰지 않을 때 지워도 됩니다 |
+| 노트북에 `pi-bridge` 폴더가 생김 | jupyter 모드의 실행 기록 폴더입니다. pi 를 쓰지 않을 때 지워도 됩니다. 공용 노트북이면 `/jupyter dir` 로 이미 있는 폴더 아래로 옮길 수 있습니다 (`jupyter_dir`) |
 | 로그에 `Copilot 모델 선택 실패` | 모델을 못 고르면 지금 모델로 계속합니다. `python ~/tools/pi/copilot/diag.py --model` 로 메뉴 항목 이름을 보고 `models.json`/`bridge.json` 의 이름을 화면과 똑같이 맞추세요 |
 | 로그에 `지난 Copilot 대화 삭제 실패` | 3번까지 다시 시도합니다. `python ~/tools/pi/copilot/diag.py --chats --delete-test` 결과를 보고 `chat_item_selector` 등을 조정하세요. 기록은 `~/.pi/agent/copilot-chats.json` |
 
@@ -153,7 +154,8 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
   (`reason` 이 `reload` 면 무시). 창이 하나일 때 다른 pi(`pi -p` 한 번 실행 등)의 끝 알림(`session`·`X-Pi-Session` 이 지금 대화의 세션과 다름)은 지금 대화를 끊지 않음 (2026-10-21.1). 알리지 않아도 다음에 새 채팅을 열 때 지웁니다. 참고 구현: `~/.pi/agent/extensions/copilot-session.ts`
 
 **Kubeflow 노트북 실행 (`/jupyter/*`)** - 응답은 JSON, 실패하면 `{"ok": false, "code": ..., "error": ...}`
-- `GET /jupyter/info` → `root`, `home` (노트북 안 절대 경로), `terminal` (실행에 쓰는 터미널 이름)
+- `GET /jupyter/info` → `root`, `home` (노트북 안 절대 경로), `terminal` (실행에 쓰는 터미널 이름), `bridge_dir` (실행 기록 폴더, Jupyter 루트 기준)
+- `POST /jupyter/config` `{"jupyter_dir": "tools/pi-bridge"}` → `bridge_dir`, `old`, `root`. 실행 기록 폴더 바꾸기 (실행 중인 명령이 있으면 거절. 다음 명령 때 터미널을 다시 준비. 예전 폴더는 그대로)
 - `POST /jupyter/exec` `{"cwd": "/home/jovyan/work/x", "command": "bash 명령", "timeout": 초(0=없음)}` → `{"id": ...}` (max_tabs 가 2 이상이면 머리글 `X-Pi-Session` 의 창에 맞는 터미널에서)
 - `GET /jupyter/exec/<id>?offset=N&wait=2` → `done`, `exitCode`, `aborted`, `timedOut`, `data`(offset 이후 출력, base64), `size`
   (wait 초 동안 끝나기를 기다렸다 답함. 출력은 stdout+stderr 합친 것. 명령은 입력 없이(stdin 없음) 한 번에 하나씩 실행)
