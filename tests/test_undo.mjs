@@ -8,6 +8,9 @@ import { createJiti } from "../runtime/node_modules/jiti/lib/jiti.mjs";
 
 const jiti = createJiti(import.meta.url);
 const u = await jiti.import("../profiles/common/agent-template/extensions/undo.ts");
+// 이 시험은 git 기준점 제안 자체를 보므로, 시험 모음(release-check)이 켜 둔 끄기(PI_GIT_OFFER=0)는 뺀다
+const oldGitOffer = process.env.PI_GIT_OFFER;
+delete process.env.PI_GIT_OFFER;
 let fails = 0;
 const check = (name, cond, detail = "") => {
 	console.log((cond ? "OK   " : "FAIL ") + name + (cond ? "" : "  -> " + JSON.stringify(detail).slice(0, 800)));
@@ -176,6 +179,7 @@ if (!hasGit) {
 
 if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+if (oldGitOffer !== undefined) process.env.PI_GIT_OFFER = oldGitOffer;
 try {
 	rmSync(tmp, { recursive: true, force: true });
 } catch {}
