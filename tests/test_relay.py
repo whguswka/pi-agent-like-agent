@@ -1877,5 +1877,68 @@ try:
 except relay.bridge.BridgeError as e:
     check("쓸 수 없는 값으로는 바꾸지 않음", "쓸 수 없는 값" in str(e), e)
 
+
+# 새 대화: 막 띄운 전용 창에서 '새 채팅' 뒤 입력창이 60초 동안 안 보이면 새 대화 주소를 한 번 다시 열고 90초 더 기다림
+#  (2026-10-22: 전용 창을 띄우자마자 보낸 첫 요청이 그렇게 실패하고, 몇 분 뒤 같은 요청은 바로 됨). 시계는 가짜로
+class _Clock15:
+    def __init__(self):
+        self.t = 1000.0
+
+    def time(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+    def __getattr__(self, k):
+        return getattr(_time, k)
+
+
+class _Tab15:
+    def __init__(self, show_after):
+        self.events, self.navs, self.show_after = None, 0, show_after
+
+    def call(self, method, params=None):
+        if method == "Page.navigate":
+            self.navs += 1
+        return {}
+
+    def eval(self, expr, timeout=30):
+        if expr == relay.bridge.PAGE_LIB:
+            return True
+        if "findInput" in expr:
+            return self.navs >= self.show_after
+        if "document.title" in expr:
+            return "Sign in | https://login.example/x"
+        if "click()" in expr:
+            return "새 채팅"
+        return None
+
+
+_real_btime = relay.bridge.time
+try:
+    for _show, _url, _want in [(1, "https://x/chat", "ok"), (99, "https://x/chat", "error"), (99, "", "error")]:
+        relay.bridge.time = _Clock15()
+        _t15 = _Tab15(_show)
+        _c15 = relay.bridge.Copilot(_t15, {"input_selector": "", "new_chat_selector": "", "new_chat_pattern": "새 채팅",
+                                           "copilot_new_chat_url": _url, "use_stream": False})
+        try:
+            _quiet(_c15.new_chat)
+            _got15 = "ok"
+        except relay.bridge.BridgeError as e:
+            _got15 = str(e)
+        _spent = relay.bridge.time.t - 1000.0
+        if _want == "ok":
+            check("새 대화: 입력창이 60초 동안 안 보이면 새 대화 주소를 한 번 다시 열고, 그 뒤 보이면 계속",
+                  _got15 == "ok" and _t15.navs == 1 and 60 < _spent < 70, (_got15, _t15.navs, _spent))
+        elif _url:
+            check("새 대화: 다시 열어도 안 보이면 오류 (한 번만 다시 열고, 지금 화면의 제목·주소를 알림)",
+                  "입력창을 찾지 못했습니다 (지금 화면: Sign in | https://login.example/x)" in _got15 and _t15.navs == 1 and 150 < _spent < 160,
+                  (_got15, _t15.navs, _spent))
+        else:
+            check("새 대화: 새 대화 주소가 없으면 다시 열지 않고 오류", "입력창을 찾지 못했습니다" in _got15 and _t15.navs == 0, (_got15, _t15.navs))
+finally:
+    relay.bridge.time = _real_btime
+
 print("RESULT:", "PASS" if fails == 0 else "FAIL ({})".format(fails))
 sys.exit(1 if fails else 0)

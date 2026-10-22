@@ -120,7 +120,7 @@ LLM 이 Copilot 웹 채팅(m365.cloud.microsoft/chat)뿐일 때 쓰는 구성입
 | pi 에 `Connection error.` 또는 `중계 서버에 연결할 수 없습니다` | pi 를 끄고 다시 실행하면 중계 서버도 다시 켜집니다. 그래도 안 되면 `~/.pi/agent/copilot-relay.log` 확인. Python 을 못 찾으면 `export PI_PYTHON=/c/.../python.exe` |
 | `JupyterLab 탭을 찾지 못했습니다` (jupyter 모드) | 같은 전용 창에 JupyterLab 이 열려 있는지 (평소 Chrome 에 열린 탭은 쓸 수 없음). 여러 개면 `jupyter_url_contains` 지정 |
 | `JupyterLab 로그인이 만료되었습니다` | 전용 창의 JupyterLab 탭을 새로고침해 다시 로그인 (중계 서버는 자동으로 다시 붙음) |
-| `Copilot 입력창을 찾지 못했습니다` | `diag.py` 결과의 선택자를 `input_selector` 에 지정 |
+| `Copilot 입력창을 찾지 못했습니다` | 메시지의 `지금 화면` 이 Copilot 이 아니면(로그인·안내 창) 전용 창에서 처리한 뒤 다시 보내세요. 새 대화를 열 때는 입력창이 60초 동안 안 보이면 새 대화 주소를 한 번 다시 열고 90초 더 기다립니다. 화면은 맞는데 계속되면 `diag.py` 결과의 선택자를 `input_selector` 에 지정 |
 | pi 에 `429 Copilot 사용량 제한에 걸렸습니다` | Copilot 이 "현재 요청이 너무 많아 일시적으로 응답할 수 없습니다" 라고 답한 상태입니다 (계정 단위 제한, Throttled). 새 대화를 열어도 같으므로 중계 서버는 새 대화를 열지 않습니다. 기다렸다가 같은 요청을 다시 하면 같은 대화에 이어서 보냅니다. 시험에서는 30분 동안 질문 약 145개를 보냈을 때 걸렸습니다 |
 | pi 에 `429 사내AI 하루 질문 한도에 닿았습니다` | 짧은 답이 하루 한도 문구(`daily_limit_pattern`)에 맞은 상태. 사내AI 의 실제 문구는 아직 모르고 `inhouse.json` 의 문구는 알려 준 말('일일 200회 질문이 가능')에 맞춘 것이라, 평범한 답에 걸리지 않게 좁게 둠 (`tests/test_relay.py` 의 보기). 막힌 질문을 뺀 그날 수가 다음 추정 한도 (`inhouse-usage.json` 의 `limit`, `hits`). 한도 말이 pi 에 답으로 오면 그 문구를 `throttle_pattern`·`daily_limit_pattern` 둘 다에 맞출 것 |
 | Copilot 이 "실행할 수 없다" 며 거절 | 중계 서버가 한 번 설명하고 다시 부탁합니다. 계속되면 요청을 더 구체적으로 적어 보세요 |

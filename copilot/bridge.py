@@ -909,7 +909,16 @@ class Copilot:
             if self.js("!!window.__piBridge.findInput({})".format(self.q(self.cfg["input_selector"]))):
                 return
             time.sleep(0.5)
-        raise BridgeError("Copilot 입력창을 찾지 못했습니다. Copilot 페이지가 열려 있는지, input_selector 설정을 확인하세요.")
+        try:  # 로그인·안내 화면으로 바뀌었는지 보이게 (주소는 쿼리 없이)
+            where = " (지금 화면: {})".format(str(self.js("document.title + ' | ' + location.origin + location.pathname"))[:120])
+        except BridgeError:
+            where = ""
+        raise BridgeError("{} 입력창을 찾지 못했습니다{}. 전용 창에서 {} 화면이 다 열렸는지(로그인·안내 창), input_selector 설정을 확인하세요.".format(
+            self.name, where, self.name))
+
+    @property
+    def name(self):
+        return self.cfg.get("service_name") or "Copilot"
 
     def heap_mb(self):
         """이 탭(웹 앱)이 쓰는 메모리 MB: 살아 있는 JS 객체 + 화면 객체(DOM 등). 읽지 못하면 None"""
@@ -960,7 +969,17 @@ class Copilot:
             self.tab.call("Page.navigate", {"url": self.cfg["copilot_new_chat_url"]})
             time.sleep(2)
         time.sleep(1.5)
-        self.wait_input(60)
+        try:
+            self.wait_input(60)
+        except BridgeError:
+            # 막 띄운 전용 창에서는 새 대화 화면이 다 뜨지 않은 채 멈춰 있을 때가 있다 (2026-10-22: 전용 창을 띄우자마자 보낸 첫 요청이
+            # '새 채팅' 을 누른 뒤 60초 동안 입력창을 못 찾아 실패, 몇 분 뒤 같은 요청은 바로 됨). 새 대화 주소를 한 번 다시 열고 더 기다린다
+            if not self.cfg.get("copilot_new_chat_url"):
+                raise
+            log("Copilot: 60초 동안 입력창이 보이지 않아 새 대화 주소를 다시 엶")
+            self.tab.call("Page.navigate", {"url": self.cfg["copilot_new_chat_url"]})
+            time.sleep(3.5)
+            self.wait_input(90)
         self.thread_url = None
         self.turns_left = None
 
