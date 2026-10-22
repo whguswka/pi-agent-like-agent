@@ -364,11 +364,11 @@ export default function (pi: ExtensionAPI) {
 			if (S.more === undefined && !allowed)
 				S.more = await ctx.ui.confirm(
 					"새 문서가 많습니다",
-					`이번 요청에서 새 문서를 벌써 ${S.newDocs.length}개 만들었습니다: ${list}\n또 만들 문서: ${rel}\n\n새 문서를 더 만들까요? (이 요청 동안 같은 답을 씁니다)\n아니요: 만들지 않고 이미 있는 문서에 이어 쓰게 합니다.`,
+					`이번 요청의 새 문서가 벌써 ${S.newDocs.length}개입니다: ${list}\n또 만들 문서: ${rel}\n\n새 문서를 더 만들까요? (이 요청 동안 같은 답을 씁니다)\n아니요: 만들지 않고 이미 있는 문서에 이어 쓰게 합니다.`,
 				);
 			if (S.more === false && !allowed)
 				return {
-					block: `사용자 문서 규칙: 이번 요청에서는 새 문서를 더 만들지 않습니다 (이미 만든 문서: ${list}). ${rel} 에 쓰려던 내용은 이미 만든 문서나 관련된 기존 문서에 이어 쓰세요.`,
+					block: `사용자 문서 규칙: 이번 요청에서는 새 문서를 더 만들지 않습니다 (이번 요청의 새 문서: ${list}). ${rel} 에 쓰려던 내용은 그 문서들이나 관련된 기존 문서에 이어 쓰세요.`,
 					view: `새 문서 ${rel}: 이번 요청에서 ${S.newDocs.length}개를 넘어 만들지 않게 함`,
 				};
 		}
