@@ -1,6 +1,6 @@
 // 키트 훅(profiles/common/agent-template/extensions/hooks.ts) 단위 시험: 문서 규칙, /hooks, 위험 명령 확인 경고
 // 사용법: node tests/test_hooks.mjs   (저장소의 runtime/node_modules/jiti 로 .ts 를, pi-tui 는 tests/stubs 의 것으로)
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,11 +23,17 @@ const check = (name, cond, detail = "") => {
 const read = (p) => readFileSync(p, "utf8");
 
 // ── 순수 함수 ─────────────────────────────────────────────────────────────
-for (const f of ["install.sh", "update.sh", "api-kit/overlay/install.sh", "api-kit/overlay/update.sh"]) {
+// 키트 확장 목록: 설치 스크립트의 KIT_EXT 는 모두 hooks.ts 의 KIT_EXT 에 있고, 저장소에 있는 확장은 모두 KIT_EXT 에 (API 키트는 PC 확장이 없음)
+const shipped = ["common", "pc", "jupyter"].flatMap((p) => {
+	const d = join(ROOT, "profiles", p, "agent-template", "extensions");
+	return existsSync(d) ? readdirSync(d).filter((f) => /\.ts$/.test(f)) : [];
+});
+for (const f of ["install.sh", "update.sh", "api-kit/overlay/install.sh", "api-kit/overlay/update.sh"].filter((x) => existsSync(join(ROOT, x)))) {
 	const m = read(join(ROOT, f)).match(/^KIT_EXT="([^"]*)"/m);
 	const list = (m ? m[1] : "").split(/\s+/).filter((x) => x && !x.startsWith("lib/"));
-	const want = f.startsWith("api-kit") ? h.KIT_EXT.filter((x) => !["copilot-session.ts", "jupyter.ts"].includes(x)) : h.KIT_EXT;
-	check(`KIT_EXT 가 ${f} 와 같음 (내 훅을 가리는 기준)`, JSON.stringify([...list].sort()) === JSON.stringify([...want].sort()), [list, want]);
+	const want = f.startsWith("api-kit") ? shipped.filter((x) => !["copilot-session.ts", "jupyter.ts"].includes(x)) : shipped;
+	check(`KIT_EXT: ${f} 의 목록은 모두 hooks.ts 에 있고, 저장소의 확장이 빠짐없이 (내 훅을 가리는 기준)`,
+		list.every((x) => h.KIT_EXT.includes(x)) && want.every((x) => list.includes(x)) && shipped.every((x) => h.KIT_EXT.includes(x)), [list, want]);
 }
 check("문서: Markdown 만, 숨김 폴더·node_modules 는 뺌",
 	h.isDoc("docs/a.md") && h.isDoc("x.MARKDOWN") && !h.isDoc("a.txt") && !h.isDoc(".github/x.md") && !h.isDoc("node_modules/p/README.md"));
