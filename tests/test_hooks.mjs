@@ -46,6 +46,13 @@ check("규칙 밖: 목록 문서·README·지침·메모·스킬·CHANGELOG (HIS
 check("링크 밖: 목록 문서 자신·맨 위 README·지침·메모·스킬 (하위 README·HISTORY 는 링크)",
 	["docs/INDEX.md", "README.md", "AGENTS.md", "NOTES.md", "x/SKILL.md"].every((r) => h.linkFree(r, "docs/INDEX.md")) && !h.linkFree("docs/README.md", "docs/INDEX.md") && !h.linkFree("docs/HISTORY.md", "docs/INDEX.md"));
 check("제목: 첫 '# 제목', 없으면 파일 이름", h.docTitle("앞글\n# 배포 계획 ##\n## 1\n", "x/a.md") === "배포 계획" && h.docTitle("본문만", "x/배포 메모.md") === "배포 메모" && h.docTitle(undefined, "a.md") === "a");
+check("제목: '# 제목' 이 없는 이력 문서는 '작업 이력' (첫 줄이 '## 날짜 제목' 절)", h.docTitle("## 2026-10-22 KR 실험\n본문\n", "HISTORY.md") === "작업 이력" && h.docTitle("# 우리 이력\n", "HISTORY.md") === "우리 이력");
+check("자리 표시 파일: '# placeholder … will contain …' 만 있는 글 (2026-10 ML 시험의 train_v2.py)",
+	h.placeholderOnly("# placeholder\n# train_v2.py will contain the v2 feature generation, LightGBM training,\n# MLflow logging, prediction table write, and KFP pipeline entrypoint.\n# Create this file first, then submit via KFP in the next step.\n")
+	&& h.placeholderOnly('"""자리 표시: 나중에 채움"""\npass\n') && h.placeholderOnly("// TODO: implement\n"));
+check("자리 표시가 아님: 빈 파일, 실제 코드, 주석에 TODO 가 있는 코드, 긴 글",
+	!h.placeholderOnly("") && !h.placeholderOnly("import os\nprint(1)\nx = 2\ny = 3\n# TODO: implement more\n") && !h.placeholderOnly("# 설정 파일\nlr = 0.01\n")
+	&& !h.placeholderOnly(`# placeholder 설명\n${"a = 1\n".repeat(200)}`) && !h.placeholderOnly(undefined));
 check("링크 대상: 목록 문서 폴더 기준, 빈칸은 %20", h.linkTarget("docs/INDEX.md", "docs/plans/a b.md") === "plans/a%20b.md" && h.linkTarget("docs/INDEX.md", "notes/x.md") === "../notes/x.md" && h.linkTarget("INDEX.md", "docs/y.md") === "docs/y.md");
 let t = h.addLink(h.NEW_INDEX, "- [A](a.md) — d", "a.md");
 t = h.addLink(t, "- [B](b.md) — d", "b.md");
@@ -241,6 +248,14 @@ globalThis.__piRemoteFs = { stat: async () => { throw new Error("중계 서버 �
 r = await tool(ctx, "write", { path: "docs/s.md", content: "# s" });
 check("노트북에 닿지 않으면 보지 않음 (막지 않음)", !r.blocked && !r.note);
 globalThis.__piWorkDir = local;
+
+// 자리 표시 파일: 막지 않고 결과에 안내 (문서가 아닌 .py 도)
+await request();
+ctx = fakeCtx();
+r = await tool(ctx, "write", { path: "train_v2.py", content: "# placeholder\n# train_v2.py will contain the training code.\n" }, () => writeFileSync(join(W, "train_v2.py"), "# placeholder\n"));
+check("자리 표시 내용만 쓰면 결과에 안내 (막지 않음)", !r.blocked && r.note === h.PLACEHOLDER_NOTE, r);
+r = await tool(ctx, "write", { path: "train_v2.py", content: "import pandas as pd\nprint(pd.__version__)\n" }, () => writeFileSync(join(W, "train_v2.py"), "import pandas as pd\n"));
+check("실제 내용이면 안내 없음", !r.blocked && !r.note, r);
 
 // 끄기, 지침
 writeFileSync(join(AGENT, "bridge.json"), JSON.stringify({ doc_rules: false }));

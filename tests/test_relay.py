@@ -868,6 +868,23 @@ check("반복 세기: 결과가 바뀌면 1번, 결과까지 같으면 2번", re
 _lk = FakeLink(['```json\n{"tool": "bash", "arguments": {"command": "tail -n 3 train.log"}}\n```', "다시 부탁한 뒤의 답"])
 _out = _quiet(lambda: relay.Relay(A(), _lk).handle({"messages": _poll, "tools": tools}))
 check("결과가 바뀌는 같은 명령은 반복으로 끊지 않음", len(_lk.sent_log) == 1 and _out.get("tool_calls"), (_lk.sent_log, _out))
+# 결과까지 같은 상태 조회를 되풀이 (2026-10 ML 시험: 파이프라인이 계속 RUNNING): '다음 단계로' 만 부탁하면 기다리기를 그만두고 멈췄음.
+#  bash 면 한 명령 안에서 sleep 하며 기다리는 법을 함께 알린다 (write 같은 다른 도구의 반복은 예전 글 그대로)
+_kfp = {"name": "bash", "arguments": {"command": "python - <<'PY'\nprint(client.get_run(rid).state)\nPY"}}
+_kcall = lambda i: {"role": "assistant", "content": None, "tool_calls": [{"id": "k%d" % i, "type": "function",
+                    "function": {"name": "bash", "arguments": json.dumps(_kfp["arguments"])}}]}
+_khist = [sys_msg, {"role": "user", "content": "파이프라인 끝날 때까지 보고 알려 줘"}]
+for i in (1, 2):
+    _khist += [_kcall(i), {"role": "tool", "tool_call_id": "k%d" % i, "content": "RUNNING"}]
+_kblock = "```json\n" + json.dumps({"tool": "bash", "arguments": _kfp["arguments"]}) + "\n```"
+_kloop = "```json\n" + json.dumps({"tool": "bash", "arguments": {"command": "for i in $(seq 1 20); do python -u st.py; sleep 30; done"}}) + "\n```"
+_lk = FakeLink([_kblock, _kloop])
+_out = _quiet(lambda: relay.Relay(A(), _lk).handle({"messages": _khist, "tools": tools}))
+check("결과까지 같은 상태 조회 3번째(bash): 한 명령 안에서 기다리는 법을 알리고, 기다리는 명령으로 바꾸면 그대로 실행",
+      len(_lk.sent_log) == 2 and "한 명령 안에서 기다리며" in _lk.sent_log[1]["parts"][0] and "sleep 30" in _lk.sent_log[1]["parts"][0]
+      and "seq 1 20" in json.dumps(_out.get("tool_calls")), (_lk.sent_log, _out))
+check("반복 부탁 글: bash 는 기다리는 법, 다른 도구는 예전 글", "sleep 30" in relay.loop_nudge("bash", 2) and relay.loop_nudge("write", 2) == relay.LOOP_NUDGE.format(name="write", count=2)
+      and "sleep 30" in relay.loop_nudge("bash", 4, soft=True) and relay.loop_nudge("edit", 4, soft=True) == relay.LOOP_SOFT_NUDGE.format(name="edit", count=4))
 
 
 # 끝난 대화 삭제 안전장치: 새 대화의 첫 답을 받은 뒤, 보낸 메시지(marker)가 아직 화면에 있을 때만 '중계 서버가 만든 대화' 로 기록

@@ -337,10 +337,27 @@ async function doctorLines(): Promise<string[]> {
 export const DONE_GUIDE =
 	"끝났다고 답하기 전에 사용자의 요구사항을 하나씩 다시 보고, 바꾼 것을 실제로 실행·빌드·테스트한 결과로 확인한다 " +
 	"(화면에 나오는 프로그램이면 실행해서 실제로 보이는지까지). 확인하지 못한 것은 확인하지 못했다고 적는다. " +
-	"원인을 찾는다며 기존 코드를 지우거나 임시 코드로 바꾼 채 끝내지 않는다.";
-/** 지침 목록(systemPromptOptions.promptGuidelines)에 DONE_GUIDE 를 한 번 더함 */
-export function addDoneGuide(g: unknown) {
-	if (Array.isArray(g) && !g.includes(DONE_GUIDE)) g.push(DONE_GUIDE);
+	"원인을 찾는다며 기존 코드를 지우거나 임시 코드로 바꾼 채 끝내지 않는다. " +
+	"할 수 없다고 답하기 전에 이 대화에서 이미 써 본 방법(같은 명령·API)으로 되는지 해 본다.";
+// 2026-10 ML 시험 (Kubeflow 노트북에서 분석 모델 만들기):
+//  - 코드를 모두 python - <<EOF 로만 돌려, 'KFP 로 돌려 줘' 에 '파이프라인 파일이 없다' 며 멈춤. 그 뒤 파일을 '# placeholder' 로 먼저 씀
+//  - 프로젝트 지침이 가리킨 환경 안내 문서를 읽지 않거나, 읽고도 그 규칙('단계에서 DB 를 쓰려면 먼저 사용자에게')을 어김
+//  - 파이프라인 완료를 한도 1시간으로 출력 없이 기다리다(이미지를 못 받아 멈춘 단계) 45분이 지남
+//  - '지금 도구로는 실행을 종료할 수 없다' 고 했지만 앞에서 같은 API 로 종료했었음 (DONE_GUIDE 끝 문장)
+export const CODE_FILE_GUIDE =
+	"다시 돌릴 만한 분석·학습·파이프라인 코드는 heredoc(python - <<EOF)으로만 돌리지 말고 프로젝트에 .py 파일로 저장해 실행한다. " +
+	"새 파일은 자리 표시(placeholder) 없이 처음부터 실제 내용으로 쓴다.";
+export const READ_DOCS_GUIDE =
+	"프로젝트 지침(AGENTS.md)이 가리키는 문서가 지금 하는 일(데이터·DB·파이프라인 등)을 다루면 그 부분을 먼저 읽고, " +
+	"그 문서의 규칙(사용자에게 먼저 물을 것, 하지 말 것)을 지킨다.";
+export const WAIT_GUIDE =
+	"오래 걸리는 외부 작업(파이프라인 실행, 배포, 긴 학습)을 기다릴 때는 한도 없이 기다리지 말고 한 명령 안에서 30초마다 상태를 찍으며 " +
+	"10분 안쪽으로 기다린다 (python 은 -u). 그래도 그대로면 같은 조회를 되풀이하지 말고 막힌 원인을 살펴 사용자에게 알린다.";
+/** 지침에 늘 더하는 줄 (작업 모드와 관계없이 같은 글) */
+export const KIT_GUIDES = [DONE_GUIDE, CODE_FILE_GUIDE, READ_DOCS_GUIDE, WAIT_GUIDE];
+/** 지침 목록(systemPromptOptions.promptGuidelines)에 KIT_GUIDES 를 한 번씩 더함 */
+export function addKitGuides(g: unknown) {
+	if (Array.isArray(g)) for (const line of KIT_GUIDES) if (!g.includes(line)) g.push(line);
 }
 
 export const DOCS_MAX = 5500; // 결과 글 길이 (wiki_read 와 같음. Copilot·사내AI 의 도구 결과 한도 안)
@@ -811,7 +828,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("before_agent_start", async (event: any) => addDoneGuide(event?.systemPromptOptions?.promptGuidelines));
+	pi.on("before_agent_start", async (event: any) => addKitGuides(event?.systemPromptOptions?.promptGuidelines));
 
 	// /kit env 로 지침에 적은 실행 환경은 pi 를 시작할 때 읽으므로, 지금 대화에는 다음 요청 앞에 붙여 바로 알린다
 	// (/reload 는 Copilot 새 대화를 열어 느리므로 쓰지 않음. /remember 와 같은 방식)

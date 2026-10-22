@@ -108,12 +108,26 @@ export const ruleFree = (rel: string, index: string) => rel.toLowerCase() === in
 export const linkFree = (rel: string, index: string) =>
 	rel.toLowerCase() === index.toLowerCase() || rel.toLowerCase() === "readme.md" || NO_LINK.has(nameOf(rel).toLowerCase());
 
-/** 목록에 적을 제목: 문서의 첫 '# 제목', 없으면 파일 이름 */
+/** 목록에 적을 제목: 문서의 첫 '# 제목', 없으면 이력 문서는 '작업 이력'(첫 줄이 '## 날짜 제목' 절이라), 그 밖은 파일 이름 */
 export function docTitle(content: unknown, rel: string): string {
 	const m = typeof content === "string" ? content.match(/^#\s+(.+?)\s*#*\s*$/m) : null;
-	const t = (m ? m[1] : nameOf(rel).replace(/\.(md|markdown)$/i, "")).replace(/[[\]]/g, "").trim();
+	const t = (m ? m[1] : docKind(rel) === "history" ? "작업 이력" : nameOf(rel).replace(/\.(md|markdown)$/i, "")).replace(/[[\]]/g, "").trim();
 	return t.length > 80 ? `${t.slice(0, 79)}…` : t;
 }
+
+/** 자리만 잡는 내용인지: 자리 표시 말(placeholder, '나중에 채움' 등)이 있고 실제 코드 줄이 거의 없는 짧은 글.
+ *  빈 파일(__init__.py 등)은 아님 (2026-10 ML 시험: train_v2.py 를 '# placeholder … will contain …' 로 먼저 쓰고 다시 씀) */
+export function placeholderOnly(content: unknown): boolean {
+	if (typeof content !== "string" || content.length > 800) return false;
+	if (!/placeholder|자리\s*표시|to be (filled|implemented|written)|will (contain|be (written|implemented|filled))|TODO:?\s*(implement|fill|write)|(나중에|다음 단계에서|이후에?)\s*(채|작성|구현)/i.test(content))
+		return false;
+	const code = content.split(/\r?\n/).filter((l) => {
+		const s = l.trim();
+		return s && !/^(#|\/\/|--|\/\*|\*|<!--|;|%|"""|'''|pass$|\.\.\.$)/.test(s);
+	});
+	return code.length <= 2;
+}
+export const PLACEHOLDER_NOTE = "(이 파일에는 자리 표시 내용만 있습니다. 빈 파일을 먼저 만들지 말고, 실제 내용으로 바로 쓰세요)";
 /** 목록 문서에서 본 링크 대상 (빈칸은 %20) */
 export const linkTarget = (index: string, rel: string) => posix.relative(posix.dirname(index), rel).replace(/ /g, "%20");
 
@@ -512,6 +526,12 @@ export default function (pi: ExtensionAPI) {
 		post(ctx, views);
 		if (!notes.length) return;
 		return { content: [...(Array.isArray(event.content) ? event.content : []), { type: "text", text: notes.join("\n") }] };
+	});
+
+	// 자리 표시 파일 알림: 막지 않고 결과에 안내만 (문서 규칙 결과 뒤에 이어 붙음)
+	pi.on("tool_result", async (event: any) => {
+		if (event.toolName !== "write" || event.isError || !placeholderOnly(event.input?.content)) return;
+		return { content: [...(Array.isArray(event.content) ? event.content : []), { type: "text", text: PLACEHOLDER_NOTE }] };
 	});
 
 	// ── /hooks, 위험 명령 확인 경고 ───────────────────────────────────────────

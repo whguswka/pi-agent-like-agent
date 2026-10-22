@@ -5,7 +5,7 @@ import { createJiti } from "../runtime/node_modules/jiti/lib/jiti.mjs";
 
 // typebox 는 pi 처럼 runtime 의 것으로 (kit.ts 의 docs_lookup 도구)
 const jiti = createJiti(import.meta.url, { alias: { typebox: fileURLToPath(new URL("../runtime/node_modules/typebox/build/index.mjs", import.meta.url)) } });
-const { parseEnv, putEnv, DONE_GUIDE, addDoneGuide } = await jiti.import("../profiles/common/agent-template/extensions/kit.ts");
+const { parseEnv, putEnv, DONE_GUIDE, CODE_FILE_GUIDE, READ_DOCS_GUIDE, WAIT_GUIDE, KIT_GUIDES, addKitGuides } = await jiti.import("../profiles/common/agent-template/extensions/kit.ts");
 let fails = 0;
 const check = (name, cond, detail = "") => {
 	console.log((cond ? "OK   " : "FAIL ") + name + (cond ? "" : "  -> " + JSON.stringify(detail)));
@@ -32,12 +32,17 @@ check("빈 파일이면 그 부분만", putEnv("", "notebook", "이 노트북", 
 
 // 끝났다고 하기 전의 확인: 지침에 늘 더하는 줄 (짧게: 사내AI 는 입력 한 번에 만 자라 지침·도구 설명과 나눠 씀)
 const g = ["기존 줄"];
-addDoneGuide(g);
-addDoneGuide(g);
-check("끝내기 전 확인: 지침 목록에 한 번만 더함 (기존 줄은 그대로)", g.length === 2 && g[0] === "기존 줄" && g[1] === DONE_GUIDE, g);
-check("끝내기 전 확인: 요구사항을 다시 보고 실행·테스트로 확인, 못 한 것은 적기, 코드를 비운 채 끝내지 않기 (300자 안)",
-	DONE_GUIDE.length <= 300 && ["요구사항", "실행", "확인하지 못한 것", "임시 코드"].every((w) => DONE_GUIDE.includes(w)), DONE_GUIDE.length);
-addDoneGuide(undefined); // 지침 목록이 없는 pi 이면 그냥 넘어감
+addKitGuides(g);
+addKitGuides(g);
+check("지침에 늘 더하는 줄: 한 번씩만 더함 (기존 줄은 그대로, 끝내기 전 확인·코드 파일·문서 먼저·기다리기 차례)",
+	JSON.stringify(g) === JSON.stringify(["기존 줄", DONE_GUIDE, CODE_FILE_GUIDE, READ_DOCS_GUIDE, WAIT_GUIDE]) && KIT_GUIDES.length === 4, g);
+check("끝내기 전 확인: 요구사항을 다시 보고 실행·테스트로 확인, 못 한 것은 적기, 코드를 비운 채 끝내지 않기, 못 한다고 하기 전에 해 보기 (300자 안)",
+	DONE_GUIDE.length <= 300 && ["요구사항", "실행", "확인하지 못한 것", "임시 코드", "이미 써 본 방법"].every((w) => DONE_GUIDE.includes(w)), DONE_GUIDE.length);
+check("작업 습관 줄: 코드는 파일로·자리 표시 없이, 지침이 가리킨 문서 먼저, 기다릴 때는 한도와 상태 출력 (각 200자 안)",
+	CODE_FILE_GUIDE.includes(".py 파일") && CODE_FILE_GUIDE.includes("placeholder") && READ_DOCS_GUIDE.includes("AGENTS.md") && READ_DOCS_GUIDE.includes("먼저 물을 것")
+	&& WAIT_GUIDE.includes("30초마다") && WAIT_GUIDE.includes("-u") && [CODE_FILE_GUIDE, READ_DOCS_GUIDE, WAIT_GUIDE].every((s) => s.length <= 200),
+	[CODE_FILE_GUIDE.length, READ_DOCS_GUIDE.length, WAIT_GUIDE.length]);
+addKitGuides(undefined); // 지침 목록이 없는 pi 이면 그냥 넘어감
 
 console.log(fails ? `RESULT: FAIL (${fails})` : "RESULT: PASS");
 process.exit(fails ? 1 : 0);

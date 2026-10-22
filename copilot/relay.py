@@ -210,16 +210,29 @@ MULTI_WRITE_HINT = " 살펴보기만 하는 작업과 서로 다른 파일 쓰�
 
 # 같은 도구 호출(도구·인자 같음)이 연달아 반복되면 끊는다 (시험: 같은 write 를 8초마다 60번 넘게 반복한 일이 있었음)
 LOOP_LIMIT = 2  # 직전에 이미 연속 2번 같은 호출이 있었으면 3번째는 반복으로 본다
-LOOP_NUDGE = ("방금 주신 작업({name})은 바로 앞에서 이미 {count}번 똑같이 실행했고 결과도 같았습니다. "
-              "같은 작업을 다시 하지 마시고, 다음 단계로 넘어가거나 요청이 끝났다면 블록 없이 최종 답을 주세요.")
+LOOP_HEAD = "방금 주신 작업({name})은 바로 앞에서 이미 {count}번 똑같이 실행했고 결과도 같았습니다. "
+LOOP_TAIL = "같은 작업을 다시 하지 마시고, 다음 단계로 넘어가거나 요청이 끝났다면 블록 없이 최종 답을 주세요."
+LOOP_NUDGE = LOOP_HEAD + LOOP_TAIL
 LOOP_STOP = "같은 작업({name})이 계속 반복되어 여기서 멈췄습니다. 요청을 조금 바꾸거나 나눠서 다시 시도해 주세요."
 # 결과가 조금씩 달라도(측정값 등) 일을 하는 같은 호출(빌드·실행·측정 명령, 쓰기)이 연달아 되풀이되면 한 번 묻는다
 #  (시험: 빌드 + 60초 측정 명령을 고치는 것 없이 6번 되풀이함. 숫자만 조금씩 달라 위의 반복으로 세지 않았음).
 #  읽기만 하는 호출(tail 로 학습 로그 지켜보기 등)은 세지 않고, 멈추지도 않는다 (기다리는 중일 수 있음)
 LOOP_SOFT_LIMIT = 4  # 직전에 이미 연속 4번 같은 호출이 있었으면 5번째에 묻는다 (그 뒤로 4번마다)
-LOOP_SOFT_NUDGE = ("방금 주신 작업({name})을 바로 앞에서 이미 {count}번 연달아 실행했습니다 (결과는 조금씩 달랐습니다). "
-                   "무언가 바뀌기를 기다리는 중이 아니라면 같은 작업을 되풀이하지 마시고, 지금까지의 결과로 다음 단계로 넘어가거나 "
-                   "요청이 끝났다면 블록 없이 최종 답을 주세요.")
+LOOP_SOFT_HEAD = "방금 주신 작업({name})을 바로 앞에서 이미 {count}번 연달아 실행했습니다 (결과는 조금씩 달랐습니다). "
+LOOP_SOFT_TAIL = ("무언가 바뀌기를 기다리는 중이 아니라면 같은 작업을 되풀이하지 마시고, 지금까지의 결과로 다음 단계로 넘어가거나 "
+                  "요청이 끝났다면 블록 없이 최종 답을 주세요.")
+LOOP_SOFT_NUDGE = LOOP_SOFT_HEAD + LOOP_SOFT_TAIL
+# 같은 명령(bash)을 되풀이하는 것은 상태가 바뀌기를 기다리는 중일 수 있다. 그때 '다음 단계로 넘어가라' 고만 하면 기다리기를 그만두고 멈춘다
+#  (2026-10 ML 시험: 파이프라인 상태 조회를 되풀이하다 이 부탁을 받고 '결과를 보고할 수 없다' 며 끝냄). 한 명령 안에서 기다리는 법을 알린다
+LOOP_WAIT_TAIL = ("무언가 바뀌기를 기다리는 중이라면 같은 조회를 다시 보내지 마시고, 한 명령 안에서 기다리며 상태를 찍게 해 주세요 "
+                  "(예: for i in $(seq 1 20); do <상태 확인>; sleep 30; done 처럼 10분 안쪽으로, 끝난 상태가 나오면 멈추게). "
+                  "기다리는 중이 아니라면 다음 단계로 넘어가거나, 요청이 끝났다면 블록 없이 최종 답을 주세요.")
+
+
+def loop_nudge(name, count, soft=False):
+    """같은 도구 호출이 되풀이될 때 다시 부탁하는 글 (bash 면 기다리는 법을 함께)"""
+    head = (LOOP_SOFT_HEAD if soft else LOOP_HEAD).format(name=name, count=count)
+    return head + (LOOP_WAIT_TAIL if name == "bash" else LOOP_SOFT_TAIL if soft else LOOP_TAIL)
 
 
 def repeated_calls(messages, call):
@@ -2098,7 +2111,7 @@ class Relay:
             count = repeated_calls(messages, call)
             self.log("같은 도구 호출 반복({} {}회) -> 다른 작업을 하도록 다시 요청".format(call["name"], count))
             self.note_nudge("loop")
-            reply = self.ask_again(LOOP_NUDGE.format(name=call["name"], count=count))
+            reply = self.ask_again(loop_nudge(call["name"], count))
             body_text, call, err = self.parse(reply, tool_names)
             self.note_reply(reply)
             if call is None and privacy_refusal(reply):
@@ -2111,7 +2124,7 @@ class Relay:
             if count >= LOOP_SOFT_LIMIT and count % LOOP_SOFT_LIMIT == 0:
                 self.log("같은 도구 호출이 결과만 조금씩 다르게 반복({} {}회) -> 다음 단계로 넘어가도록 한 번 부탁".format(call["name"], count))
                 self.note_nudge("loop_soft")
-                reply = self.ask_again(LOOP_SOFT_NUDGE.format(name=call["name"], count=count))
+                reply = self.ask_again(loop_nudge(call["name"], count, soft=True))
                 body_text, call, err = self.parse(reply, tool_names)
                 self.note_reply(reply)
                 if call is None and privacy_refusal(reply):

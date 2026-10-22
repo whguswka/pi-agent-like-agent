@@ -1,6 +1,6 @@
 ---
 name: kubeflow-notebook
-description: Kubeflow 노트북에서 패키지 설치, GPU·자원·버전 확인, 오래 걸리는 학습 실행, .ipynb 실행·결과 읽기·고치기를 할 때 사용.
+description: Kubeflow 노트북에서 패키지 설치, GPU·자원·버전 확인, 오래 걸리는 학습 실행, 파이프라인(KFP) 실행·기다리기·정리, .ipynb 실행·결과 읽기·고치기를 할 때 사용.
 ---
 # Kubeflow 노트북에서 일하기
 
@@ -33,6 +33,31 @@ echo "[pi-watch] $PWD/$LOG"
   그러니 띄운 뒤에는 `sleep` 과 `tail` 을 되풀이하며 기다리지 말고, 로그 경로와 "끝나면 알림이 뜬다"를 알리고 마친다.
 - 사용자가 물으면 진행 확인 `tail -n 20 "<로그>"`, 살아 있는지 `ps -p $(cat logs/train.pid)`, 멈추기 `kill $(cat logs/train.pid)`.
 - 결과(모델, 지표, 그림)는 파일로 저장하고 경로를 알려 준다. 다시 해 볼 수 있게 설정·시드·데이터 버전을 함께 남긴다.
+
+## 파이프라인(KFP) 실행
+- 다시 돌릴 학습·처리 코드는 먼저 프로젝트에 `.py` 파일로 저장한다 (heredoc 으로만 돌린 코드는 파이프라인으로 옮길 수 없다).
+- 파이프라인 단계는 노트북이 아닌 별도 파드에서 돈다. 노트북의 홈(파일), 설치한 패키지, 환경 변수(DB 접속 정보 등)를 보지 못한다.
+  - 코드는 컴포넌트 함수 안에 넣거나 이미지에 담는다. 패키지는 클러스터가 받을 수 있는 `base_image`(다른 파이프라인이 쓰는 이미지)로 정한다.
+  - 데이터는 입력 아티팩트나 공유 볼륨으로 넘긴다. 단계에서 DB·비밀번호가 필요하면 Secret 설정이 따로 필요하므로 사용자와 먼저 정한다.
+  - 프로젝트 안내 문서에 파이프라인 규칙(주소, 인증, 자원 한도)이 있으면 그대로 따른다.
+- 이미지를 받지 못하면(ImagePullBackOff) 단계는 실패하지 않고 계속 '실행 중'으로 남는다. 단계가 시작하지 않으면 이미지·자원 한도·쿼터를 의심하고 사용자에게 알린다.
+- 기다릴 때는 `wait_for_run_completion` 을 긴 한도로 부르지 말고, 한 명령 안에서 30초마다 상태를 찍으며 10분 안쪽으로 기다린다
+  (같은 조회 명령을 되풀이해 보내지 않는다):
+```bash
+python -u - <<'EOF'
+import time
+import kfp
+client = kfp.Client()  # 주소·인증은 프로젝트 안내대로
+run_id = "<실행 ID>"
+for _ in range(20):
+    state = client.get_run(run_id).state
+    print(time.strftime("%H:%M:%S"), state, flush=True)
+    if state in ("SUCCEEDED", "FAILED", "SKIPPED", "CANCELED"):
+        break
+    time.sleep(30)
+EOF
+```
+- 막혔거나 필요 없는 실행은 `client.terminate_run(run_id)` 로 정리하고, 끝난 상태인지 다시 확인한다.
 
 ## 노트북(.ipynb) 실행·결과 읽기·고치기
 - 위에서부터 실행해 결과를 남기기: papermill 이 있으면 (`pip show papermill`)

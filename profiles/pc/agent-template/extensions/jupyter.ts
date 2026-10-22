@@ -220,12 +220,19 @@ function editOps(map: (p: string) => string): EditOperations {
 	return { readFile: r.readFile, access: r.access, writeFile: w.writeFile };
 }
 
-function bashOps(map: (p: string) => string): BashOperations {
+// 노트북 명령이 출력 없이 이만큼(초) 돌면 상태 줄에 알리고, 세 배가 되면 한 번 알림 (2026-10 ML 시험: 파이프라인 완료를
+//  한도 1시간으로 기다리는 명령이 출력 없이 45분 동안 돌았는데 화면으로는 알 수 없었음). PI_JUPYTER_QUIET_SEC 로 바꿈 (시험용)
+export const QUIET_SEC = Number(process.env.PI_JUPYTER_QUIET_SEC) > 0 ? Number(process.env.PI_JUPYTER_QUIET_SEC) : 180;
+
+/** quiet: 출력 없이 흐른 초를 알림 (QUIET_SEC 이 넘은 동안 계속, 출력이 다시 오거나 끝나면 null) */
+function bashOps(map: (p: string) => string, quiet?: (sec: number | null) => void): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout }) => {
 			if (signal?.aborted) throw new Error("aborted");
 			const { id } = await call("/jupyter/exec", { cwd: map(cwd), command, timeout: timeout ?? 0 });
 			let offset = 0;
+			let lastOut = Date.now();
+			let quietShown = false;
 			const onAbort = () => {
 				call(`/jupyter/exec/${id}/abort`, {}).catch(() => {});
 			};
@@ -238,18 +245,32 @@ function bashOps(map: (p: string) => string): BashOperations {
 						if (buf.length) {
 							onData(buf);
 							offset += buf.length;
+							lastOut = Date.now();
+							if (quietShown) {
+								quietShown = false;
+								quiet?.(null);
+							}
 						}
 					}
 					if (signal?.aborted || st.aborted) throw new Error("aborted");
 					if (st.timedOut) throw new Error(`timeout:${timeout}`);
 					if (st.done) return { exitCode: typeof st.exitCode === "number" ? st.exitCode : null };
+					const q = Math.floor((Date.now() - lastOut) / 1000);
+					if (q >= QUIET_SEC) {
+						quietShown = true;
+						quiet?.(q);
+					}
 				}
 			} finally {
 				signal?.removeEventListener("abort", onAbort);
+				if (quietShown) quiet?.(null);
 			}
 		},
 	};
 }
+
+/** 상태 줄에 붙일 '출력 없음' 글 (분 단위) */
+export const quietText = (sec: number) => `명령이 ${Math.max(1, Math.floor(sec / 60))}분째 출력 없음 (Esc 로 멈춤)`;
 
 export default function (pi: ExtensionAPI) {
 	pi.registerFlag("jupyter", {
@@ -291,6 +312,30 @@ export default function (pi: ExtensionAPI) {
 		stat: (p: string) => fsOp("stat", p),
 		read: async (p: string) => Buffer.from((await fsOp("read", p)).data || "", "base64").toString("utf8"),
 		write: (p: string, text: string) => fsOp("write", p, Buffer.from(text, "utf8").toString("base64")),
+	};
+	// 노트북 명령이 출력 없이 오래 돌면 상태 줄에 '명령이 N분째 출력 없음' (분이 바뀔 때만 고침), QUIET_SEC 의 세 배가 되면 한 번 알림
+	let quietMin = -1;
+	let quietNoted = false;
+	const onQuiet = (sec: number | null) => {
+		if (!uiCtx?.hasUI || !remote) return;
+		try {
+			const base = uiCtx.ui.theme.fg("accent", `Jupyter: ${remote.cwd}`);
+			if (sec === null) {
+				if (quietMin >= 0) uiCtx.ui.setStatus("jupyter", base);
+				quietMin = -1;
+				quietNoted = false;
+				return;
+			}
+			const m = Math.floor(sec / 60);
+			if (m !== quietMin) {
+				quietMin = m;
+				uiCtx.ui.setStatus("jupyter", `${base} ${uiCtx.ui.theme.fg("warning", `· ${quietText(sec)}`)}`);
+			}
+			if (!quietNoted && sec >= QUIET_SEC * 3) {
+				quietNoted = true;
+				uiCtx.ui.notify(`노트북 명령이 ${quietText(sec)}. 기다리는 작업인지 확인하고, 멈추려면 Esc`, "warning");
+			}
+		} catch {}
 	};
 	// 지금 작업 폴더를 다른 확장(guard.ts, @파일, /undo 등)에 알리고, 다시 불러올 때를 위해 기억한다
 	const publish = () => {
@@ -400,7 +445,7 @@ export default function (pi: ExtensionAPI) {
 		...local.bash,
 		async execute(id, params, signal, onUpdate, _ctx) {
 			if (!remote) return local.bash.execute(id, params, signal, onUpdate);
-			const tool = createBashTool(startDir, { operations: bashOps(await mapper()) });
+			const tool = createBashTool(startDir, { operations: bashOps(await mapper(), onQuiet) });
 			return tool.execute(id, params, signal, onUpdate);
 		},
 	});
@@ -793,7 +838,7 @@ export default function (pi: ExtensionAPI) {
 	// 사용자가 직접 치는 ! 명령도 노트북에서
 	pi.on("user_bash", async () => {
 		if (!remote) return;
-		return { operations: bashOps(await mapper()) };
+		return { operations: bashOps(await mapper(), onQuiet) };
 	});
 
 	// 모델에게 작업 폴더와 실행 환경을 알려 준다 (노트북 기준, 또는 /local 로 고른 PC 폴더)
