@@ -53,6 +53,15 @@ check("자리 표시 파일: '# placeholder … will contain …' 만 있는 글
 check("자리 표시가 아님: 빈 파일, 실제 코드, 주석에 TODO 가 있는 코드, 긴 글",
 	!h.placeholderOnly("") && !h.placeholderOnly("import os\nprint(1)\nx = 2\ny = 3\n# TODO: implement more\n") && !h.placeholderOnly("# 설정 파일\nlr = 0.01\n")
 	&& !h.placeholderOnly(`# placeholder 설명\n${"a = 1\n".repeat(200)}`) && !h.placeholderOnly(undefined));
+// 2026-10-23 ML 시험: 지침에 이름을 적어도 프로젝트에 있던 코드를 따라 wait_for_run_completion(timeout=600) 으로 기다리는 파일을 씀
+check("아무것도 찍지 않고 기다리는 코드: KFP wait_for_run_completion, kubectl wait (상태를 찍는 반복·이름만 나온 글은 아님)",
+	h.silentWait("completed = client.wait_for_run_completion(run.run_id, timeout=600)") === "wait_for_run_completion"
+	&& h.silentWait("run.wait_for_run_completion (3600)") === "wait_for_run_completion" && h.silentWait("kubectl wait --for=condition=Ready pod/x --timeout=600s") === "kubectl wait"
+	&& h.silentWait("for _ in range(20):\n    print(client.get_run(run_id).state, flush=True)\n    time.sleep(30)\n") === ""
+	&& h.silentWait("# wait_for_run_completion 은 쓰지 않는다") === "" && h.silentWait(undefined) === "");
+check("새로 들어가는 글: write 는 내용, edit 는 바꿀 글만 (예전 형식도), bash 는 명령",
+	h.writtenText("write", { content: "a" }) === "a" && h.writtenText("edit", { edits: [{ oldText: "x", newText: "b" }, { oldText: "y", newText: "c" }] }) === "b\nc"
+	&& h.writtenText("edit", { oldText: "wait_for_run_completion(r)", newText: "d" }) === "d" && h.writtenText("bash", { command: "e" }) === "e" && h.writtenText("read", { path: "f" }) === "");
 check("링크 대상: 목록 문서 폴더 기준, 빈칸은 %20", h.linkTarget("docs/INDEX.md", "docs/plans/a b.md") === "plans/a%20b.md" && h.linkTarget("docs/INDEX.md", "notes/x.md") === "../notes/x.md" && h.linkTarget("INDEX.md", "docs/y.md") === "docs/y.md");
 let t = h.addLink(h.NEW_INDEX, "- [A](a.md) — d", "a.md");
 t = h.addLink(t, "- [B](b.md) — d", "b.md");
@@ -256,6 +265,19 @@ r = await tool(ctx, "write", { path: "train_v2.py", content: "# placeholder\n# t
 check("자리 표시 내용만 쓰면 결과에 안내 (막지 않음)", !r.blocked && r.note === h.PLACEHOLDER_NOTE, r);
 r = await tool(ctx, "write", { path: "train_v2.py", content: "import pandas as pd\nprint(pd.__version__)\n" }, () => writeFileSync(join(W, "train_v2.py"), "import pandas as pd\n"));
 check("실제 내용이면 안내 없음", !r.blocked && !r.note, r);
+// 아무것도 찍지 않고 기다리는 코드: 막지 않고 결과에 안내, 세션마다 파일마다 한 번
+const KFP = "run = client.create_run_from_pipeline_func(p)\ncompleted = client.wait_for_run_completion(run.run_id, timeout=600)\n";
+r = await tool(ctx, "write", { path: "kfp_two_step_test.py", content: KFP }, () => writeFileSync(join(W, "kfp_two_step_test.py"), KFP));
+check("기다리는 코드를 쓰면 결과에 안내 (막지 않음, 30초마다 상태를 찍게)", !r.blocked && r.note === h.waitNote("wait_for_run_completion") && r.note.includes("30초마다"), r);
+r = await tool(ctx, "edit", { path: "kfp_two_step_test.py", edits: [{ oldText: "600", newText: "wait_for_run_completion(run.run_id, timeout=300)" }] });
+check("같은 파일은 다시 알리지 않음", !r.blocked && !r.note, r);
+r = await tool(ctx, "bash", { command: "python -u - <<'EOF'\nclient.wait_for_run_completion(rid, timeout=600)\nEOF" });
+check("bash 의 heredoc 도 한 번 알림", r.note === h.waitNote("wait_for_run_completion"), r);
+r = await tool(ctx, "write", { path: "other.py", content: "import time\nprint(1, flush=True)\n" });
+check("기다리는 코드가 없으면 안내 없음", !r.note, r);
+await F.emit("session_start", { reason: "new" }, fakeCtx());
+r = await tool(fakeCtx(), "write", { path: "kfp_two_step_test.py", content: KFP });
+check("새 세션에서는 다시 알림", r.note === h.waitNote("wait_for_run_completion"), r);
 
 // 끄기, 지침
 writeFileSync(join(AGENT, "bridge.json"), JSON.stringify({ doc_rules: false }));

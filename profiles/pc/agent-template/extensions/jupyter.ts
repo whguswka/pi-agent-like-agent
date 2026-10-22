@@ -224,6 +224,25 @@ function editOps(map: (p: string) => string): EditOperations {
 //  한도 1시간으로 기다리는 명령이 출력 없이 45분 동안 돌았는데 화면으로는 알 수 없었음). PI_JUPYTER_QUIET_SEC 로 바꿈 (시험용)
 export const QUIET_SEC = Number(process.env.PI_JUPYTER_QUIET_SEC) > 0 ? Number(process.env.PI_JUPYTER_QUIET_SEC) : 180;
 
+// 실행 중인 명령의 상태 묻기가 잠깐 실패해도(노트북과의 연결이 잠시 끊김: 'Failed to fetch') 명령은 노트북에서 계속 돈다.
+//  바로 실패로 끝내면 모델이 같은 명령을 다시 돌리므로 이만큼(초) 다시 묻는다
+//  (2026-10-23 ML 시험: 파이프라인을 기다리던 명령이 한 번의 실패로 끝나, 같은 파이프라인이 두 번 제출됨)
+export const POLL_RETRY_SEC = 90;
+export async function pollExec(id: string, offset: number, signal?: AbortSignal, retrySec = POLL_RETRY_SEC, waitMs = 3000): Promise<any> {
+	let since = 0;
+	while (true) {
+		try {
+			return await call(`/jupyter/exec/${id}?offset=${offset}&wait=2`);
+		} catch (e) {
+			if (signal?.aborted) throw new Error("aborted");
+			since ||= Date.now();
+			if (Date.now() - since >= retrySec * 1000)
+				throw new RemoteError(`${(e as Error).message} (${retrySec}초 동안 다시 물어도 안 됨. 명령은 노트북에서 계속 돌고 있을 수 있습니다)`);
+			await new Promise((ok) => setTimeout(ok, waitMs));
+		}
+	}
+}
+
 /** quiet: 출력 없이 흐른 초를 알림 (QUIET_SEC 이 넘은 동안 계속, 출력이 다시 오거나 끝나면 null) */
 function bashOps(map: (p: string) => string, quiet?: (sec: number | null) => void): BashOperations {
 	return {
@@ -239,7 +258,7 @@ function bashOps(map: (p: string) => string, quiet?: (sec: number | null) => voi
 			signal?.addEventListener("abort", onAbort, { once: true });
 			try {
 				while (true) {
-					const st = await call(`/jupyter/exec/${id}?offset=${offset}&wait=2`);
+					const st = await pollExec(id, offset, signal);
 					if (st.data) {
 						const buf = Buffer.from(st.data, "base64");
 						if (buf.length) {
@@ -632,7 +651,7 @@ export default function (pi: ExtensionAPI) {
 		const chunks: Buffer[] = [];
 		let offset = 0;
 		while (true) {
-			const st = await call(`/jupyter/exec/${id}?offset=${offset}&wait=2`);
+			const st = await pollExec(id, offset);
 			if (st.data) {
 				const b = Buffer.from(st.data, "base64");
 				chunks.push(b);

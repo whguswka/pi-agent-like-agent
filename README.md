@@ -230,6 +230,7 @@ pi --jupyter work/myproject -c       # 그 프로젝트의 지난 대화를 이�
   pi 여러 개 동시 실행(`max_tabs`)을 켜면 두 번째 pi 부터는 `pibridge2`, `pibridge3` … 에서 실행됩니다.
 - 명령은 입력 없이 실행됩니다. 입력을 기다리는 명령(vi, less, 인자 없는 python 등)은 쓰지 마세요. `Esc` 로 멈추면 노트북 명령에도 Ctrl+C 가 전달됩니다.
   노트북 명령이 3분 넘게 출력 없이 돌면 상태 줄에 `명령이 N분째 출력 없음 (Esc 로 멈춤)` 이 나오고, 9분이 되면 알림이 뜹니다 (기다리는 작업인지 확인할 때).
+  명령이 도는 동안 노트북과의 연결이 잠깐 끊겨도(`Failed to fetch`) 90초까지 다시 물으며 기다립니다 (명령은 노트북에서 계속 돌므로, 바로 실패로 끝내면 pi 가 같은 명령을 다시 돌림).
 - 노트북 홈(Jupyter 루트)에 생기는 `pi-bridge` 폴더는 실행 기록·옮기는 파일용입니다. pi 를 쓰지 않을 때 지워도 됩니다.
   여러 사람이 함께 쓰는 노트북이라 홈에 낯선 폴더가 생기는 게 곤란하면 `/jupyter dir` 로 이미 있는 폴더 아래(예: `tools/pi-bridge`)로 옮기세요.
   고른 폴더는 내 설정 파일 `~/.pi/agent/bridge.json` 의 `jupyter_dir` 에 적히고, 예전 폴더에 pi 가 만든 것만 있으면 지울지 묻습니다.
@@ -487,6 +488,8 @@ pi 는 세션을 시작할 때 아래 파일을 찾아 **지침으로 함께 읽
 - 다시 돌릴 분석·학습·파이프라인 코드는 heredoc 으로만 돌리지 말고 `.py` 파일로 저장해 실행하기. 새 파일은 자리 표시 없이 실제 내용으로 쓰기
 - 프로젝트 지침(AGENTS.md)이 가리키는 문서가 지금 하는 일을 다루면 그 부분을 먼저 읽고 그 규칙(먼저 물을 것, 하지 말 것)을 지키기
 - 오래 걸리는 외부 작업(파이프라인 실행, 긴 학습)은 끝날 때까지 아무것도 찍지 않는 대기(`wait_for_run_completion` 등) 대신, 한 명령 안에서 30초마다 상태를 찍으며 10분 안쪽으로 기다리기
+  - 지침만으로는 프로젝트에 있던 코드를 따라 `wait_for_run_completion` 을 그대로 써서, 그런 코드(`wait_for_run_completion(`, `kubectl wait`)를 파일에 쓰거나 명령으로 돌리면
+    도구 결과에 '30초마다 상태를 찍는 반복으로 바꾸라' 는 안내를 붙입니다 (막지 않음, 세션마다 파일마다 한 번). 시험에서는 안내를 받고 상태를 찍는 반복으로 고쳤습니다.
 - 이 PC 에서 일할 때: PowerShell 은 `ps1` 로 실행하기 ([6장](#6-주의할-점)) <!-- api= -->
 
 예시 `~/work/myproject/AGENTS.md`:
@@ -918,7 +921,7 @@ python ~/tools/pi/copilot/diag.py --limits
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `api-kit/` | 이 저장소에서 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))를 만드는 도구 (이 저장소의 zip 에는 들어가지 않음) |
 | `release/` | 릴리스 도구: 업데이트용 가벼운 zip 만들기, GitHub Release 올리기 (이 저장소의 zip 에는 들어가지 않음) |
-| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `node tests/test_kitenv.mjs`, `node tests/test_watch.mjs`, `node tests/test_docs.mjs`, `node tests/test_changelog_notes.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
+| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `node tests/test_kitenv.mjs`, `node tests/test_watch.mjs`, `node tests/test_docs.mjs`, `node tests/test_changelog_notes.mjs`, `node tests/test_hooks.mjs`, `node tests/test_jupyter_poll.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
 | `CHANGELOG.md` | 버전마다 바뀐 점과 바꾼 뒤 할 일 |
 | `docs/` | [한 장 요약](docs/빠른시작.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
