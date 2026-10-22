@@ -285,6 +285,13 @@ export default function (pi: ExtensionAPI) {
 	let remoteAgents = ""; // 노트북 작업 폴더의 AGENTS.md
 	let lastArg = saved?.last || ""; // 마지막으로 쓴 노트북 폴더 (/jupyter 만 치면 다시 그곳)
 	let uiCtx: any = null; // 상태 줄을 고칠 때 쓰는 화면 (session_start·명령에서 받음)
+	// 노트북 파일 기능을 다른 확장(hooks.ts 의 문서 목록, guard.ts 의 스크립트 보기)이 쓸 수 있게 (경로는 노트북 절대 경로).
+	// stat 은 없으면 code 가 ENOENT 인 오류
+	G.__piRemoteFs = {
+		stat: (p: string) => fsOp("stat", p),
+		read: async (p: string) => Buffer.from((await fsOp("read", p)).data || "", "base64").toString("utf8"),
+		write: (p: string, text: string) => fsOp("write", p, Buffer.from(text, "utf8").toString("base64")),
+	};
 	// 지금 작업 폴더를 다른 확장(guard.ts, @파일, /undo 등)에 알리고, 다시 불러올 때를 위해 기억한다
 	const publish = () => {
 		(globalThis as any).__piWorkDir = remote

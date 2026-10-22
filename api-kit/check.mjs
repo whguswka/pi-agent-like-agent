@@ -78,7 +78,7 @@ for (const p of winSurface)
 for (const p of ["bin/pi", "install.sh", "update.sh", "check-node.sh"]) if (!existsSync(join(root, p))) errors.push(`없음: ${p}`);
 
 // 3) 확장
-const SHARED_EXT = ["files.ts", "guard.ts", "kit.ts", "memory.ts", "modes.ts", "notify.ts", "undo.ts", "wiki.ts", "lib/paths.ts", "lib/relay.ts", "lib/shell.ts"];
+const SHARED_EXT = ["files.ts", "guard.ts", "hooks.ts", "kit.ts", "memory.ts", "modes.ts", "notify.ts", "undo.ts", "wiki.ts", "lib/paths.ts", "lib/relay.ts", "lib/shell.ts"];
 const exts = files.filter((p) => /^profiles\/[^/]+\/agent-template\/extensions\//.test(p));
 for (const p of exts) {
 	const name = p.replace(/^profiles\/[^/]+\/agent-template\/extensions\//, "");

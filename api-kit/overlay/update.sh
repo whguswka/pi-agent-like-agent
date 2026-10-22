@@ -172,7 +172,7 @@ echo
 INSTALL_OK=1
 bash "$PI_HOME/install.sh" || { INSTALL_OK=; echo "[update] install.sh 가 실패했습니다. 위 메시지를 확인하세요 (이전 버전: $OLD)" >&2; }
 # 예전 버전으로 되돌린 경우 그 버전의 install.sh 는 새 버전에만 있던 확장을 치우지 못하므로 여기서도 (키트가 낸 적 있는 이름만, 옮겨 둠)
-KIT_EXT="guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts lib/shell.ts lib/relay.ts lib/paths.ts"
+KIT_EXT="guard.ts notify.ts kit.ts undo.ts modes.ts memory.ts files.ts wiki.ts hooks.ts lib/shell.ts lib/relay.ts lib/paths.ts"
 for f in $KIT_EXT; do
   [ -e "$AGENT_DIR/extensions/$f" ] || continue
   [ -e "$PI_HOME/profiles/common/agent-template/extensions/$f" ] && continue
