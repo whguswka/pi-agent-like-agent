@@ -1,14 +1,14 @@
-# 원래 키트 문서에서 API 키트와 짝을 이룬 글의 sha256 앞 12자리 (커밋 37a7cd0cd59c8d153f927e2a93bbb3806307fa55). api-kit/make-api-kit.sh --update-sha 가 적음
+# 원래 키트 문서에서 API 키트와 짝을 이룬 글의 sha256 앞 12자리 (커밋 f64d1d7417573e59db3cca321f05b480fa47ec59). api-kit/make-api-kit.sh --update-sha 가 적음
 #  'api:바꾸기' 블록 안 글과 'api=' 줄의 원래 키트 쪽 글. 바뀌면 API 키트 만들기가 멈춤: API 키트 글(조각, api= 뒤)도 고쳐야 하는지 보고 --update-sha
 23a9a8a483a2	docs/반입-검토-요청서.md	바꾸기 제목
-2d4131798f0b	docs/반입-검토-요청서.md	api=
+a941ad4b0a89	docs/반입-검토-요청서.md	api=
 5d0defac120a	docs/반입-검토-요청서.md	api=
 7d136a30ecaf	docs/반입-검토-요청서.md	api=
 9739fe5ecb42	docs/반입-검토-요청서.md	api=
 0f16245473cc	docs/반입-검토-요청서.md	api=
-7f63e63a4456	docs/반입-검토-요청서.md	api=
+c75ecd5f431f	docs/반입-검토-요청서.md	api=
 d27d651894d1	docs/반입-검토-요청서.md	api=
-5e1015e1cb3a	docs/반입-검토-요청서.md	바꾸기 3장-설정
+96440c9266dc	docs/반입-검토-요청서.md	바꾸기 3장-설정
 a0346b6286da	docs/반입-검토-요청서.md	api=
 9231803a8fc3	docs/반입-검토-요청서.md	api=
 a11128d9b281	docs/반입-검토-요청서.md	api=
@@ -78,7 +78,7 @@ d6e71fe0db42	README.md	api=
 a7b7e6a0c70c	README.md	api=
 be78cff8bcb6	README.md	api=
 942588228934	README.md	api=
-f2ca8164ebfd	README.md	바꾸기 3-3
+ff0201b2ec39	README.md	바꾸기 3-3
 29d8856e8309	README.md	api=
 1a5180a9b84a	README.md	api=
 a26ca93ab221	README.md	바꾸기 3-7
@@ -93,16 +93,18 @@ b05303f50835	README.md	api=
 dab05b8d8664	README.md	api=
 8947693cac48	README.md	api=
 0062c17e4d04	README.md	api=
-9b5e0f142858	README.md	api=
+8fa7750ccd7e	README.md	api=
 1536644f567c	README.md	api=
+de9e80bf9a70	README.md	api=
 0a298e96e7da	README.md	api=
 bdd943328cc0	README.md	api=
 e1bbee7ddef4	README.md	api=
 4f0586cbb349	README.md	api=
 3c99762049c5	README.md	api=
 27b8cbd8a4e8	README.md	api=
-ce2b1c38778a	README.md	바꾸기 6장-앞
+369b1a873c30	README.md	바꾸기 6장-앞
 459b79593ec3	README.md	api=
+7dffdb4dbd78	README.md	api=
 ae7ae1ce979e	README.md	바꾸기 7장-방법
 4e55e3f27f10	README.md	api=
 a4edaaaebb08	README.md	api=
@@ -111,4 +113,4 @@ a1fc24fbe1a1	README.md	바꾸기 8장-파일
 a9b01cc571f2	README.md	바꾸기 8장-끝
 e9144b473784	README.md	api=
 068d96eb6b29	README.md	바꾸기 9장-표
-83ba580f4ef8	README.md	바꾸기 10장
+eb9bc4e03d51	README.md	바꾸기 10장
