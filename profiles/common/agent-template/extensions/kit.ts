@@ -345,7 +345,7 @@ export const DONE_GUIDE =
 //  - 파이프라인 완료를 한도 1시간으로 출력 없이 기다리다(이미지를 못 받아 멈춘 단계) 45분이 지남
 //  - '지금 도구로는 실행을 종료할 수 없다' 고 했지만 앞에서 같은 API 로 종료했었음 (DONE_GUIDE 끝 문장)
 export const CODE_FILE_GUIDE =
-	"다시 돌릴 만한 분석·학습·파이프라인 코드는 heredoc(python - <<EOF)으로만 돌리지 말고 프로젝트에 .py 파일로 저장해 실행한다. " +
+	"다시 돌릴 만한 분석·학습·파이프라인 코드는 heredoc(python - <<EOF)으로만 돌리지 말고 .py 파일로 저장해 실행한다 (프로젝트에, 지침이 정한 곳이 있으면 그곳에). " +
 	"새 파일은 자리 표시(placeholder) 없이 처음부터 실제 내용으로 쓴다.";
 export const READ_DOCS_GUIDE =
 	"프로젝트 지침(AGENTS.md)이 가리키는 문서가 지금 하는 일(데이터·DB·파이프라인 등)을 다루면 그 부분을 먼저 읽고, " +
