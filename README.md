@@ -923,7 +923,7 @@ python ~/tools/pi/copilot/diag.py --limits
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 버전으로 바꾸기, Node 진단 스크립트, 버전 번호 |
-| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`·작업 기록 `/recall`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, 문서 찾기 `/docs`, LLM 위키 `/wiki`) |
+| `profiles/` | 환경별 설정 템플릿 (`pc`, `jupyter`, 두 환경 공통 `common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`·작업 기록 `/recall`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, 문서 찾기 `/docs`, LLM 위키 `/wiki`, 문서 규칙·훅 `/hooks`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 8개 (설치할 때 `~/.pi/agent` 에 복사. `pc` 설정은 `profiles/pc/skills/` 의 `pc-screen` 도) |
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `api-kit/` | 이 저장소에서 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))를 만드는 도구 (이 저장소의 zip 에는 들어가지 않음) |

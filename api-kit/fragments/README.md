@@ -230,7 +230,7 @@ pi 가 쓰는 모델은 `~/.pi/agent/models.json` 에 적습니다. 처음 설�
 | `runtime/` | pi 0.87.1 과 JS 라이브러리 3종 (npm 공식 배포본 그대로) |
 | `bin/`, `compat/` | 실행기, Node 탐색, Node 20 호환 레이어 |
 | `install.sh`, `update.sh`, `check-node.sh`, `VERSION` | 설치, 새 버전으로 바꾸기, Node 진단 스크립트, 버전 번호 |
-| `profiles/` | 설정 템플릿과 기본 지침(`jupyter`: Kubeflow 노트북용), 확장(`common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`·작업 기록 `/recall`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, 문서 찾기 `/docs`, LLM 위키 `/wiki`) |
+| `profiles/` | 설정 템플릿과 기본 지침(`jupyter`: Kubeflow 노트북용), 확장(`common`: 위험 명령 확인, 작업 모드 `/plan`·`/mode`, 되돌리기 `/undo`, 기억하기 `/remember`·작업 기록 `/recall`, `@파일`, 작업 끝 알림, `/kit`·`/doctor`, 문서 찾기 `/docs`, LLM 위키 `/wiki`, 문서 규칙·훅 `/hooks`) |
 | `prompts/`, `skills/` | 기본 명령 6개, 기본 스킬 8개 (설치할 때 `~/.pi/agent` 에 복사) |
 | `tests/` | 단위 테스트 (`node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `node tests/test_kitenv.mjs`, `node tests/test_watch.mjs`, `node tests/test_docs.mjs`, `node tests/test_changelog_notes.mjs`, `node tests/test_hooks.mjs`) |
 | `CHANGELOG.md` | 버전마다 바뀐 점과 바꾼 뒤 할 일 |
