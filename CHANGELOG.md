@@ -9,7 +9,8 @@
 - 2026-10-14.2 뒤의 버전부터 항목 앞에 `[공통]` 또는 `[Copilot]` 을 붙입니다. `[공통]` 은 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))에도 들어가는 것,
   `[Copilot]` 은 이 키트(업무 PC·Copilot)에만 있는 것입니다.
 
-## 다음 버전 (작업 중)
+## 2026-10-23.1 (중계 서버 2026-10-23.1)
+Kubeflow 노트북에서 분석 모델을 만드는 실사용 시험(2026-10-22~23, 실제 Copilot)과, Copilot 이 문서를 마구 만들고 훅을 모두 끈 뒤 승인 없는 GitLab 반영이 실행된 일을 바탕으로 고쳤습니다.
 - [Copilot] **노트북에서 pi 가 쓰는 폴더 바꾸기** ([README 3-3](README.md#3-3-실행-위치-바꾸기-pc-와-jupyter-노트북)):
   - jupyter 모드는 노트북 홈에 `pi-bridge` 폴더(실행 기록·옮기는 파일)를 만듭니다. 여러 사람이 함께 쓰는 노트북에서는 이 폴더가 무엇이냐는 문의가 많았습니다.
   - `/jupyter dir` 로 노트북 홈의 폴더 가운데 하나를 고르면 그 아래의 `pi-bridge` 를 씁니다 (예: `tools/pi-bridge`). `/jupyter dir <폴더>` 로 바로 적어도 됩니다.
@@ -86,6 +87,11 @@
     창·영역 찍기(`shot.ps1`: 긴 쪽 1600px 안으로 줄여 PNG, read 로 열면 Copilot 에 그림으로 감). 확인할 창·영역만 찍고, 다른 프로그램 창의 제목은 적지 않습니다.
   - pc 설정에만 들어갑니다 (`profiles/pc/skills/`, 설치·업데이트 때 `~/.pi/agent/skills/` 로 복사). 반입 검토 자료 2·3장에 적었습니다.
 - [공통] 위험 명령 확인: PowerShell 에 heredoc 으로 넘긴 스크립트(`powershell -Command - <<EOF`)도 안까지 보고, PowerShell 의 시스템 명령(`Stop-Computer`, `Restart-Computer`, `Format-Volume`, `Clear-Disk` 등)도 묻습니다.
+- 할 일:
+  - 업데이트하면 키트 확장은 늘 새로 깔리므로, `.off` 로 꺼 둔 `guard.ts` 도 다시 켜집니다. 끄려면 `/hooks off guard` (옆에 남은 `guard.ts.off` 는 지워도 됨).
+  - pi 가 지침에 더하는 줄이 바뀌어, 업데이트 뒤 첫 요청은 Copilot 새 대화로 시작합니다.
+  - 공용 노트북에서 jupyter 모드를 쓴다면 `/jupyter dir` 로 pi-bridge 폴더를 이미 있는 폴더 아래로 옮기세요 (예: `tools/pi-bridge`).
+  - Copilot 화면의 개인 설정에 저장한 지침이 pi 의 진행 방식과 부딪히지 않는지 한 번 보세요 ([README 5장 '메모리'](README.md#메모리)의 'Copilot 개인 설정').
 
 ## 2026-10-22.1 (중계 서버 2026-10-22.1)
 실제로 pi(Copilot)로 작은 프로그램(작업 표시줄 리소스 모니터)을 세션 8개에 걸쳐 만들어 보며 걸린 곳들을 고쳤습니다.
