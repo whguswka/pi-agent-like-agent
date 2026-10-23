@@ -79,6 +79,34 @@ async function call(path: string, body?: unknown): Promise<any> {
 const fsOp = (op: string, path: string, data?: string) => call("/jupyter/fs", { op, path, data });
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+
+// 지침 파일 이름: pi 가 PC 폴더에서 찾는 차례와 같게 (첫 번째로 있는 것 하나).
+//  노트북 프로젝트에 AGENTS.md 없이 CLAUDE.md 만 있어도 읽는다 (예전에는 AGENTS.md 만 봄)
+export const CONTEXT_NAMES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
+type CtxFile = { path: string; content: string };
+const noBom = (s: string) => s.replace(/^﻿/, "");
+/** 노트북 폴더의 지침 파일 (없거나 연결 오류면 null) */
+export async function remoteContext(dir: string): Promise<CtxFile | null> {
+	for (const name of CONTEXT_NAMES) {
+		try {
+			const d = await fsOp("read", `${dir}/${name}`);
+			return { path: `${dir}/${name}`, content: noBom(Buffer.from(d.data || "", "base64").toString("utf8")) };
+		} catch (e) {
+			if ((e as RemoteError).code !== "ENOENT") return null;
+		}
+	}
+	return null;
+}
+/** PC 폴더의 지침 파일 (없으면 null) */
+function localContext(dir: string): CtxFile | null {
+	for (const name of CONTEXT_NAMES) {
+		const p = join(dir, name);
+		try {
+			if (statSync(p).isFile()) return { path: slash(p), content: noBom(readFileSync(p, "utf8")) };
+		} catch {}
+	}
+	return null;
+}
 const under = (p: string, base: string) => {
 	const a = p.toLowerCase();
 	const b = base.toLowerCase();
@@ -319,10 +347,10 @@ export default function (pi: ExtensionAPI) {
 	const saved: { arg: string | null; dir: string; last: string } | undefined = G.__piJupyterLoc;
 	let localDir = saved?.dir || userDir; // PC 에서 실행할 때의 작업 폴더 (/local <폴더> 로 바꿈)
 	let local = makeLocal(localDir);
-	let localAgents = ""; // /local 로 고른 다른 PC 폴더의 AGENTS.md
+	let localAgents: CtxFile | null = null; // /local 로 고른 다른 PC 폴더의 지침 파일 (AGENTS.md, 없으면 CLAUDE.md 등)
 
 	let remote: Remote | null = null; // --jupyter 로 시작했으면 연결 실패여도 null 이 아님 (PC 에서 대신 실행하지 않도록)
-	let remoteAgents = ""; // 노트북 작업 폴더의 AGENTS.md
+	let remoteAgents: CtxFile | null = null; // 노트북 작업 폴더의 지침 파일
 	let lastArg = saved?.last || ""; // 마지막으로 쓴 노트북 폴더 (/jupyter 만 치면 다시 그곳)
 	let uiCtx: any = null; // 상태 줄을 고칠 때 쓰는 화면 (session_start·명령에서 받음)
 	// 노트북 파일 기능을 다른 확장(hooks.ts 의 문서 목록, guard.ts 의 스크립트 보기)이 쓸 수 있게 (경로는 노트북 절대 경로).
@@ -364,11 +392,9 @@ export default function (pi: ExtensionAPI) {
 		G.__piJupyterLoc = { arg: remote ? remote.arg : null, dir: localDir, last: lastArg };
 	};
 	const loadLocalAgents = () => {
-		localAgents = "";
-		if (slash(localDir) === slash(startDir)) return; // 시작 폴더의 AGENTS.md 는 pi 가 직접 읽음
-		try {
-			localAgents = readFileSync(join(localDir, "AGENTS.md"), "utf8");
-		} catch {}
+		localAgents = null;
+		if (slash(localDir) === slash(startDir)) return; // 시작 폴더의 지침 파일은 pi 가 직접 읽음
+		localAgents = localContext(localDir);
 	};
 	loadLocalAgents();
 	if (!saved) publish(); // 다시 불러온 경우는 기억해 둔 위치를 session_start 에서 이어 감 (여기서 덮어쓰지 않음)
@@ -401,11 +427,9 @@ export default function (pi: ExtensionAPI) {
 			publish();
 			if (uiCtx?.hasUI) uiCtx.ui.setStatus("jupyter", uiCtx.ui.theme.fg("accent", `Jupyter: ${remote.cwd}`));
 			const r = remote;
-			fsOp("read", `${r.cwd}/AGENTS.md`)
-				.then((d) => {
-					if (remote === r) remoteAgents = Buffer.from(d.data || "", "base64").toString("utf8");
-				})
-				.catch(() => {});
+			remoteContext(r.cwd).then((c) => {
+				if (remote === r) remoteAgents = c;
+			});
 		}
 		return remote;
 	}
@@ -481,10 +505,7 @@ export default function (pi: ExtensionAPI) {
 				await fsOp("mkdir", r.cwd);
 				ctx.ui.notify(`노트북에 작업 폴더를 만들었습니다: ${r.cwd}`, "info");
 			}
-			remoteAgents = "";
-			try {
-				remoteAgents = Buffer.from((await fsOp("read", `${r.cwd}/AGENTS.md`)).data || "", "base64").toString("utf8");
-			} catch {}
+			remoteAgents = await remoteContext(r.cwd);
 			lastArg = arg;
 			ctx.ui.setStatus("jupyter", ctx.ui.theme.fg("accent", `Jupyter: ${r.cwd}`));
 			publish();
@@ -504,7 +525,7 @@ export default function (pi: ExtensionAPI) {
 	/** PC 에서 실행 (dir 폴더) */
 	const setLocal = (dir: string) => {
 		remote = null;
-		remoteAgents = "";
+		remoteAgents = null;
 		localDir = dir;
 		local = makeLocal(dir);
 		loadLocalAgents();
@@ -869,8 +890,8 @@ export default function (pi: ExtensionAPI) {
 			if (process.platform === "win32" && Array.isArray(g) && !g.includes(PS_GUIDE)) g.push(PS_GUIDE);
 			if (slash(localDir) !== slash(startDir)) {
 				o.cwd = slash(localDir);
-				const p = slash(join(localDir, "AGENTS.md"));
-				if (localAgents && !o.contextFiles.some((f) => slash(f.path) === p)) o.contextFiles.push({ path: p, content: localAgents });
+				const la = localAgents;
+				if (la && !o.contextFiles.some((f) => slash(f.path) === la.path)) o.contextFiles.push({ ...la });
 			}
 			return;
 		}
@@ -889,8 +910,7 @@ export default function (pi: ExtensionAPI) {
 			"- 단, 스킬 파일은 스킬 목록에 적힌 경로를 그대로 읽으세요 (PC 에서 읽습니다). 스킬에 딸린 스크립트는 노트북에서 실행할 수 없습니다.",
 			"- 명령은 입력 없이 실행되므로 입력을 기다리는 대화형 명령(vi, less, 인자 없는 python 등)은 쓰지 마세요.",
 		].join("\n");
-		if (remoteAgents && !o.contextFiles.some((f) => f.path === `${r.cwd}/AGENTS.md`)) {
-			o.contextFiles.push({ path: `${r.cwd}/AGENTS.md`, content: remoteAgents });
-		}
+		const ra = remoteAgents;
+		if (ra && !o.contextFiles.some((f) => f.path === ra.path)) o.contextFiles.push({ ...ra });
 	});
 }

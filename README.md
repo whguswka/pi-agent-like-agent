@@ -625,7 +625,7 @@ pi 자체는 PC 에서 돌기 때문에 지침·스킬·세션은 PC 것을 씁�
 | 항목 | 위치 | jupyter 모드에서 |
 |---|---|---|
 | 공통 지침 | PC `~/.pi/agent/AGENTS.md` | 적용 |
-| 프로젝트 지침 (노트북에 둘 때) | 노트북 `~/work/<프로젝트>/AGENTS.md` | 적용. 코드와 함께 관리하기 좋음 |
+| 프로젝트 지침 (노트북에 둘 때) | 노트북 `~/work/<프로젝트>/AGENTS.md` (없으면 `CLAUDE.md`) | 적용. 코드와 함께 관리하기 좋음. 노트북에서는 작업 폴더의 것 하나만 읽고 상위 폴더는 보지 않음 |
 | 프로젝트 지침·스킬 (PC 에 둘 때) | PC `~/.pi/jupyter-work/work_<프로젝트>/` 의 `AGENTS.md`, `.pi/skills/` | `pi --jupyter work/<프로젝트>` 로 시작했을 때 적용 (폴더 이름은 `/` 를 `_` 로 바꾼 것) |
 | 스킬 | PC `~/.pi/agent/skills/` | SKILL.md 는 PC 에서 읽음. 단 스킬에 딸린 스크립트는 명령이 노트북에서 실행되므로 쓸 수 없음 |
 | 세션 기록 | PC `~/.pi/agent/sessions/` | 노트북 프로젝트별로 따로 쌓임 (PC 작업 세션과 목록이 따로) |
@@ -925,7 +925,7 @@ python ~/tools/pi/copilot/diag.py --limits
 | `copilot/` | Copilot 웹 채팅 중계기, 진단 도구, 전용 창 실행 파일(`start-chrome.cmd`, `start-edge.cmd`) |
 | `api-kit/` | 이 저장소에서 Kubeflow 노트북용 API 키트([pi-agent-like-agent-api](https://github.com/whguswka/pi-agent-like-agent-api))를 만드는 도구 (이 저장소의 zip 에는 들어가지 않음) |
 | `release/` | 릴리스 도구: 업데이트용 가벼운 zip 만들기, GitHub Release 올리기 (이 저장소의 zip 에는 들어가지 않음) |
-| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `node tests/test_kitenv.mjs`, `node tests/test_watch.mjs`, `node tests/test_docs.mjs`, `node tests/test_changelog_notes.mjs`, `node tests/test_hooks.mjs`, `node tests/test_jupyter_poll.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
+| `tests/` | 단위 테스트 (`python tests/test_relay.py`, `python tests/test_config.py`, `node tests/test_guard.mjs`, `node tests/test_modes.mjs`, `node tests/test_memory.mjs`, `node tests/test_files.mjs`, `node tests/test_merge_config.mjs`, `node tests/test_wiki.mjs`, `node tests/test_kitenv.mjs`, `node tests/test_watch.mjs`, `node tests/test_docs.mjs`, `node tests/test_changelog_notes.mjs`, `node tests/test_hooks.mjs`, `node tests/test_jupyter.mjs`, `python tests/test_noise.py`, `python tests/test_unmangle.py`) |
 | `CHANGELOG.md` | 버전마다 바뀐 점과 바꾼 뒤 할 일 |
 | `docs/` | [한 장 요약](docs/빠른시작.md), [수동 작업 절차](docs/수동-작업-절차.md), [설치 세부](docs/설치.md), [vLLM 연결](docs/vLLM-연결.md), [반입 검토 자료](docs/반입-검토-요청서.md), [runtime 파일 해시 목록](docs/runtime-SHA256SUMS.txt) |
 
